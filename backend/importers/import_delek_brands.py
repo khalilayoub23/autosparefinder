@@ -58,6 +58,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 import asyncio, json, os, re, sys, uuid, argparse
 from pathlib import Path
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import urllib.parse as up
 
 # ONE category source of truth — never a private ruleset here.
@@ -176,6 +177,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
 
     brand_id    = await ensure_car_brand(conn, make)
     supplier_id = await ensure_supplier(conn, supplier_name)
+    _ph = PriceHistoryTracker(conn, "import_delek_brands"); await _ph.snapshot(supplier_id)
     print(f"  brand_id={brand_id}  supplier_id={supplier_id}")
 
     stats = {"inserted": 0, "errors": 0, "skipped": 0}
@@ -378,6 +380,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
         pass
 
     print(f"  [{make}] inserted={stats['inserted']}  errors={stats['errors']}  skipped={stats['skipped']}")
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     return stats
 
 

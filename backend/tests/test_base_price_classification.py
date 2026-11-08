@@ -59,9 +59,11 @@ async def _part(db, part_type, offset=0):
 
 async def _offer(db, pid, cost, klass, country="IL"):
     # one offer per (part, supplier): a fresh supplier of the given country, so VAT/locality is explicit
-    sup = (await db.execute(sa.text("""INSERT INTO suppliers (id, name, country, is_active)
-        VALUES (gen_random_uuid(), :n, :c, TRUE) RETURNING id::text"""),
-        {"n": f"BPT supplier {uuid.uuid4().hex[:10]}", "c": country})).scalar_one()
+    # #129/#131: a LOCAL supplier with an unknown/NULL VAT basis is blocked from price inputs (price_policy.vat_basis_blocks_sql);
+    # production local suppliers are classified, so the fixture classifies its local supplier ('exclusive' = cost ex-VAT).
+    sup = (await db.execute(sa.text("""INSERT INTO suppliers (id, name, country, is_active, vat_price_basis)
+        VALUES (gen_random_uuid(), :n, :c, TRUE, :b) RETURNING id::text"""),
+        {"n": f"BPT supplier {uuid.uuid4().hex[:10]}", "c": country, "b": "exclusive" if country == "IL" else None})).scalar_one()
     await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability, part_type, supplier_url, updated_at, created_at)
         VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, :c, :u, TRUE, 'in_stock', :t, 'https://fixture.invalid/bpt', NOW(), NOW())"""),
         {"s": sup, "p": pid, "sku": f"BPT-{uuid.uuid4().hex[:10]}", "c": cost, "u": cost / 3.0, "t": klass})

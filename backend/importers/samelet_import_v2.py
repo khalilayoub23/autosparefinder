@@ -49,7 +49,9 @@ Last Updated: 2026-06-01
 """
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
+from price_history_writer import PriceHistoryTracker
 from warranty_policy import resolve as _warranty_resolve
+from variant_identity import variant_key
 
 DB_URL = os.environ.get("DATABASE_URL", f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare").replace("postgresql+asyncpg://", "postgresql://")
 # Run a single brand: python3 samelet_import_v2.py Hongqi  (or 'hongqi')
@@ -107,6 +109,14 @@ def get_token(slug):
 
 SESSION = requests.Session()
 
+SEARCH_ERRORS = 0   # failed/non-success API searches in this process: a throttled run must not look like a complete one
+
+def _search_error(slug, query, why):
+    global SEARCH_ERRORS
+    SEARCH_ERRORS += 1
+    if SEARCH_ERRORS <= 5:
+        print(f"  [WARN] search failed slug={slug} query={query!r}: {why}", flush=True)
+
 def search_parts(slug, token, query, opt="2"):
     try:
         r = SESSION.post("https://samelet.com/api", data={
@@ -118,11 +128,14 @@ def search_parts(slug, token, query, opt="2"):
             "Referer": f"https://samelet.com/form/parts-prices/{slug}",
         }, timeout=15)
         d = r.json()
-        if d.get("success") != 1: return []
+        if d.get("success") != 1:
+            _search_error(slug, query, f"api success={d.get('success')!r}")
+            return []
         parts = d.get("parts", [])
         if isinstance(parts, dict): parts = [parts]
         return parts if isinstance(parts, list) else []
     except Exception as e:
+        _search_error(slug, query, f"{type(e).__name__}: {str(e)[:100]}")
         return []
 
 def enumerate_all_parts(slug, token):
@@ -177,6 +190,42 @@ async def ensure_brands(conn):
             await conn.execute("INSERT INTO car_brands(id,name,country,is_active) VALUES(gen_random_uuid(),$1,$2,TRUE) ON CONFLICT DO NOTHING", name, country)
             print(f"  Created brand: {name}")
 
+# One statement for every row. Conflict behaviour (single, documented): name / name_he / manufacturer follow the source;
+# part_type is the CATALOG CLASS (variant_identity key: oem | aftermarket here) and is only FILLED when the stored one is
+# empty - an existing catalog class is never overwritten by a re-import; every price column keeps the stored value unless the source has a positive one (CLAUDE.md pattern 2);
+# category is only FILLED when the stored one is the catch-all (a later, better categorisation is never overwritten).
+_CATALOG_UPSERT = """
+    INSERT INTO parts_catalog(
+        id, sku, name, name_he, category, manufacturer, manufacturer_id,
+        part_type, base_price, importer_price_ils, max_price_ils, min_price_ils,
+        oem_number, specifications, aftermarket_tier, is_active,
+        part_condition, needs_oem_lookup, master_enriched,
+        created_at, updated_at)
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
+           'new',$15,FALSE,NOW(),NOW())
+    ON CONFLICT(sku) DO UPDATE SET
+        name=EXCLUDED.name,
+        name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
+        category=CASE WHEN parts_catalog.category IS NULL OR parts_catalog.category IN ('', 'כללי')
+                      THEN EXCLUDED.category ELSE parts_catalog.category END,
+        manufacturer=EXCLUDED.manufacturer,
+        base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
+                        ELSE parts_catalog.base_price END,
+        importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
+        max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
+                          THEN EXCLUDED.max_price_ils
+                          ELSE parts_catalog.max_price_ils END,
+        min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
+                          THEN EXCLUDED.min_price_ils
+                          ELSE parts_catalog.min_price_ils END,
+        aftermarket_tier=COALESCE(EXCLUDED.aftermarket_tier, parts_catalog.aftermarket_tier),
+        specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
+                        || EXCLUDED.specifications::jsonb,
+        part_type=COALESCE(NULLIF(parts_catalog.part_type, ''), EXCLUDED.part_type),
+        updated_at=NOW()
+    RETURNING id, oem_number, base_price, (xmax = 0) AS inserted
+"""
+
 async def import_brand(conn, slug, brand_name, prefix):
     print(f"\n{'='*60}\nImporting {brand_name} (slug={slug}, prefix={prefix}-)\n{'='*60}")
     token = get_token(slug)
@@ -219,7 +268,9 @@ async def import_brand(conn, slug, brand_name, prefix):
         return 0
     print(f"  {len(parts_dict)} unique parts, upserting...")
 
+    _ph = PriceHistoryTracker(conn, "samelet_import_v2"); await _ph.snapshot(supplier_id)
     ins = err = 0
+    parts_new = parts_upd = 0
     new_part_ids = []
     batch = []
     for mid, p in parts_dict.items():
@@ -243,6 +294,7 @@ async def import_brand(conn, slug, brand_name, prefix):
             category  = classify_part(name_en, name_he)
             mat_type = p.get("MaterialType", "01")
             part_type = "original" if mat_type == "01" else "aftermarket"
+            catalog_part_type = variant_key(part_type)   # parts_catalog convention = variant class ('oem' / 'aftermarket'), never 'original'
             _wmonths, _wsource = _warranty_resolve(p.get("Warranty") or p.get("warranty"))
             specs = json.dumps({
                 "vat_included":       True,
@@ -261,95 +313,46 @@ async def import_brand(conn, slug, brand_name, prefix):
             }, ensure_ascii=False)
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
             batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
-                          part_type, base_price_val, cost, max_price, mid, specs,
+                          catalog_part_type, base_price_val, cost, max_price, mid, specs,
                           max_price, tier, name_missing))
         except Exception as e:
             err += 1
             if err <= 3: print(f"  [ERR] prep {mid}: {e}")
 
-    # Upsert in batches of 25 (never DELETE — use ON CONFLICT)
-    for i in range(0, len(batch), 25):
-        chunk = batch[i:i+25]
+    # Upsert ONE row at a time inside its own savepoint (never DELETE - ON CONFLICT(sku)). The row tuple built above has
+    # exactly the 15 values $1..$15 of _CATALOG_UPSERT, so each row is passed as-is. (The previous 25-row "batch" passed
+    # 25*15 flattened args to a 15-parameter single-row VALUES, and its per-row fallback passed only 14 - no catalog
+    # part was ever written by this importer.)
+    for row in batch:
         try:
-            results = await conn.fetch("""
-                INSERT INTO parts_catalog(
-                    id, sku, name, name_he, category, manufacturer, manufacturer_id,
-                    part_type, base_price, importer_price_ils, max_price_ils, min_price_ils,
-                    oem_number, specifications, aftermarket_tier, is_active,
-                    part_condition, needs_oem_lookup, master_enriched,
-                    created_at, updated_at)
-                VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                       'new',$15,FALSE,NOW(),NOW())
-                ON CONFLICT(sku) DO UPDATE SET
-                    name=EXCLUDED.name,
-                    name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
-                    category=EXCLUDED.category,
-                    manufacturer=EXCLUDED.manufacturer,
-                    base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
-                                    ELSE parts_catalog.base_price END,
-                    importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
-                    max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
-                                      THEN EXCLUDED.max_price_ils
-                                      ELSE parts_catalog.max_price_ils END,
-                    min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
-                                      THEN EXCLUDED.min_price_ils
-                                      ELSE parts_catalog.min_price_ils END,
-                    aftermarket_tier=COALESCE(EXCLUDED.aftermarket_tier, parts_catalog.aftermarket_tier),
-                    specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
-                                    || EXCLUDED.specifications::jsonb,
-                    part_type=EXCLUDED.part_type,
-                    updated_at=NOW()
-                RETURNING id, oem_number, base_price
-            """, *zip(*chunk) if False else [r for row in chunk for r in row])
-            ins += len(chunk)
-        except Exception as e:
-            # Fallback: insert one by one
-            for row in chunk:
-                try:
-                    result = await conn.fetchrow("""
-                        INSERT INTO parts_catalog(
-                            id, sku, name, name_he, category, manufacturer, manufacturer_id,
-                            part_type, base_price, importer_price_ils, max_price_ils, min_price_ils,
-                            oem_number, specifications, aftermarket_tier, is_active,
-                            part_condition, needs_oem_lookup, master_enriched,
-                            created_at, updated_at)
-                        Values(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-                               'new',$15,FALSE,NOW(),NOW())
-                        ON CONFLICT(sku) DO UPDATE SET
-                            name=EXCLUDED.name,
-                            name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
-                            base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
-                                            ELSE parts_catalog.base_price END,
-                            importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
-                            min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
-                                          THEN EXCLUDED.min_price_ils
-                                          ELSE parts_catalog.min_price_ils END,
-                            aftermarket_tier=COALESCE(EXCLUDED.aftermarket_tier, parts_catalog.aftermarket_tier),
-                            specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
-                                            || EXCLUDED.specifications::jsonb,
-                            updated_at=NOW()
-                        RETURNING id, oem_number, base_price
-                    """, row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-                         row[7], row[8], row[9], row[10], row[11], row[12], row[13])
-                    if result and supplier_id:
-                        new_part_ids.append((str(result["id"]), row[10], row[8], supplier_id))
-                    ins += 1
-                except Exception as e2:
-                    err += 1
-                    if err <= 10: print(f"  [ERR] {row[0]}: {e2}")
+            async with conn.transaction():
+                result = await conn.fetchrow(_CATALOG_UPSERT, *row)
+            if result and supplier_id:
+                new_part_ids.append((str(result["id"]), row[10], row[7], supplier_id))
+            if result and result["inserted"]:
+                parts_new += 1
+            else:
+                parts_upd += 1
+            ins += 1
+        except Exception as e2:
+            err += 1
+            if err <= 10: print(f"  [ERR] {row[0]}: {e2}")
 
     # Create supplier_parts for all upserted parts
     if supplier_id:
         existing_parts = await conn.fetch(
-            "SELECT id, oem_number, base_price FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE",
-            brand_name)
-        sp_count = 0
+            # only the parts THIS run upserted (their SKUs); the brand-wide scan also gave Samelet an offer on every
+            # other importer's part of the same manufacturer
+            "SELECT id, oem_number, importer_price_ils FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1) AND is_active=TRUE"
+            " AND sku = ANY($2::text[])",
+            brand_name, [r[0] for r in batch])
+        sp_count = sp_new = sp_err = 0
         for part in existing_parts:
             try:
                 _sp = json.loads(part.get("specifications") or "{}") if isinstance(part.get("specifications"), str) else {}
                 _wm = _sp.get("warranty_months", 12)
                 _ws = _sp.get("warranty_source", "platform_default")
-                await conn.execute("""
+                _spr = await conn.fetchrow("""
                     INSERT INTO supplier_parts (
                         id, supplier_id, part_id, supplier_sku,
                         price_ils, price_usd, availability, is_available,
@@ -363,27 +366,46 @@ async def import_brand(conn, slug, brand_name, prefix):
                         warranty_months=EXCLUDED.warranty_months,
                         warranty_source=EXCLUDED.warranty_source,
                         updated_at=NOW()
+                    RETURNING (xmax = 0) AS inserted
                 """, supplier_id, str(part["id"]), str(part["oem_number"]),
-                     float(part["base_price"] or 0), _wm, _ws, supplier_url)
+                     float(part["importer_price_ils"] or 0), _wm, _ws, supplier_url)  # ex-VAT COST, never base_price (#129)
                 sp_count += 1
-            except Exception:
-                pass
-        print(f"  {brand_name}: supplier_parts upserted={sp_count}")
+                if _spr and _spr["inserted"]:
+                    sp_new += 1
+            except Exception as e3:
+                sp_err += 1
+                if sp_err <= 5: print(f"  [ERR] supplier_parts {part['oem_number']}: {type(e3).__name__}: {str(e3)[:120]}", flush=True)
+        print(f"  {brand_name}: supplier_parts upserted={sp_count} (new={sp_new}, updated={sp_count - sp_new}) errors={sp_err}")
 
-    # Delegate fitment to REX
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
+
+    # Delegate fitment to REX. (The old INSERT named a column `agent_name` that agent_todos does not have, so the todo
+    # was never created and the error was swallowed; the owner column is `assigned_to_agent`. The REX dispatcher
+    # (_rex_dispatch_loop) completes todos it has no route for, so this creates no further work.)
+    todo_state = "NOT created"
     try:
-        await conn.execute("""
+        # Idempotent: ONE fitment todo per brand. agent_todo_utils only reads todos (no create/dedupe helper exists), and the
+        # REX dispatcher completes this kind of todo within minutes, so "no open todo" alone would re-create it on every
+        # run: skip when ANY todo for this brand (title prefix, any status) is still open or was created in the last 7 days.
+        _tag = await conn.execute("""
             INSERT INTO agent_todos
-                (id, agent_name, title, description, priority, status, created_at, updated_at)
-            VALUES (gen_random_uuid(), 'REX', $1, $2, 'high', 'not_started', NOW(), NOW())
+                (id, assigned_to_agent, title, description, priority, status, category, created_at, updated_at)
+            SELECT gen_random_uuid(), 'rex', $1::varchar, $2::text, 'high', 'not_started', 'scraping', NOW(), NOW()
+            WHERE NOT EXISTS (
+                SELECT 1 FROM agent_todos
+                WHERE assigned_to_agent = 'rex' AND title LIKE $3
+                  AND (status NOT IN ('completed', 'cancelled') OR created_at > NOW() - INTERVAL '7 days'))
         """,
         f"Fetch fitment for {brand_name} samelet parts ({ins} parts)",
         f"{ins} parts imported from samelet.com for {brand_name}. No vehicle fitment data. "
-        f"Query TecDoc or eBay fitment APIs to map parts to specific models/years.")
-    except Exception:
-        pass
+        f"Query TecDoc or eBay fitment APIs to map parts to specific models/years.",
+        f"Fetch fitment for {brand_name} samelet parts (%")
+        todo_state = "created" if _tag.endswith(" 1") else "exists (not duplicated)"
+    except Exception as e4:
+        print(f"  [ERR] REX fitment todo not created: {type(e4).__name__}: {str(e4)[:120]}", flush=True)
 
-    print(f"  {brand_name}: upserted={ins} errors={err}")
+    print(f"  {brand_name}: upserted={ins} (parts new={parts_new}, updated={parts_upd}) errors={err} "
+          f"search_errors={SEARCH_ERRORS} rex_todo={todo_state}", flush=True)
     return ins
 
 async def main():

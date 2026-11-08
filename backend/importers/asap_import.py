@@ -21,11 +21,10 @@ PRICING (verified against the real Fox Factory sheet, 2026-07-28):
          means no DEALER/COST tier is exposed, not that there is no price.
 
          Because ASAP gives us MSRP/MAP and NOT our cost, we must not invent a
-         margin off it. `list_price` is a CONSUMER reference price, so it maps to
-         `max_price_ils` exactly like the IL importer consumer-price flow:
-             cost  = list_price_ils / 1.18      (ex-VAT reference cost)
+         margin off it. `list_price` is a US MSRP/MAP, NOT an Israeli consumer price, so (#127) it never
+         populates `max_price_ils` (the Israeli consumer reference incl. 18% VAT; foreign sources never write it):
+             cost  = list_price_ils / 1.18      (reference cost)
              base  = cost * 1.45                (45% margin — uniform policy)
-             max   = list_price_ils             (consumer reference)
          USD→ILS uses the live rate (currency_rate.get_usd_to_ils_rate).
 
 Process:
@@ -48,6 +47,7 @@ import sys
 from typing import Dict, List, Optional
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 from category_map import categorize_on_ingest
 
@@ -146,6 +146,7 @@ async def _ensure_brand(conn: asyncpg.Connection, name: str,
 async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                           brand_name: str, usd_ils: float) -> Dict[str, int]:
     supplier_id = await _ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "asap_import"); await _ph.snapshot(supplier_id)
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "priced": 0, "images": 0}
     brand_cache: Dict[str, str] = {}
 
@@ -208,16 +209,15 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                             barcode = COALESCE($6, barcode),
                             category = CASE WHEN category IN ('כללי','general','service-general','accessories')
                                             THEN $7 ELSE category END,
-                            max_price_ils = CASE WHEN $8 > 0 THEN $8 ELSE max_price_ils END,
-                            base_price    = CASE WHEN $9 > 0 THEN $9 ELSE base_price END,
-                            importer_price_ils = CASE WHEN $10 > 0
-                                                 THEN $10 ELSE importer_price_ils END,
+                            base_price    = CASE WHEN $8 > 0 THEN $8 ELSE base_price END,
+                            importer_price_ils = CASE WHEN $9 > 0
+                                                 THEN $9 ELSE importer_price_ils END,
                             is_active = TRUE,
                             updated_at = NOW()
                         WHERE id = $1
                         """,
                         part_id, title[:500], desc, brand[:120], oem, upc,
-                        category, max_ils, base_ils, cost_ils,
+                        category, base_ils, cost_ils,
                     )
                     stats["updated"] += 1
                 else:
@@ -228,15 +228,15 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                              oem_number, barcode, category, part_condition, part_type,
                              is_safety_critical, needs_oem_lookup, master_enriched,
                              specifications,
-                             max_price_ils, base_price, importer_price_ils,
+                             base_price, importer_price_ils,
                              is_active, created_at, updated_at)
                         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::uuid, $6, $7, $8,
-                                'new', 'aftermarket', FALSE, FALSE, FALSE, $12::jsonb,
-                                $9, $10, $11, TRUE, NOW(), NOW())
+                                'new', 'aftermarket', FALSE, FALSE, FALSE, $11::jsonb,
+                                $9, $10, TRUE, NOW(), NOW())
                         RETURNING id
                         """,
                         sku, title[:500], desc, brand[:120], manufacturer_id,
-                        oem, upc, category, max_ils, base_ils, cost_ils,
+                        oem, upc, category, base_ils, cost_ils,
                         json.dumps({"source": "asap_network", "brand": brand,
                                     "sheet_brand": brand_name,
                                     "discontinued": discontinued}),
@@ -285,6 +285,7 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
             stats["skipped"] += 1
             print(f"  [row error] {sku}: {str(exc)[:150]}", flush=True)
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     return stats
 
 

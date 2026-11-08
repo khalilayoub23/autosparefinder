@@ -51,6 +51,7 @@ from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("toyota_il_importer")
@@ -229,6 +230,7 @@ async def main():
     conn = await asyncpg.connect(DSN)
 
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "toyota_il_importer"); await _ph.snapshot(supplier_id)
     log.info("Supplier ID: %s", supplier_id)
 
     inserted = 0
@@ -392,6 +394,7 @@ async def main():
             log.info("Progress: %d/%d | inserted=%d updated=%d fitment=%d errors=%d",
                      i + 1, len(parts), inserted, updated, fitment_count, len(errors))
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     elapsed = round(time.time() - start, 1)

@@ -17,9 +17,7 @@ Tasks
 9.  run_all_tasks             – orchestrator that runs core tasks and returns a report dict
 
 On-demand tasks (NOT in run_all_tasks — must be triggered explicitly):
-9.  populate_supplier_parts   – link every active part to every active supplier
-                                (ON CONFLICT DO NOTHING; safe to re-run)
-10. validate_migrations       – pre-flight safety scan of all Alembic migration
+9.  validate_migrations       – pre-flight safety scan of all Alembic migration
                                 files for patterns that can cause downtime
 
 Admin endpoints call run_all_tasks or individual tasks through get_db.
@@ -59,6 +57,7 @@ from category_map import (
     normalize_category_label,
 )
 from agent_todo_utils import get_active_agent_todos, extract_todo_task_names
+from variant_identity import INDEX_KEY_SQL as _VARIANT_KEY_SQL, resolve as _resolve_variant
 
 logger = logging.getLogger("db_update_agent")
 # Ensure the logger outputs to stderr (docker logs captures it) if no handler
@@ -201,40 +200,7 @@ CATEGORY_MAP: Dict[str, str] = CATEGORY_VARIANT_MAP
 # is resolved by category_map.VARIANT_MAP directly to its canonical slug.
 CATEGORY_NAME_REMAP: Dict[str, str] = {}
 
-# Normalisation map for part_type
-PART_TYPE_MAP: Dict[str, str] = {
-    # LOWERCASE IS THE CONVENTION (owner decision 2026-07-28).
-    # The part name is unaffected by casing and the whole codebase is written
-    # lowercase, so every part_type normalizes to lowercase. This matches
-    # parts_catalog (already 3.28M 'oem' / 1.09M 'aftermarket') and the existing
-    # part_condition rule in CLAUDE.md. supplier_parts still holds capitalised
-    # values from older importers; they normalize here.
-    "original": "original",
-    "oem_original": "original",
-    "genuine": "original",
-    "מקורי": "original",
-    "מקורימקורי": "original",
-    "oem": "oem",
-    "oem_equivalent": "oem",
-    "oe": "oem",
-    "aftermarket": "aftermarket",
-    "after market": "aftermarket",
-    "generic": "aftermarket",
-    "third party": "aftermarket",
-    "תחליפי": "aftermarket",
-    "חליפי": "aftermarket",
-    "חליפיחליפי": "aftermarket",
-    "תחליפיתחליפי": "aftermarket",
-    "שוק משני": "aftermarket",
-    "alternative": "aftermarket",
-    "משופץ": "remanufactured",
-    "משופצמשופצ": "remanufactured",
-    "משופץמשופץ": "remanufactured",
-    "refurbished": "remanufactured",
-    "used": "used",
-    "new": "new",
-    "סוג מוצר": "unknown",
-}
+# part_type vocabulary: variant_identity.py is the ONLY place (stored value + index-identical key). No map here.
 
 # Normalisation map for availability
 AVAILABILITY_MAP: Dict[str, str] = {
@@ -464,10 +430,6 @@ async def _get_ils_rate(db: AsyncSession) -> float:
 
 def _is_fake_sku(sku: str) -> bool:
     return any(p.match(sku) for p in _FAKE_SKU_PATTERNS)
-
-
-def _normalize_part_type(raw: str) -> Optional[str]:
-    return PART_TYPE_MAP.get(raw.strip().lower())
 
 
 def _normalize_category(raw: str) -> Optional[str]:
@@ -914,146 +876,183 @@ async def _save_task_cursor(db: AsyncSession, task_name: str, last_id: str) -> N
 # Task 2 – Normalize part types
 # =========================================================================
 
-async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Unify part_type values to lowercase: "original", "oem", "aftermarket",
-    "remanufactured", "used", "new". Owner decision 2026-07-28 — casing does not
-    change the part, and the codebase is written lowercase throughout.
+_PT_MANIFEST_PATH = Path(os.getenv("PART_TYPE_MANIFEST_PATH") or Path(__file__).resolve().parent / "state" / "part_type_normalization_manifest.jsonl")
+_PT_SAMPLE = 200   # collision / error samples kept in the result and the log (counters are always exact)
 
-    Delta mode: only processes rows modified since the last successful run
-    (stored in system_settings as 'delta_checkpoint__normalize_part_types').
-    On a 4M-row table under concurrent harvesting this cuts the scan from
-    the entire table down to the rows ingested in the last cycle — from
-    60+ min timeouts to typically <5 s.
+
+def _pt_manifest_append(rows: List[Dict[str, Any]]) -> None:
+    """Before/after provenance for every row this task rewrites (supplier_parts has no column for the source label).
+    Append-only JSONL; a write failure is logged, never fatal (the DB change is already committed)."""
+    if not rows:
+        return
+    try:
+        _PT_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_PT_MANIFEST_PATH, "a", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    except Exception as exc:  # pragma: no cover - disk problem
+        logger.error("normalize_part_types: manifest write failed (%s) - rows were changed: %s", exc, [r["id"] for r in rows][:20])
+
+
+async def _normalize_part_type_table(db: AsyncSession, table: str, *, batch: int = 5000, max_batches: int = 20000) -> Dict[str, Any]:
+    """Rewrite non-canonical part_type spellings of ONE table through variant_identity (the only vocabulary).
+
+    parts_catalog -> the class convention (oem | oe_equivalent | aftermarket | ...); supplier_parts -> the stored value
+    (original | oem | ...). Collision-safe for supplier_parts: a row whose NEW index key already exists on another offer of
+    the same supplier+part (uq_sp_part_supplier_variant) is SKIPPED and reported with both ids - it is a legitimate
+    same-variant duplicate that needs a human/policy decision, never an error and never a reason to abort the task.
+    Counters are exact: examined (locked and looked at) / changed / skipped_collision / errors / remaining_after.
+    Missing / unknown / ambiguous labels are never rewritten (reported under placeholders_left / unmapped)."""
+    assert table in ("parts_catalog", "supplier_parts")
+    sp = table == "supplier_parts"
+    st: Dict[str, Any] = {"table": table, "examined": 0, "changed": 0, "skipped_collision": 0, "errors": 0, "remaining_after": 0,
+                          "collisions": [], "error_samples": [], "unmapped": {}, "placeholders_left": {}, "plan": {}}
+    await db.execute(text("SET LOCAL statement_timeout = '60s'"))
+    counts = {r[0]: r[1] for r in (await db.execute(text(
+        f"SELECT part_type, COUNT(*) FROM {table} WHERE part_type IS NOT NULL GROUP BY part_type"))).fetchall()}
+    await db.commit()
+    plan: Dict[str, Any] = {}
+    for v, n in counts.items():
+        r = _resolve_variant(v)
+        if r.kind == "ok":
+            new = r.stored if sp else r.key
+            if new != v:
+                plan[v] = (new, r.key)
+        elif r.kind == "missing":
+            st["placeholders_left"][v] = n
+        else:
+            st["unmapped"][v] = {"kind": r.kind, "rows": n}
+    st["plan"] = {k: v[0] for k, v in plan.items()}
+    if not plan:
+        logger.info("normalize_part_types: %s already clean (unmapped=%s placeholders=%s)", table, st["unmapped"], st["placeholders_left"])
+        return st
+    logger.info("normalize_part_types: %s plan = %s", table, st["plan"])
+    order = "part_id, id" if sp else "id"
+    for old, (new, key) in plan.items():
+        last: Optional[tuple] = None
+        collided_here = errors_here = 0
+        for _ in range(max_batches):
+            await db.execute(text("SET LOCAL statement_timeout = '30s'"))
+            cur = ""
+            params: Dict[str, Any] = {"old": old, "batch": batch}
+            if last is not None:
+                cur = "AND (part_id, id) > (CAST(:lp AS uuid), CAST(:li AS uuid))" if sp else "AND id > CAST(:li AS uuid)"
+                params.update({"lp": last[0], "li": last[1]})
+            cand = (await db.execute(text(
+                f"SELECT id::text, {'part_id' if sp else 'id'}::text FROM {table} WHERE part_type = :old {cur} "
+                f"ORDER BY {order} LIMIT :batch FOR UPDATE SKIP LOCKED"), params)).fetchall()
+            if not cand:
+                await db.commit()
+                break
+            ids = [r[0] for r in cand]
+            last = (cand[-1][1], cand[-1][0])
+            st["examined"] += len(ids)
+            blocked: Dict[str, Any] = {}
+            if sp:
+                for r in (await db.execute(text(
+                        f"SELECT c.id::text, o.id::text, c.supplier_id::text, c.part_id::text, o.part_type FROM supplier_parts c "
+                        f"JOIN supplier_parts o ON o.part_id = c.part_id AND o.supplier_id = c.supplier_id AND o.id <> c.id "
+                        f"WHERE c.id = ANY(CAST(:ids AS uuid[])) AND o.part_type IS NOT NULL AND {_VARIANT_KEY_SQL('o.part_type')} = :key"),
+                        {"ids": ids, "key": key})).fetchall():
+                    blocked[r[0]] = {"id": r[0], "blocked_by": r[1], "supplier_id": r[2], "part_id": r[3], "blocker_part_type": r[4],
+                                     "from": old, "to": new, "key": key}
+            todo = [i for i in ids if i not in blocked]
+            changed_ids: List[str] = []
+            try:
+                if todo:
+                    res = await db.execute(text(
+                        f"UPDATE {table} SET part_type = :new, updated_at = NOW() "
+                        f"WHERE id = ANY(CAST(:ids AS uuid[])) AND part_type = :old RETURNING id::text"),
+                        {"new": new, "old": old, "ids": todo})
+                    changed_ids = [r[0] for r in res.fetchall()]
+                await db.commit()
+            except Exception as exc:   # a concurrent writer created a colliding row after the check: go row by row
+                await db.rollback()
+                logger.warning("normalize_part_types: %s batch failed (%s) - retrying row by row", table, str(exc)[:160])
+                changed_ids = []
+                for rid in todo:
+                    try:
+                        async with db.begin_nested():
+                            r1 = await db.execute(text(
+                                f"UPDATE {table} SET part_type = :new, updated_at = NOW() WHERE id = CAST(:id AS uuid) AND part_type = :old RETURNING id::text"),
+                                {"new": new, "old": old, "id": rid})
+                            changed_ids += [x[0] for x in r1.fetchall()]
+                    except Exception as exc1:
+                        if "unique" in str(exc1).lower() or "duplicate key" in str(exc1).lower():
+                            blocked[rid] = {"id": rid, "blocked_by": "concurrent-writer", "from": old, "to": new, "key": key}
+                        else:
+                            errors_here += 1
+                            st["errors"] += 1
+                            if len(st["error_samples"]) < _PT_SAMPLE:
+                                st["error_samples"].append({"id": rid, "error": str(exc1)[:200]})
+                await db.commit()
+            st["changed"] += len(changed_ids)
+            _pt_manifest_append([{"ts": datetime.now(timezone.utc).isoformat(), "table": table, "id": i, "before": old, "after": new,
+                                  "key": key, "task": "normalize_part_types"} for i in changed_ids])
+            if blocked:
+                collided_here += len(blocked)
+                st["skipped_collision"] += len(blocked)
+                room = _PT_SAMPLE - len(st["collisions"])
+                st["collisions"].extend(list(blocked.values())[:max(room, 0)])
+                logger.warning("normalize_part_types: COLLISION %s %r->%r (key %r) skipped %d row(s), e.g. %s", table, old, new, key,
+                               len(blocked), [(b["id"], b["blocked_by"]) for b in list(blocked.values())[:5]])
+            await asyncio.sleep(0.2)
+        left = (await db.execute(text(f"SELECT COUNT(*) FROM {table} WHERE part_type = :old"), {"old": old})).scalar() or 0
+        await db.commit()
+        st["remaining_after"] += left
+        if left > collided_here + errors_here:
+            logger.info("normalize_part_types: %s %r: %d row(s) left unexamined (locked by another writer) - next cycle", table, old, left - collided_here - errors_here)
+    return st
+
+
+async def normalize_part_types(db: AsyncSession) -> Dict[str, Any]:
+    """Bring parts_catalog.part_type and supplier_parts.part_type to ONE vocabulary (variant_identity).
+
+    ROOT CAUSE of the 2026-11-06 failures (19:38Z and 22:25Z, status=error x3 each): the old task rewrote labels with a
+    blanket per-batch UPDATE and a private map ('מקורי' -> 'original'). supplier_parts is unique on
+    (part_id, supplier_id, variant key) since the per-variant indexes exist, so renaming a row onto a variant its supplier
+    already held for that part raised UniqueViolation; the single try/except around the whole task turned that one
+    legitimate collision into a failed task (nothing after it ran, the checkpoint was never saved, every cycle repeated it).
+    The previous success was the 05:15Z cycle (checkpoint 2026-11-06T05:23Z); before the variant index a rename could not collide
+    because the old (part_id, supplier_id) index already forbade the second row.
+    Now: spelling -> value comes from variant_identity (fail closed on unknown/ambiguous), collisions are skipped + reported
+    with both ids, counters are exact, and only an unexpected error makes the task status 'error'.
     """
     t0 = time.monotonic()
-    catalog_updated = supplier_updated = 0
-
     since = await _get_task_checkpoint(db, "normalize_part_types")
-
-    when_clauses = "\n            ".join(
-        f"WHEN LOWER(TRIM(part_type)) = '{k}' THEN '{v}'"
-        for k, v in PART_TYPE_MAP.items()
-    )
-    case_sql = f"CASE\n            {when_clauses}\n            ELSE part_type\n        END"
-
-    try:
-        # BOUNDED BATCHING (2026-07-13): the old single UPDATE matched every delta row
-        # — when the checkpoint was stale that was millions of rows locked in ONE tx for
-        # 27+ min, serializing all parts_catalog writes (lock storm that blocked the
-        # categorizer, importers, enrichment). Now: chunks of BATCH, committed each loop
-        # (locks released), FOR UPDATE SKIP LOCKED so it never waits on rows another
-        # writer holds, per-batch statement_timeout. Updated rows leave the match set,
-        # so no cursor is needed; locked rows are retried a few times then left for the
-        # next cycle. Same lock-safe pattern as bmw_oem_dedup / categorize_parts_batch.
-        BATCH = 5000
-        for table, counter_attr, order_col in (
-            ("parts_catalog", "catalog_updated", "id"),
-            ("supplier_parts", "supplier_updated", "part_id"),
-        ):
-            total_n = 0
-            empty_streak = 0
-
-            # DRIVE FROM THE SMALL SIDE (CLAUDE.md "scan-for-nothing" rule).
-            # The old predicate was `updated_at > :since AND LOWER(TRIM(part_type))
-            # = ANY(:keys)`. LOWER(TRIM(col)) is a function on the column, so no
-            # index can serve it, and after a large backfill the updated_at delta
-            # is millions of rows — the task timed out at 30s on EVERY cycle
-            # (confirmed in the live task tally 2026-07-28).
-            #
-            # The set of rows needing a fix is tiny and finite. Resolve the exact
-            # bad literals ONCE via a cheap DISTINCT on the indexed column, then
-            # batch on `part_type = ANY($list)`, which idx_parts_catalog_part_type
-            # can actually serve. It also converges: once fixed, the DISTINCT
-            # returns nothing and the task becomes a no-op.
-            await db.execute(text("SET LOCAL statement_timeout = '60s'"))
-            distinct_vals = [
-                r[0] for r in (await db.execute(text(
-                    f"SELECT DISTINCT part_type FROM {table} WHERE part_type IS NOT NULL"
-                ))).fetchall()
-            ]
-            # A value is only "bad" if normalizing it is a REAL change — not a
-            # pure case difference. parts_catalog holds 3.28M 'oem' + 1.09M
-            # 'aftermarket' (lowercase) and PART_TYPE_MAP targets the capitalised
-            # forms, so a naive check made this task try to rewrite 4.3M rows for
-            # a cosmetic case change. That query has never once completed inside
-            # the statement timeout — which is exactly why the task has been
-            # erroring forever. Nothing reads part_type case-sensitively, so a
-            # case-only difference is left alone and the task converges on the
-            # genuine garbage (Hebrew labels, doubled strings, 'סוג מוצר').
-            # Owner decision 2026-07-28: lowercase is the convention, so a
-            # case-only difference IS a real fix now (the earlier skip existed
-            # only because the map targeted the capitalised form and would have
-            # rewritten 4.3M rows the wrong way).
-            bad_vals = [
-                v for v in distinct_vals
-                if v.strip().lower() in PART_TYPE_MAP
-                and PART_TYPE_MAP[v.strip().lower()] != v
-            ]
-            if not bad_vals:
-                logger.info("normalize_part_types: %s already clean", table)
-                if counter_attr == "catalog_updated":
-                    catalog_updated = 0
-                else:
-                    supplier_updated = 0
-                continue
-            logger.info("normalize_part_types: %s bad values = %s", table, bad_vals[:12])
-
-            for _ in range(20000):  # hard cap; normally exits on empty match set
-                await db.execute(text("SET LOCAL statement_timeout = '30s'"))
-                result = await db.execute(
-                    text(f"""
-                        WITH batch AS (
-                            SELECT id FROM {table}
-                            WHERE part_type = ANY(CAST(:bad AS varchar[]))
-                            -- ORDER BY must match idx_{table}_part_type_part_id,
-                            -- otherwise Postgres index-scans and then SORTS the
-                            -- whole match set by id (cost 79k, times out at 30s).
-                            -- Ordering on the index columns is a pure index scan
-                            -- (startup cost 0.43) and still gives the consistent
-                            -- lock order that keeps FOR UPDATE deadlock-free.
-                            ORDER BY part_type, {order_col}
-                            LIMIT :batch
-                            FOR UPDATE SKIP LOCKED
-                        )
-                        UPDATE {table} t
-                        SET part_type = {case_sql}, updated_at = NOW()
-                        FROM batch WHERE t.id = batch.id
-                    """),
-                    {"bad": bad_vals, "batch": BATCH},
-                )
-                n = result.rowcount
-                await db.commit()  # release locks every batch
-                total_n += n
-                if n == 0:
-                    empty_streak += 1
-                    if empty_streak >= 3:
-                        break  # match set empty (or all locked — next cycle catches)
-                    await asyncio.sleep(2)
-                    continue
-                empty_streak = 0
-                await asyncio.sleep(0.2)  # be gentle to the harvester/importers
-            if counter_attr == "catalog_updated":
-                catalog_updated = total_n
-            else:
-                supplier_updated = total_n
-
+    results: Dict[str, Dict[str, Any]] = {}
+    table_failures: Dict[str, str] = {}
+    for table in ("parts_catalog", "supplier_parts"):
+        # one table failing (unexpected error) must never stop the other from being processed
+        try:
+            results[table] = await _normalize_part_type_table(db, table)
+        except Exception as exc:
+            await db.rollback()
+            logger.error("normalize_part_types: %s failed: %s", table, exc)
+            table_failures[table] = str(exc)[:300]
+            results[table] = {"table": table, "examined": 0, "changed": 0, "skipped_collision": 0, "errors": 1, "remaining_after": 0,
+                              "collisions": [], "error_samples": [{"table": table, "error": str(exc)[:200]}], "unmapped": {}, "placeholders_left": {}}
+    errors = sum(r["errors"] for r in results.values())
+    if errors == 0:
         await _save_task_checkpoint(db, "normalize_part_types")
-        logger.info(
-            "normalize_part_types (delta since %s): catalog=%d supplier=%d elapsed=%.1fs",
-            since.isoformat(), catalog_updated, supplier_updated, time.monotonic() - t0,
-        )
-    except Exception as exc:
-        await db.rollback()
-        logger.error("normalize_part_types failed: %s", exc)
-        return {"task": "normalize_part_types", "status": "error", "error": str(exc)}
-
+    cat, sup = results["parts_catalog"], results["supplier_parts"]
+    logger.info("normalize_part_types (since %s): catalog changed=%d supplier changed=%d collisions=%d errors=%d elapsed=%.1fs",
+                since.isoformat(), cat["changed"], sup["changed"], sup["skipped_collision"], errors, time.monotonic() - t0)
     return {
         "task": "normalize_part_types",
-        "status": "ok",
-        "catalog_updated": catalog_updated,
-        "supplier_updated": supplier_updated,
+        "status": "ok" if errors == 0 else "error",
+        "catalog_updated": cat["changed"],
+        "supplier_updated": sup["changed"],
+        "examined": cat["examined"] + sup["examined"],
+        "skipped_collision": cat["skipped_collision"] + sup["skipped_collision"],
+        "collisions": (cat["collisions"] + sup["collisions"])[:_PT_SAMPLE],
+        "errors": errors,
+        "error_samples": (cat["error_samples"] + sup["error_samples"])[:_PT_SAMPLE],
+        "remaining": cat["remaining_after"] + sup["remaining_after"],
+        "unmapped": {"parts_catalog": cat["unmapped"], "supplier_parts": sup["unmapped"]},
+        "placeholders_left": {"parts_catalog": cat["placeholders_left"], "supplier_parts": sup["placeholders_left"]},
         "delta_since": since.isoformat(),
+        "table_failures": table_failures,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -1296,6 +1295,7 @@ def _base_price_inputs_sql(only_ids: bool) -> str:
     return f"""
         SELECT pc.id::text AS id, pc.base_price, pc.importer_price_ils, pc.max_price_ils, pc.online_price_ils,
                bo.price_ils AS offer_ils, bo.price_usd AS offer_usd,
+               bo.name AS offer_supplier, bo.country AS offer_country,
                EXISTS (SELECT 1 FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
                        WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0) AS has_visible,
                (EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} <> 0)
@@ -1303,7 +1303,7 @@ def _base_price_inputs_sql(only_ids: bool) -> str:
                                 WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} = 0)) AS other_class_only
         FROM parts_catalog pc
         LEFT JOIN LATERAL (
-            SELECT sp.price_ils, sp.price_usd
+            SELECT sp.price_ils, sp.price_usd, s.name, s.country
             FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
             WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0 AND {rank} = 0
             ORDER BY {pp.price_basis_order_sql("pc.part_type", ":rate")}
@@ -1318,7 +1318,8 @@ def base_price_target(row: Any, usd_to_ils: float) -> Tuple[Optional[float], str
     other_class_only | no_basis. Pure: the same function the tests and the tasks use."""
     import price_policy as pp
     if row.offer_ils is not None or row.offer_usd is not None:
-        u = pp.unit_price(pp.offer_cost_ils(row.offer_ils, row.offer_usd, usd_to_ils))
+        u = pp.unit_price(pp.offer_cost_ils(row.offer_ils, row.offer_usd, usd_to_ils),
+                          getattr(row, "offer_supplier", None), getattr(row, "offer_country", None))  # supplier VAT basis (#129)
         if u is not None:
             return u.net, "offer"
     if row.has_visible or row.other_class_only:
@@ -3140,10 +3141,66 @@ async def merge_catalog_fitment_from_part_vehicle_fitment(db: AsyncSession, only
 # Task 8 – Refresh min / max prices on parts_catalog
 # =========================================================================
 
+async def refresh_min_max_for_parts(db: AsyncSession, part_ids, rate: float) -> int:
+    """THE one implementation of the min/max refresh (#127): used by the scheduled task below and by the per-part
+    update in catalog_scraper, so there is no second copy of the formula. Eligibility, VAT per supplier country and the
+    "max_price_ils only from an eligible LOCAL offer, else unchanged" rule are documented on refresh_min_max_prices.
+    Returns the number of parts updated; does not commit."""
+    import price_policy as pp
+    from offer_classification import class_rank_sql
+    return int((await db.execute(
+        text(
+            """
+                    WITH agg AS (
+                        SELECT sp.part_id,
+                               MIN(COALESCE(NULLIF(sp.price_ils, 0), sp.price_usd * :rate)
+                                   * CASE WHEN __LOCAL__ THEN __VATF__ ELSE 1 END) AS mn,
+                               MAX(COALESCE(NULLIF(sp.price_ils, 0), sp.price_usd * :rate) * __VATF__)
+                                   FILTER (WHERE __LOCAL__) AS mx_local
+                        FROM supplier_parts sp
+                        JOIN suppliers s ON s.id = sp.supplier_id
+                        JOIN parts_catalog pcx ON pcx.id = sp.part_id
+                        WHERE sp.part_id = ANY(CAST(:ids AS uuid[]))
+                          AND __ORDERABLE__
+                          AND COALESCE(NULLIF(sp.price_ils, 0), sp.price_usd * :rate) > 0
+                          AND __RANK__ = 0
+                          AND NOT __BLOCKED__
+                        GROUP BY sp.part_id
+                    ), u AS (
+                        UPDATE parts_catalog pc
+                           SET min_price_ils = agg.mn,
+                               max_price_ils = COALESCE(agg.mx_local, pc.max_price_ils),
+                               updated_at = NOW()
+                          FROM agg
+                         WHERE pc.id = agg.part_id
+                        RETURNING 1
+                    )
+                    SELECT COUNT(*) FROM u
+                    """.replace("__LOCAL__", pp.local_supplier_sql("s"))
+                .replace("__ORDERABLE__", pp.ORDERABLE_OFFER_SQL)
+                .replace("__RANK__", class_rank_sql("sp.part_type", "pcx.part_type"))
+                # #131: the IL consumer reference INCLUDES VAT. A VAT-INCLUSIVE supplier's stored cost already does, so it
+                # is used as is (x1.18 again = VAT twice: 112,437 parts); an exclusive one gets 18% once; a local supplier
+                # whose basis is unknown/unclassified contributes nothing (never silently priced as exclusive).
+                .replace("__VATF__", "(CASE WHEN LOWER(BTRIM(COALESCE(s.vat_price_basis, ''))) = 'inclusive' "
+                                     "THEN 1 ELSE CAST(:vat AS numeric) END)")
+                .replace("__BLOCKED__", pp.vat_basis_blocks_sql("s"))
+        ),
+        {"ids": [str(i) for i in part_ids], "rate": rate, "vat": 1 + pp.VAT_RATE},
+    )).scalar_one() or 0)
+
+
 async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
     """
-    Recalculate parts_catalog.min_price_ils / max_price_ils from live
-    supplier_parts prices (WITH 18% VAT applied).
+    Recalculate parts_catalog.min_price_ils / max_price_ils from live supplier_parts prices.
+
+    ELIGIBILITY AND VAT FOLLOW THE PRICE POLICY (#127, 2026-11-03). Only ORDERABLE offers contribute (available,
+    active supplier, not an internal/test supplier — price_policy.ORDERABLE_OFFER_SQL), with a positive cost
+    (price_ils, else price_usd x rate) and compatible with the part's own product class (the cleanup agent's rank
+    rule). min_price_ils = the cheapest such offer WITH its own VAT (18% local, 0% foreign). max_price_ils is the
+    policy's IL consumer reference (incl. 18% VAT; price_policy.catalog_estimate reads it as a local cost), so it is
+    written ONLY from eligible LOCAL offers and is left unchanged when there are none — a foreign or other-class
+    offer can never overwrite it (it used to: highest offer of any supplier x 1.18).
 
     BATCHED + PROGRESS-SAVING (rewritten 2026-07-28). Previously ONE unbounded
     UPDATE joined against every supplier_parts row changed since the checkpoint.
@@ -3195,33 +3252,10 @@ async def refresh_min_max_prices(db: AsyncSession) -> Dict[str, Any]:
             ids = list({r["part_id"] for r in win})
             hwm = max(r["updated_at"] for r in win)
 
-            n = (await db.execute(
-                text(
-                    """
-                    WITH agg AS (
-                        SELECT sp.part_id,
-                               MIN(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS mn,
-                               MAX(COALESCE(sp.price_ils, sp.price_usd * :rate)) * :vat AS mx
-                        FROM supplier_parts sp
-                        WHERE sp.part_id = ANY(:ids) AND sp.is_available = TRUE
-                        GROUP BY sp.part_id
-                    ), u AS (
-                        UPDATE parts_catalog pc
-                           SET min_price_ils = agg.mn,
-                               max_price_ils = agg.mx,
-                               updated_at = NOW()
-                          FROM agg
-                         WHERE pc.id = agg.part_id
-                        RETURNING 1
-                    )
-                    SELECT COUNT(*) FROM u
-                    """
-                ),
-                {"ids": ids, "rate": rate, "vat": 1 + VAT},
-            )).scalar_one()
+            n = await refresh_min_max_for_parts(db, ids, rate)
             await db.commit()
 
-            updated += int(n or 0)
+            updated += n
             batches += 1
             # Advance PAST this window and persist it immediately — this is what
             # makes a slow run recoverable instead of self-defeating.
@@ -3728,169 +3762,6 @@ async def dedup_catalog_parts(db: AsyncSession) -> Dict[str, Any]:
         "name_disagree": name_disagree,
         "batches": batches,
         "stopped_early": stopped_early,
-        "elapsed_s": round(time.monotonic() - t0, 2),
-    }
-
-async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
-    """
-    Link manufacturer-direct suppliers to their own-brand parts with computed pricing.
-    Idempotent — uses ON CONFLICT DO NOTHING on (supplier_id, part_id).
-    Heavy operation; only runs on demand via the admin API, not in run_all_tasks.
-
-    REAL_DATA_ONLY rule: only manufacturer-specific suppliers are linked here.
-    Generic marketplace suppliers (eBay Motors, Motorstore IL) must NOT be added to
-    _UNIVERSAL_SUPPLIERS — their rows must come from real scrapers/importers only.
-    price_ils = base_price (mult=1.0) — 45% margin already in base_price.
-    """
-
-    import json
-    import uuid as _uuid
-
-    t0 = time.monotonic()
-
-    # ── Load active suppliers ────────────────────────────────────────────────
-    rows = (await db.execute(text(
-        "SELECT id, name, is_manufacturer, manufacturer_name "
-        "FROM suppliers WHERE is_active = TRUE ORDER BY priority"
-    ))).mappings().fetchall()
-    suppliers: Dict[str, Any] = {r["name"]: dict(r) for r in rows}
-
-    if not suppliers:
-        return {"task": "populate_supplier_parts", "status": "error",
-                "error": "No active suppliers found — run seed_data.py first"}
-
-    ils_rate: float = ILS_PER_USD  # from module-level constant (overridden by settings)
-    total_inserted = 0
-
-    async def _insert_batch(records: list) -> int:
-        if not records:
-            return 0
-        payload = json.dumps(records)
-        result = await db.execute(text("""
-            INSERT INTO supplier_parts (
-                id, supplier_id, part_id, supplier_sku,
-                price_usd, price_ils, shipping_cost_usd, shipping_cost_ils,
-                availability, warranty_months, estimated_delivery_days,
-                is_available, last_checked_at, created_at
-            )
-            SELECT
-                CAST(j->>'id' AS UUID),
-                CAST(j->>'supplier_id' AS UUID),
-                CAST(j->>'part_id' AS UUID),
-                j->>'supplier_sku',
-                CAST(j->>'price_usd' AS NUMERIC),
-                CAST(j->>'price_ils' AS NUMERIC),
-                CAST(j->>'shipping_cost_usd' AS NUMERIC),
-                CAST(j->>'shipping_cost_ils' AS NUMERIC),
-                j->>'availability',
-                CAST(j->>'warranty_months' AS INT),
-                CAST(j->>'estimated_delivery_days' AS INT),
-                CAST(j->>'is_available' AS BOOLEAN),
-                NOW(), NOW()
-            FROM json_array_elements(CAST(:payload AS json)) AS j
-            ON CONFLICT (supplier_id, part_id) DO NOTHING
-        """), {"payload": payload})
-        await db.commit()
-        return result.rowcount if result.rowcount and result.rowcount > 0 else len(records)
-
-    # ── Pass 1: Universal suppliers → all active parts ───────────────────────
-    offset = 0
-    while True:
-        parts = (await db.execute(text(
-            "SELECT id, category, part_type, base_price FROM parts_catalog "
-            "WHERE is_active = TRUE ORDER BY id OFFSET :o LIMIT :l"
-        ), {"o": offset, "l": _BATCH})).mappings().fetchall()
-        if not parts:
-            break
-
-        records: list = []
-        for part in parts:
-            part_id = str(part["id"])
-            base = float(part["base_price"] or 0)
-            if base <= 1.0:
-                base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
-            warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
-
-            for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _UNIVERSAL_SUPPLIERS:
-                if s_name not in suppliers:
-                    continue
-                price = round(base * mult, 2)
-                records.append({
-                    "id": str(_uuid.uuid4()),
-                    "supplier_id": str(suppliers[s_name]["id"]),
-                    "part_id": part_id,
-                    "supplier_sku": f"{prefix}-{part_id}",
-                    "price_usd": round(price / ils_rate, 2),
-                    "price_ils": price,
-                    "shipping_cost_usd": s_usd,
-                    "shipping_cost_ils": s_ils,
-                    "availability": avail,
-                    "warranty_months": warranty,
-                    "estimated_delivery_days": days,
-                    "is_available": is_av,
-                })
-
-        total_inserted += await _insert_batch(records)
-        offset += _BATCH
-
-    # ── Pass 2: Manufacturer-direct suppliers → filtered by manufacturer ──────
-    for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _MANUFACTURER_SUPPLIERS:
-        if s_name not in suppliers:
-            continue
-        sup = suppliers[s_name]
-        mfr = sup.get("manufacturer_name") if sup.get("is_manufacturer") else None
-        where = "AND LOWER(manufacturer) = LOWER(:mfr)" if mfr else ""
-        params_base: Dict[str, Any] = {"mfr": mfr} if mfr else {}
-
-        offset = 0
-        while True:
-            parts = (await db.execute(text(
-                f"SELECT id, category, part_type, base_price FROM parts_catalog "
-                f"WHERE is_active = TRUE {where} ORDER BY id OFFSET :o LIMIT :l"
-            ), {**params_base, "o": offset, "l": _BATCH})).mappings().fetchall()
-            if not parts:
-                break
-
-            records = []
-            for part in parts:
-                part_id = str(part["id"])
-                base = float(part["base_price"] or 0)
-                if base <= 1.0:
-                    base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
-                warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
-                price = round(base * mult, 2)
-                records.append({
-                    "id": str(_uuid.uuid4()),
-                    "supplier_id": str(sup["id"]),
-                    "part_id": part_id,
-                    "supplier_sku": f"{prefix}-{part_id}",
-                    "price_usd": round(price / ils_rate, 2),
-                    "price_ils": price,
-                    "shipping_cost_usd": s_usd,
-                    "shipping_cost_ils": s_ils,
-                    "availability": avail,
-                    "warranty_months": warranty,
-                    "estimated_delivery_days": days,
-                    "is_available": is_av,
-                })
-
-            total_inserted += await _insert_batch(records)
-            offset += _BATCH
-
-    # ── Final count ──────────────────────────────────────────────────────────
-    total_rows = (await db.execute(text("SELECT COUNT(*) FROM supplier_parts"))).scalar_one()
-    parts_covered = (await db.execute(text(
-        "SELECT COUNT(*) FROM (SELECT part_id FROM supplier_parts "
-        "GROUP BY part_id HAVING COUNT(DISTINCT supplier_id) >= 5) t"
-    ))).scalar_one()
-
-    logger.info("populate_supplier_parts: inserted=%d total_rows=%d", total_inserted, total_rows)
-    return {
-        "task": "populate_supplier_parts",
-        "status": "ok",
-        "inserted": total_inserted,
-        "total_supplier_parts_rows": total_rows,
-        "parts_with_5plus_suppliers": parts_covered,
         "elapsed_s": round(time.monotonic() - t0, 2),
     }
 
@@ -4416,6 +4287,43 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
     }
 
 
+async def validate_supplier_countries(db: AsyncSession) -> Dict[str, Any]:
+    """READ-ONLY monitor (#128): an ACTIVE supplier with priced offers whose country is missing or a placeholder
+    ('Unknown', 'Global', ...) has its VAT decided by price_policy.vat_rate WITHOUT country evidence (a name-only supplier
+    is treated as foreign, 0% VAT). That must not stay silent: the owner is alerted once a day with each supplier, its raw
+    country, its priced-offer count and the VAT it is being billed at. Never writes, never changes a rate."""
+    import price_policy as pp
+    t0 = time.monotonic()
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '30s'"))
+        total = int((await db.execute(text("SELECT COUNT(*) FROM suppliers WHERE is_active"))).scalar_one() or 0)
+        rows = (await db.execute(text(
+            "SELECT s.name, s.country, o.offers, o.priced FROM suppliers s "
+            "JOIN LATERAL (SELECT COUNT(*) AS offers, COUNT(*) FILTER (WHERE sp.is_available AND sp.price_ils > 0) AS priced "
+            "              FROM supplier_parts sp WHERE sp.supplier_id = s.id) o ON TRUE "
+            "WHERE s.is_active AND " + pp.country_problem_sql("s") + " AND o.priced > 0 ORDER BY o.priced DESC"))).mappings().all()
+    except Exception as exc:
+        await db.rollback()
+        logger.error("validate_supplier_countries failed: %s", exc)
+        return {"task": "validate_supplier_countries", "status": "error", "errors": [str(exc)[:200]]}
+    flagged = [{"supplier": r["name"], "country": r["country"], "problem": pp.country_problem(r["country"]),
+                "priced_offers": int(r["priced"]), "vat_now": pp.vat_rate(r["name"], r["country"])} for r in rows]
+    if flagged:
+        try:
+            from BACKEND_API_ROUTES import notify_owner as _notify
+            await _notify(
+                "supplier", "supplier country missing/invalid — VAT decided without evidence",
+                "\n".join(f"• {f['supplier']}: country={f['country']!r} ({f['problem']}), {f['priced_offers']} priced offers, "
+                          f"billed VAT {int(f['vat_now'] * 100)}%" for f in flagged[:12])
+                + "\nSet the supplier's real country (FIXES_TRACKER #128).",
+                severity="warning", alert_key="supplier_country_problem", cooldown_s=86400)
+        except Exception as _ne:
+            logger.warning("validate_supplier_countries notify_owner failed: %s", _ne)
+        logger.warning("validate_supplier_countries: %s", flagged)
+    return {"task": "validate_supplier_countries", "status": "ok", "scanned": total, "updated": 0, "flagged": len(flagged),
+            "suppliers": flagged[:20], "elapsed_s": round(time.monotonic() - t0, 2), "errors": []}
+
+
 TASK_REGISTRY: Dict[str, Any] = {
     "clean_part_names":          clean_part_names,
     "normalize_part_types":      normalize_part_types,
@@ -4444,9 +4352,9 @@ TASK_REGISTRY: Dict[str, Any] = {
     "generate_image_embeddings": _generate_image_embeddings_task,
     "auto_add_hebrew_brand_aliases": _auto_add_hebrew_brand_aliases_task,
     "validate_watchdog_actions": validate_watchdog_actions,
+    "validate_supplier_countries": validate_supplier_countries,
     "sync_transport_market_priority": _sync_transport_market_priority_task,
     # on-demand heavy tasks — NOT included in run_all_tasks
-    "populate_supplier_parts":   _populate_supplier_parts_task,
     "validate_migrations":       _validate_migrations_task,
 }
 
@@ -4641,6 +4549,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
             "enrich_pending_parts",
             "generate_image_embeddings",
             "validate_watchdog_actions",
+            "validate_supplier_countries",
         ]
 
         # Tasks permanently disabled for OOM — never re-enabled via agent_todos, even if a stale todo

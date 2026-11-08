@@ -42,6 +42,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — categorize at INGEST so parts never land
 # with a NULL category and depend on the self-healing task to find them.
@@ -357,6 +358,7 @@ async def main() -> None:
             if supplier_name not in supplier_cache:
                 supplier_cache[supplier_name] = await get_or_create_supplier(conn, supplier_name)
             supplier_id = supplier_cache[supplier_name]
+            _ph = PriceHistoryTracker(conn, "delek_multi_importer"); await _ph.snapshot(supplier_id)
 
             manufacturer_id = await get_manufacturer_id(conn, cfg["manufacturer"])
             log.info("supplier_id=%s manufacturer_id=%s", supplier_id, manufacturer_id)
@@ -365,6 +367,7 @@ async def main() -> None:
             log.info("Parsed %d valid parts from %d raw (brand %d)", len(parsed), len(raw_parts), brand_id)
 
             ins, upd, err = await upsert_parts(conn, parsed, supplier_id, manufacturer_id)
+            await _ph.flush()  # price_history for changed prices (price_history_writer)
             log.info("DONE brand %d: inserted=%d updated=%d errors=%d", brand_id, ins, upd, err)
 
     finally:

@@ -140,20 +140,47 @@ async def _write_supplier_part(
     coexists with OEM offers on the same catalog part. `touch_catalog=False` (priced parts) leaves
     parts_catalog entirely untouched."""
     out = {"writes": 0, "catalog_doc": None, "images": 0, "history": 0}
-    existing = (await db.execute(
-        text("""SELECT id, price_usd, price_ils FROM supplier_parts
-                WHERE supplier_id = CAST(:supplier_id AS uuid) AND part_id = CAST(:part_id AS uuid) LIMIT 1"""),
-        {"supplier_id": supplier_id, "part_id": part_id})).fetchone()
+    # ONE variant rule (variant_identity): the label is canonicalised BEFORE any uniqueness comparison or write; a label the
+    # shared function cannot place fails closed (nothing written for this part, reported) instead of being stored as typed.
+    from variant_identity import VariantLabelError, canonical_part_type
+    try:
+        offer_part_type = canonical_part_type(offer_part_type)
+    except VariantLabelError as exc:
+        out["variant_label_rejected"] = 1
+        out["variant_label_reason"] = str(exc)
+        return out
+    # Once same-supplier variants can coexist (per-variant unique indexes) there may be SEVERAL rows for this
+    # supplier+part: take the row whose variant agrees with the listing (an untyped row is compatible), never an
+    # arbitrary LIMIT 1 row. With only the legacy (part_id, supplier_id) index there is at most one row.
+    from offer_classification import normalize_type as _nt
+    _incoming = _nt(offer_part_type)
+    _rows = (await db.execute(
+        text("""SELECT id, price_usd, price_ils, part_type FROM supplier_parts
+                WHERE supplier_id = CAST(:supplier_id AS uuid) AND part_id = CAST(:part_id AS uuid)
+                ORDER BY created_at, id"""),
+        {"supplier_id": supplier_id, "part_id": part_id})).fetchall()
+
+    def _stored(row):
+        t = _nt(getattr(row, "part_type", None))
+        return None if t in ("unknown", "none", "null") else t
+
+    existing = next((r for r in _rows if _stored(r) == _incoming or not _stored(r) or not _incoming), None) if _rows else None
 
     old_price_usd: Optional[Decimal] = None
     old_price_ils: Optional[Decimal] = None
+    if _rows and existing is None:
+        # OFFER_DEDUPLICATION_POLICY 1.0.0: every stored row is a KNOWN, DIFFERENT class (aftermarket vs oe_equivalent):
+        # a different variant (class B). Leave the stored offers untouched and report it instead of overwriting
+        # their class/SKU (this branch is also required while the legacy (part_id, supplier_id) index still exists).
+        out["variant_conflict"] = 1
+        return out
     if existing:
         supplier_part_id = str(existing.id)
         old_price_usd = Decimal(str(existing.price_usd)) if existing.price_usd is not None else None
         old_price_ils = Decimal(str(existing.price_ils)) if existing.price_ils is not None else None
         await db.execute(
             text("""UPDATE supplier_parts
-                    SET price_usd = :price_usd, price_ils = :price_ils, supplier_sku = :supplier_sku,
+                    SET price_usd = :price_usd, price_ils = :price_ils, supplier_sku = COALESCE(supplier_sku, :supplier_sku),
                         supplier_url = :supplier_url, is_available = TRUE, availability = 'in_stock',
                         part_type = COALESCE(:ptype, part_type),
                         warranty_months = COALESCE(warranty_months, :w_months),
@@ -537,6 +564,7 @@ async def sync_aliexpress_prices(
         "parts_indexed": 0,
         "index_failures": 0,
         "sku_conflicts": 0,
+        "variant_skipped": 0,       # variant_conflict / variant_label_rejected: nothing written for the part
         "unpriced_checked": 0, "unpriced_updated": 0, "priced_checked": 0, "priced_updated": 0,
         "discovery_queries": 0, "candidates_added": 0, "api_calls": 0, "api_call_limit_hits": 0, "targeting": "",
         # searches that got NO answer from AliExpress (never recorded as no_match; the target stays eligible)
@@ -693,6 +721,14 @@ async def sync_aliexpress_prices(
                 logger.warning("AliExpress skip %s: OEM already held by another part of this supplier", part_number)
                 continue
 
+            if outcome.get("variant_conflict") or outcome.get("variant_label_rejected"):
+                # nothing was written: it is neither an update nor a match (it used to be counted and marked "matched")
+                await _mark_candidate(db, part.id, "no_match"); pending_writes += 1
+                report["variant_skipped"] += 1
+                logger.warning("AliExpress skip %s: %s", part_number,
+                               "variant label rejected" if outcome.get("variant_label_rejected") else "stored offers are a different variant")
+                continue
+
             report["parts_updated"] += 1
             report[part.population + "_updated"] += 1
             await _mark_candidate(db, part.id, "matched")
@@ -727,8 +763,8 @@ async def sync_aliexpress_prices(
     except Exception as exc:
         try:
             await db.rollback()
-        except Exception:
-            pass
+        except Exception as _rb:
+            logger.warning("sync_aliexpress_prices: rollback after failure also failed: %s", _rb)
         logger.error("sync_aliexpress_prices failed: %s", exc, exc_info=True)
         report["errors"].append(str(exc))
         return report

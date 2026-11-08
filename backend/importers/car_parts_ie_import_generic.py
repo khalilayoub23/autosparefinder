@@ -43,10 +43,12 @@ import json
 import os
 import re
 import signal
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import asyncpg
+from price_history_writer import record_row_change as _record_price_change
 
 # ── Graceful shutdown support ─────────────────────────────────────────────────
 _shutdown_flag = False
@@ -62,6 +64,7 @@ DB_DSN = (
     "@postgres_catalog:5432/autospare"
 )
 SUPPLIER_NAME = "Car-Parts.ie"
+_SKIP_LOG_LIMIT = 5          # skipped supplier_parts rows logged per run (all of them are counted)
 SUPPLIER_URL = "https://www.car-parts.ie"
 
 # Known manufacturer_ids for common brands (must match car_brands.id)
@@ -243,10 +246,12 @@ async def import_file(
         try:
             await conn.execute("SET synchronous_commit = off")
             await conn.execute("SET work_mem = '32MB'")
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"  [warn] session tuning not applied: {type(_e).__name__}: {str(_e)[:120]}", flush=True)
         supplier_id = await _ensure_supplier(conn)
-        inserted = updated = fitment_rows = supplier_rows = image_rows = 0
+        inserted = updated = fitment_rows = supplier_rows = image_rows = supplier_skipped = 0
+        parts_skipped = fitment_skipped = image_skipped = 0
+        skip_reasons: dict = {}      # 'ErrorClass: first line' -> count (parts_catalog rows that could not be written)
         checkpoint_at: int | None = None
 
         if start_from > 0:
@@ -294,8 +299,11 @@ async def import_file(
             # Rate updated 2026-08-26 (was 3.9, now 3.48 — live EUR/ILS; update quarterly).
             _EUR_ILS = float(os.getenv("EUR_ILS_RATE", "3.48"))
             price_ils = round(float(price_eur) * _EUR_ILS, 2) if price_eur else None
-            cost_ils = price_ils  # sp.price_ils IS the cost; no phantom-VAT strip
-            base_price_ils = round(cost_ils * 1.45, 2) if cost_ils else None
+            # #126: this is a FOREIGN (Irish) cost. importer_price_ils and max_price_ils are the price policy's
+            # LOCAL estimate inputs (18% VAT, price_policy.catalog_estimate), so they are never written from
+            # here: the foreign cost goes to online_price_ils (the estimate's 0%-VAT foreign input) and
+            # min_price_ils only. The importer cost of a part is left NULL on insert and untouched on update.
+            base_price_ils = round(price_ils * 1.45, 2) if price_ils else None
 
             # Build compatible_vehicles from top-level model OR per-part fitment array
             compatible_vehicles = []
@@ -339,10 +347,10 @@ async def import_file(
                     ) VALUES(
                         gen_random_uuid(), $1, $2, $3, $3,
                         $4, $5::uuid,
-                        $6, $12, $7::jsonb, $8::jsonb,
+                        $6, $11, $7::jsonb, $8::jsonb,
                         'aftermarket', 'new', 'OE_equivalent',
-                        $10, $11, $9, $9, $9,
-                        FALSE, $13, FALSE,
+                        NULL, $10, $9, $9, NULL,
+                        FALSE, $12, FALSE,
                         TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -372,11 +380,14 @@ async def import_file(
                         "in_stock": in_stock,
                     }),
                     json.dumps(compatible_vehicles),
-                    price_ils, cost_ils, base_price_ils,
+                    price_ils, base_price_ils,
                     description_text or None,
-                    name_missing,   # $13 -> needs_oem_lookup (RULE 7)
+                    name_missing,   # $12 -> needs_oem_lookup (RULE 7)
                 )
             except Exception as e:
+                parts_skipped += 1
+                _why = (type(e).__name__ + ": " + str(e).splitlines()[0])[:200] if str(e) else type(e).__name__
+                skip_reasons[_why] = skip_reasons.get(_why, 0) + 1
                 print(f"  [warn] skip {sku}: {e}", flush=True)
                 continue
 
@@ -408,11 +419,18 @@ async def import_file(
                         cv.get("engine") or None,
                     )
                     fitment_rows += 1
-                except Exception:
-                    pass
+                except Exception as _fe:
+                    fitment_skipped += 1
+                    if fitment_skipped <= _SKIP_LOG_LIMIT:
+                        print(f"  [warn] fitment skip {sku_raw}: {type(_fe).__name__}: {str(_fe)[:120].replace(chr(10), ' ').replace('{', '(').replace('}', ')')}", flush=True)
 
             try:
                 _wmonths, _wsource = _warranty_resolve(None)
+                # OFFER_DEDUPLICATION_POLICY class C: a price change of an existing offer must leave a price_history row.
+                _old_offer = await conn.fetchrow(
+                    "SELECT id, price_ils, price_usd FROM supplier_parts WHERE supplier_id=$1::uuid AND supplier_sku=$2",
+                    supplier_id, sku_raw,
+                )
                 await conn.execute(
                     """
                     INSERT INTO supplier_parts(
@@ -426,7 +444,7 @@ async def import_file(
                     )
                     ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key
                     DO UPDATE SET
-                        price_ils=EXCLUDED.price_ils,
+                        price_ils=COALESCE(EXCLUDED.price_ils, supplier_parts.price_ils), -- a price-less re-harvest keeps the stored price
                         is_available=EXCLUDED.is_available,
                         warranty_months=EXCLUDED.warranty_months,
                         warranty_source=EXCLUDED.warranty_source,
@@ -436,8 +454,15 @@ async def import_file(
                     supplier_id, part_id, sku_raw, price_ils, _wmonths, _wsource, url,
                 )
                 supplier_rows += 1
-            except Exception:
-                pass
+                await _record_price_change(conn, _old_offer, price_ils, "car_parts_ie_import")
+            except Exception as e:
+                # Data behaviour unchanged (the offer is skipped, autocommit leaves nothing half-written); the skip is now
+                # counted and the first few are logged with their reason (e.g. a unique/variant clash on the part+supplier).
+                supplier_skipped += 1
+                if supplier_skipped <= _SKIP_LOG_LIMIT:
+                    # one line, no braces: the stdout tail is a JSON report that log readers locate by its first "{"
+                    _why = str(e)[:160].replace("\n", " ").replace("{", "(").replace("}", ")")
+                    print(f"  [warn] supplier_parts skip {sku_raw}: {type(e).__name__}: {_why}", flush=True)
 
             # Part photo → parts_images (the SOURCE the thumbnail pipeline cleans/dedups/
             # serves). Connects the harvest pipeline to the thumbnail pipeline: a harvested
@@ -446,7 +471,7 @@ async def import_file(
             # No unique index on (part_id,url) → guard with NOT EXISTS to avoid re-harvest dups.
             if image_url and image_url.startswith("http"):
                 try:
-                    await conn.execute(
+                    _tag = await conn.execute(
                         """
                         INSERT INTO parts_images(id, part_id, url, is_primary, sort_order, created_at)
                         SELECT gen_random_uuid(), $1::uuid, $2::varchar, TRUE, 0, NOW()
@@ -456,10 +481,28 @@ async def import_file(
                         """,
                         part_id, image_url,
                     )
-                    image_rows += 1
-                except Exception:
-                    pass
+                    if _tag.endswith(" 1"):
+                        image_rows += 1
+                except Exception as _ie:
+                    image_skipped += 1
+                    if image_skipped <= _SKIP_LOG_LIMIT:
+                        print(f"  [warn] image skip {sku_raw}: {type(_ie).__name__}: {str(_ie)[:120].replace(chr(10), ' ').replace('{', '(').replace('}', ')')}", flush=True)
 
+        if parts_skipped:
+            # LOUD, data behaviour unchanged (exit code stays 0, queue status untouched): a model whose parts could not be written
+            # used to look like a clean "done". One ERROR line + a persistent record that health checks / people can grep.
+            _top = sorted(skip_reasons.items(), key=lambda kv: -kv[1])[:5]
+            print(f"ERROR car_parts_ie_import: {parts_skipped} of {len(parts_list)} parts NOT imported for brand={maker_key} "
+                  f"vehicle={vehicle_slug or model_name!r}; top reasons: {_top}", file=sys.stderr, flush=True)
+            try:
+                _sl = Path(__file__).resolve().parent.parent / "state" / "logs" / "cpie_import_skips.log"
+                _sl.parent.mkdir(parents=True, exist_ok=True)
+                with open(_sl, "a") as _f:
+                    _f.write(json.dumps({"ts": datetime.utcnow().isoformat() + "Z", "brand": maker_key, "vehicle": vehicle_slug or model_name,
+                                         "scanned": len(parts_list), "inserted": inserted, "updated": updated, "skipped": parts_skipped,
+                                         "reasons": dict(_top)}, ensure_ascii=False) + "\n")
+            except Exception as _le:
+                print(f"  [warn] could not write cpie_import_skips.log: {_le}", file=sys.stderr, flush=True)
         return {
             "manufacturer": manufacturer,
             "model": model_name,
@@ -468,7 +511,12 @@ async def import_file(
             "parts_updated": updated,
             "fitment_rows": fitment_rows,
             "supplier_rows": supplier_rows,
+            "supplier_skipped": supplier_skipped,
             "image_rows": image_rows,
+            "parts_skipped": parts_skipped,
+            "skip_reasons": dict(sorted(skip_reasons.items(), key=lambda kv: -kv[1])[:5]),
+            "fitment_skipped": fitment_skipped,
+            "image_skipped": image_skipped,
             "checkpoint_at": checkpoint_at,
         }
     finally:

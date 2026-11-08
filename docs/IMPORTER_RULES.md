@@ -404,6 +404,17 @@ you cannot tell which importer to fix or which source to re-harvest. Without
 - [ ] `warranty_months` AND `warranty_source` are in every `supplier_parts` INSERT and
       DO UPDATE SET — both or neither; never one without the other.
 - [ ] Per-row `async with conn.transaction()` savepoints on row-level loops.
+- [ ] `supplier_parts.part_type` is written ONLY with a value from `variant_identity` (`canonical_part_type` /
+      `variant_key`). An unknown or ambiguous label is skipped and reported — never defaulted, never stored raw
+      (Hebrew `מקורי`/`חליפי` included). The unique index `uq_sp_part_supplier_variant` evaluates the stored value;
+      a raw label can collide with a canonical sibling (2026-11-07: 7 rolled-back restore rows). *(manual — no
+      `audit_importers.py` rule yet; add one together with its fixture before relying on it)*
+- [ ] An UPDATE of an existing offer's price leaves a `price_history` row through `backend/price_history_writer.py`
+      (`PriceHistoryTracker.snapshot` before the upserts, `flush` after; or `record_row_change`). First inserts and
+      unchanged prices write nothing; a history failure is logged and never aborts the import. *(manual — no audit rule yet)*
+- [ ] No silent drops: every `parts_catalog`/`supplier_parts` row the importer could not write is counted with its
+      reason (`skip_reasons`) and logged at ERROR with an example id. A hard-coded brand/manufacturer id list in front of a
+      foreign key is a silent drop waiting to happen (car-parts.ie: 145 of 176 brands, FIXES_TRACKER #140). *(manual)*
 
 **Data quality (manual):**
 - [ ] `categorize_on_ingest()` called for every `parts_catalog` INSERT (or `'כללי'` for

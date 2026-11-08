@@ -206,6 +206,7 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
 
     for l in losers:
         lid = l["id"]
+        kept_offers = 0
 
         # ── 2. SUPPLIER OFFERS — never abandon one ───────────────────────────
         offers = await conn.fetch(
@@ -221,19 +222,13 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
                         "UPDATE supplier_parts SET part_id = $1, updated_at = NOW() "
                         "WHERE id = $2", cid, o["id"])
             else:
-                # The canonical already has this supplier. Keep the CHEAPER cost —
-                # the customer price is derived from the cheapest reachable offer,
-                # so silently keeping the dearer one raises what we quote.
-                lp, cp = float(o["price_ils"] or 0), float(same["price_ils"] or 0)
-                if lp > 0 and (cp <= 0 or lp < cp):
-                    st["sp_price_improved"] += 1
-                    if not dry:
-                        await conn.execute(
-                            "UPDATE supplier_parts SET price_ils = $1, updated_at = NOW() "
-                            "WHERE id = $2", lp, same["id"])
-                st["sp_dropped"] += 1
-                if not dry:
-                    await conn.execute("DELETE FROM supplier_parts WHERE id = $1", o["id"])
+                # OFFER_DEDUPLICATION_POLICY 1.0.0: the canonical already has an offer from this supplier, but the
+                # loser's offer has its own SKU/variant/URL/price history. Different SKU => not provably the same
+                # commercial offer (class B/F), so it is NEVER deleted and the canonical's price is never overwritten
+                # (that lifted a price without a price_history row and destroyed the loser's history by FK cascade).
+                # The offer stays on the loser part, which therefore stays active (step 5).
+                st["sp_kept_policy"] = st.get("sp_kept_policy", 0) + 1
+                kept_offers += 1
 
         # ── 3. FITMENT ───────────────────────────────────────────────────────
         fits = await conn.fetch(
@@ -267,7 +262,8 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
                         "UPDATE parts_images SET part_id = $1 WHERE id = $2", cid, im["id"])
 
         # ── 5. SOFT DELETE with a reference back to the master ───────────────
-        if not dry:
+        # (not while the loser still carries an offer that policy forbids moving or deleting)
+        if not dry and not kept_offers:
             await conn.execute(
                 """
                 UPDATE parts_catalog
@@ -359,10 +355,10 @@ async def repair_stranded(dry: bool) -> None:
         WHERE p.specifications ? 'dedup_merged_into' AND NOT p.is_active
         """
     )
-    moved = improved = dropped = 0
+    moved = kept_policy = 0
     for r in rows:
         same = await conn.fetchrow(
-            "SELECT id, price_ils FROM supplier_parts WHERE part_id=$1 AND supplier_id=$2",
+            "SELECT id FROM supplier_parts WHERE part_id=$1 AND supplier_id=$2",
             r["canon"], r["supplier_id"])
         if same is None:
             moved += 1
@@ -371,18 +367,11 @@ async def repair_stranded(dry: bool) -> None:
                     "UPDATE supplier_parts SET part_id=$1, updated_at=NOW() WHERE id=$2",
                     r["canon"], r["off_id"])
         else:
-            lp, cp = float(r["price_ils"] or 0), float(same["price_ils"] or 0)
-            if lp > 0 and (cp <= 0 or lp < cp):
-                improved += 1
-                if not dry:
-                    await conn.execute(
-                        "UPDATE supplier_parts SET price_ils=$1, updated_at=NOW() WHERE id=$2",
-                        lp, same["id"])
-            dropped += 1
-            if not dry:
-                await conn.execute("DELETE FROM supplier_parts WHERE id=$1", r["off_id"])
-    print(f"[repair] stranded={len(rows)} moved={moved} price_improved={improved} "
-          f"dropped_redundant={dropped} dry={dry}")
+            # OFFER_DEDUPLICATION_POLICY 1.0.0: same supplier on the canonical is NOT proof of the same offer (the
+            # loser's offer has its own SKU/variant/URL/history). Never lift its price onto the canonical (no
+            # price_history row) and never DELETE it (the FK cascade also deletes its price_history): leave it in place.
+            kept_policy += 1
+    print(f"[repair] stranded={len(rows)} moved={moved} kept_policy={kept_policy} dry={dry}")
     await conn.close()
 
 
@@ -512,6 +501,8 @@ def main() -> None:
     ap.add_argument("--repair-stranded", action="store_true",
                     help="rescue offers abandoned on already-retired rows")
     a = ap.parse_args()
+    import offer_policy
+    offer_policy.gate_or_exit("maintenance/merge_master_parts.py", a.dry_run)
     if a.repair_stranded:
         asyncio.run(repair_stranded(a.dry_run))
     elif a.all_brands:

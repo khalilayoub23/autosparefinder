@@ -7,6 +7,7 @@ import re
 import uuid
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import openpyxl
 
 # ONE category source of truth — categorize at INGEST so parts never land
@@ -161,6 +162,7 @@ async def main() -> None:
 
     conn = await asyncpg.connect(DB_DSN)
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "isuzu_excel_import"); await _ph.snapshot(supplier_id)
     inserted = updated = errors = 0
     fitment_rows = 0
     supplier_rows = 0
@@ -277,6 +279,7 @@ async def main() -> None:
             except Exception as e:
                 print(f"  Error [{r['sku']}]: {e}")
                 errors += 1
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

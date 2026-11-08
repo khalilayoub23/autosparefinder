@@ -76,6 +76,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import pdfplumber
 from dotenv import load_dotenv
 
@@ -861,6 +862,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
 
     to_insert, to_uprice, to_uname, to_ucatname, to_deact, to_react = [], [], [], [], [], []
     supplier_id = await _ensure_supplier(conn, manufacturer)
+    _ph = PriceHistoryTracker(conn, "supplier_pdf_import"); await _ph.snapshot(supplier_id)
     supplier_url = SUPPLIER_URL_MAP.get(manufacturer.upper(), '')
 
     for pdf_row in pdf_rows:
@@ -1014,6 +1016,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
             await conn.execute(
                 "UPDATE parts_catalog SET is_active=TRUE,updated_at=NOW() WHERE id=ANY($1::uuid[])", to_react)
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     return metrics
 
 

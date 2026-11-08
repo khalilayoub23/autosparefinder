@@ -53,6 +53,7 @@ from BACKEND_AUTH_SECURITY import (
     hash_password, publish_notification,
 )
 from currency_rate import get_usd_to_ils_rate
+from variant_identity import resolve as _resolve_variant_label
 from routes.utils import _guarded_task, _scan_bytes_for_virus
 from routes.schemas import (
     SuperAdminSettingCreateBody,
@@ -3472,6 +3473,7 @@ async def publish_social_post(
     media_url = _meta_in.get("media_url") or _meta_in.get("image_url")
     link = _meta_in.get("link") or _meta_in.get("cta_url")
     hashtags = re.findall(r"#([A-Za-z0-9_\u0590-\u05FF]+)", post.content or "")
+    video_key = _meta_in.get("video_key")
 
     for platform in platforms:
         if platform in registry.MEDIA_REQUIRED and not media_url:
@@ -3481,7 +3483,7 @@ async def publish_social_post(
             }
             continue
         res = await registry.dispatch(platform, post.content, media_url=media_url,
-                                      hashtags=hashtags, link=link)
+                                      hashtags=hashtags, link=link, video_key=video_key)
         platform_results[platform] = res
         if res.get("ok"):
             published_ids[platform] = res.get("id")
@@ -4490,8 +4492,9 @@ async def import_parts_excel(
         v = row[idx]
         return str(v).strip() if v is not None else None
 
-    created = updated = skipped = 0
+    created = updated = skipped = defaulted_part_type = 0
     errors = []
+    rejected_part_type = []   # [{row, label, reason}] - labels variant_identity cannot place are reported, never guessed
 
     for row_num, row in enumerate(rows[1:], start=2):
         sku_val = _get(row, 'sku')
@@ -4499,6 +4502,16 @@ async def import_parts_excel(
         if not sku_val or not name_val:
             skipped += 1
             continue
+        # parts_catalog.part_type = the variant CLASS (oem | oe_equivalent | aftermarket | ...) from the ONE shared vocabulary.
+        # Blank label -> keep the stored class (existing part) / documented upload default 'aftermarket' (new part, counted).
+        # Unknown / ambiguous label -> the row is skipped and reported in `rejected_part_type`.
+        _pt_label = _get(row, 'part_type')
+        _pt_res = _resolve_variant_label(_pt_label)
+        if _pt_res.kind in ("unknown", "ambiguous"):
+            rejected_part_type.append({"row": row_num, "label": _pt_label, "reason": _pt_res.reason})
+            skipped += 1
+            continue
+        _pt_class = _pt_res.key if _pt_res.ok else None
         try:
             price_raw = _get(row, 'base_price')
             try:
@@ -4517,7 +4530,7 @@ async def import_parts_excel(
                 existing.name          = name_val
                 existing.category      = _get(row, 'category') or existing.category
                 existing.manufacturer  = _get(row, 'manufacturer') or existing.manufacturer
-                existing.part_type     = _get(row, 'part_type') or existing.part_type
+                existing.part_type     = _pt_class or existing.part_type
                 existing.description   = _get(row, 'description') or existing.description
                 if price is not None:
                     existing.base_price = price
@@ -4531,13 +4544,15 @@ async def import_parts_excel(
                     name=name_val,
                     category=_get(row, 'category'),
                     manufacturer=_get(row, 'manufacturer'),
-                    part_type=_get(row, 'part_type') or 'aftermarket',
+                    part_type=_pt_class or 'aftermarket',
                     description=_get(row, 'description'),
                     base_price=price,
                     compatible_vehicles=compat,
                     is_active=True,
                 ))
                 created += 1
+                if not _pt_class:
+                    defaulted_part_type += 1
         except Exception as e:
             errors.append(f"שורה {row_num}: {str(e)}")
 
@@ -4547,6 +4562,8 @@ async def import_parts_excel(
         "updated": updated,
         "skipped": skipped,
         "errors": errors,
+        "rejected_part_type": rejected_part_type,
+        "defaulted_part_type": defaulted_part_type,
         "total_processed": created + updated,
     }
 

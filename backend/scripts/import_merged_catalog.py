@@ -16,6 +16,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 import psycopg2
+from price_history_writer import PriceHistoryTrackerSync
 from psycopg2.extras import execute_values
 
 
@@ -129,12 +130,9 @@ def get_database_url() -> str:
 
 def ensure_supporting_indexes(conn: psycopg2.extensions.connection) -> None:
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_parts_part_supplier
-            ON supplier_parts (part_id, supplier_id)
-            """
-        )
+        # supplier_parts uniqueness is owned by the schema (supplier_id+supplier_sku constraint and the per-variant
+        # partial indexes); this script must not recreate uq_supplier_parts_part_supplier - once the offer-policy
+        # migration drops it, recreating it would block same-supplier variants again (OFFER_DEDUPLICATION_POLICY 1.0.0).
         cur.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uix_pvf_part_mfr_model_year_from
@@ -343,9 +341,10 @@ def process_batch(
                     NOW(),
                     NOW()
                 FROM src s
-                ON CONFLICT (part_id, supplier_id)
+                -- OFFER_DEDUPLICATION_POLICY 1.0.0: identity is supplier + SKU. Keying on (part_id, supplier_id) silently
+                -- overwrote the SKU of a different variant of the same supplier; a clash on that index now fails loudly.
+                ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key
                 DO UPDATE SET
-                    supplier_sku = EXCLUDED.supplier_sku,
                     price_usd = EXCLUDED.price_usd,
                     price_ils = EXCLUDED.price_ils,
                     is_available = EXCLUDED.is_available,
@@ -435,6 +434,8 @@ def main() -> int:
         ensure_supporting_indexes(conn)
         ensure_temp_table(conn)
         supplier_id = get_supplier_id(conn)
+        _ph = PriceHistoryTrackerSync(conn.cursor(), "import_merged_catalog")
+        _ph.snapshot(supplier_id)
         conn.commit()
 
         print(f"Connected. Supplier ID: {supplier_id}")
@@ -482,6 +483,8 @@ def main() -> int:
             fitment_inserted += f_ins
             pending_batch.clear()
 
+        _ph.flush()  # price_history for changed prices (price_history_writer)
+        conn.commit()
         print("Import completed.")
         print(
             "SUMMARY "

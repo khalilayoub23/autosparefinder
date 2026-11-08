@@ -26,6 +26,7 @@ Usage:
 """
 import asyncio, json, os, re, sys, time, uuid, asyncpg, urllib.request
 import fitz
+from price_history_writer import PriceHistoryTracker
 from pathlib import Path
 
 # ONE category source of truth.
@@ -343,7 +344,9 @@ async def main():
             importer_name = f"Colmobil - {brand_en} Israel"
             supplier_id = await ensure_supplier(conn, importer_name)
 
+            _ph = PriceHistoryTracker(conn, "colmobil_import_v2"); await _ph.snapshot(supplier_id)
             await import_brand(conn, brand_en, parts, supplier_id, manufacturer_id)
+            await _ph.flush()  # price_history for changed prices (price_history_writer)
 
             # Post-import coverage report
             r = await conn.fetchrow(

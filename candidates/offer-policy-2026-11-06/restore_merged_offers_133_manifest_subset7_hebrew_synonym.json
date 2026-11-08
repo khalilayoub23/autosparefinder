@@ -1,0 +1,74 @@
+{
+ "run_id": "subset7_hebrew_synonym",
+ "created": "2026-11-06T17:33:11.630529Z",
+ "input_sha256": "1778da76ff124638deb249dc4f99573d0dd830dbfa0966d80d46df5bdaabfd46",
+ "policy": {
+  "policy_version": "1.0.0",
+  "policy_sha256": "9e05c714d3e193f381fe128e7e68e1c74abc2b091c02ed54aa7f6195e3318235"
+ },
+ "inserted": [
+  {
+   "id": "01cafce0-56b6-43df-9be2-64f7c0b7613f",
+   "part_id": "fba601bf-ef26-48f2-94ec-9914c99eccc6",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "9P1121252",
+   "price_ils": "9551.90",
+   "original_part_id": "561ccd75-c817-4c7f-905b-9225be59ed44",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "038f2e33-14ac-46a1-800c-9ef477860038",
+   "part_id": "535c77ed-6148-465d-9054-0724e9276a33",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "9A725372500",
+   "price_ils": "503.00",
+   "original_part_id": "584d10f5-0a56-4b29-86e2-37cc7528fc7a",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "03e7ddcd-4837-446a-ad71-66a4b21fdc88",
+   "part_id": "c4e7bf1d-06e1-4831-b46f-e43dc42aca05",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "84513876",
+   "price_ils": "839.22",
+   "original_part_id": "0213c539-ec73-428d-b936-6032382b707a",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "33d008ad-b2c4-49fd-8097-c1ce4cb65796",
+   "part_id": "6e8d969d-cece-466b-897d-980d802fb394",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "96958051",
+   "price_ils": "8.74",
+   "original_part_id": "ba11bb99-191d-4942-b34a-50d3a4d120d9",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "34d9ee42-952b-4a75-80d0-985ce40dec26",
+   "part_id": "f59ba502-7fda-4800-9b81-0521b766479d",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "42651733",
+   "price_ils": "1115.16",
+   "original_part_id": "6c0e8214-26ce-46c0-bc99-5e564790f23e",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "49e8b05c-1583-41f9-8b59-528343403da6",
+   "part_id": "ac609e60-5560-4411-bb75-7405acc13025",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "J413W",
+   "price_ils": "1129.64",
+   "original_part_id": "d3e991b0-bdb3-4824-942d-32a316d0c177",
+   "class": "DISTINCT_VARIANTS"
+  },
+  {
+   "id": "55faa78c-87f9-45d6-b799-f7ed805a2811",
+   "part_id": "8b217e15-ce84-4776-9238-ae0cbc74b614",
+   "supplier_id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "supplier_sku": "96475292",
+   "price_ils": "16.66",
+   "original_part_id": "e5d81e13-4a36-4b8c-b46b-99ac36eae9fe",
+   "class": "DISTINCT_VARIANTS"
+  }
+ ]
+}

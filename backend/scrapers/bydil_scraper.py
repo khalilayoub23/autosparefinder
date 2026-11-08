@@ -59,6 +59,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import httpx
 
 # ONE category source of truth — never a private ruleset here.
@@ -383,6 +384,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
     brand_id    = await ensure_entity(conn, "car_brands", "BYD")
     supplier_id = await ensure_entity(conn, "suppliers", "BYD IL (Shlomo Motors)",
                                       {"website": "https://bydauto.co.il"})
+    _ph = PriceHistoryTracker(conn, "bydil_scraper"); await _ph.snapshot(supplier_id)
     log.info("BYD brand_id=%s  supplier_id=%s", brand_id, supplier_id)
 
     stats = {"inserted": 0, "fitment": 0, "skipped": 0, "errors": 0}
@@ -516,6 +518,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
     except Exception:
         pass
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     log.info("Import done: inserted=%d fitment=%d skipped=%d errors=%d",

@@ -167,7 +167,6 @@ Deliverables:
   - SENDGRID_API_KEY
 - Confirm frontend production API URL build configuration.
 - Run and verify startup data tasks where required:
-  - populate_supplier_parts
   - validate_migrations
 - Confirm production-grade DB password and secret rotation plan.
 

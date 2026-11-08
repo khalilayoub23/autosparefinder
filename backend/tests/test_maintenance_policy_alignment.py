@@ -87,9 +87,12 @@ async def part(db, part_type="oem", *, base=None, importer=None, mx=None, online
 
 
 async def supplier(db, country="IL", *, active=True, name=None):
-    return (await db.execute(sa.text("""INSERT INTO suppliers (id, name, country, is_active)
-        VALUES (gen_random_uuid(), :n, :c, :a) RETURNING id::text"""),
-        {"n": name or f"MPA supplier {uuid.uuid4().hex[:10]}", "c": country, "a": active})).scalar_one()
+    # #129/#131: a LOCAL supplier with an unknown/NULL VAT basis is blocked from price inputs (price_policy.vat_basis_blocks_sql);
+    # production local suppliers are classified, so the fixture classifies its local supplier ('exclusive' = cost ex-VAT).
+    return (await db.execute(sa.text("""INSERT INTO suppliers (id, name, country, is_active, vat_price_basis)
+        VALUES (gen_random_uuid(), :n, :c, :a, :b) RETURNING id::text"""),
+        {"n": name or f"MPA supplier {uuid.uuid4().hex[:10]}", "c": country, "a": active,
+         "b": "exclusive" if country == "IL" else None})).scalar_one()
 
 
 async def offer(db, pid, *, ils=None, usd=None, country="IL", klass=None, url=True, available=True, sup=None):

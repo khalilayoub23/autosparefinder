@@ -25,7 +25,7 @@ Pricing (international/ex-VAT, CLAUDE.md policy):
     price_ils        = price_usd * usd_to_ils      # our cost (ex-VAT)
     shipping_cost_ils= shipping_usd * usd_to_ils    # REAL per-offer IL shipping
     base_price       = price_ils * 1.45             # 45% margin  (only if unpriced)
-    max_price_ils    = price_ils * 1.18             # consumer ref (only if unpriced)
+    # max_price_ils is NOT written: a foreign (JP) source never sets the Israeli consumer reference (#127)
 """
 import asyncio
 import json
@@ -35,10 +35,33 @@ import sys
 from collections import defaultdict
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE warranty source of truth — resolve() returns (months, source);
 # never hardcode a warranty or drop its provenance. See warranty_policy.py.
 from warranty_policy import resolve as _warranty_resolve
+from variant_identity import canonical_part_type, resolve as _resolve_variant
+
+# Amayama is a genuine-OEM parts seller: an option WITHOUT a type label has always been stored 'oem' (source rule, kept).
+_SOURCE_DEFAULT_PART_TYPE = canonical_part_type("oem")
+
+
+def _offer_part_type(option: dict):
+    """Variant to store for the chosen Amayama option, through the shared vocabulary.
+    * no label            -> the source default 'oem' (unchanged historical behaviour)
+    * 'genuine'/'oem'/... -> 'oem' (Amayama's historical spelling of the OEM identity; index key identical to 'original')
+    * 'analog'/aftermarket -> 'aftermarket' (was wrongly stored as 'oem' before)
+    * unknown / ambiguous -> REJECT: returns the sentinel _REJECT, the offer is skipped and counted, never written NULL/guessed."""
+    label = option.get("part_type")
+    r = _resolve_variant(label)
+    if r.kind == "missing":
+        return _SOURCE_DEFAULT_PART_TYPE
+    if not r.ok:
+        return _REJECT
+    return _SOURCE_DEFAULT_PART_TYPE if r.key == "oem" else r.stored
+
+
+_REJECT = object()
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 STATE = os.environ.get("AMAYAMA_PARTS_JSON", "/app/state/amayama_parts.json")
@@ -89,6 +112,7 @@ async def main(path: str) -> None:
                 "VALUES (gen_random_uuid(),'Amayama','JP',true,NOW(),NOW()) RETURNING id"
             )
         rate = await _usd_to_ils(conn)
+        _ph = PriceHistoryTracker(conn, "amayama_price_import"); await _ph.snapshot(supplier_id)
 
         by_oem = defaultdict(list)
         skipped = 0
@@ -115,7 +139,7 @@ async def main(path: str) -> None:
                 "shipping_ils": ship_ils,
             })
 
-        matched = filled = supplier_offers = unmatched = 0
+        matched = filled = supplier_offers = unmatched = variant_rejected = 0
         for norm, opts in by_oem.items():
             part_id = await conn.fetchval(
                 """
@@ -136,6 +160,10 @@ async def main(path: str) -> None:
             opts.sort(key=lambda o: o["price_ils"] + (o["shipping_ils"] or 0))
             best = opts[0]
             cp_ils, ship_ils = best["price_ils"], best["shipping_ils"]  # ship_ils may be None → NULL
+            ptype = _offer_part_type(best)
+            if ptype is _REJECT:      # unknown/ambiguous type label: fail closed - skipped and counted, never written untyped/guessed
+                variant_rejected += 1
+                continue
 
             await conn.execute(
                 """
@@ -143,7 +171,7 @@ async def main(path: str) -> None:
                     (id, supplier_id, part_id, supplier_sku, price_ils, price_usd,
                      availability, is_available, part_type, shipping_cost_ils,
                      warranty_months, warranty_source, created_at, updated_at)
-                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, 'oem', $6,
+                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, $9, $6,
                         $7, $8, NOW(), NOW())
                 -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
                 -- when the same OEM arrives from several sources the collision is on
@@ -156,6 +184,7 @@ async def main(path: str) -> None:
                 """,
                 supplier_id, part_id, f"AMY-{norm}", cp_ils, best["price_usd"], ship_ils,
                 *_warranty_resolve(best.get("warranty_months"), best.get("warranty")),
+                ptype,
             )
             supplier_offers += 1
 
@@ -167,20 +196,20 @@ async def main(path: str) -> None:
                                                '{amayama_options}', $2::jsonb, true),
                     online_price_ils = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE online_price_ils END,
                     base_price       = CASE WHEN (base_price IS NULL OR base_price=0) THEN $4 ELSE base_price END,
-                    max_price_ils    = CASE WHEN (base_price IS NULL OR base_price=0) THEN COALESCE(NULLIF(max_price_ils,0), $5) ELSE max_price_ils END,
                     min_price_ils    = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE min_price_ils END,
                     updated_at       = NOW()
                 WHERE id = $1
                 RETURNING (base_price = $4) AS was_filled
                 """,
-                part_id, opts_json, cp_ils, round(cp_ils * 1.45, 2), round(cp_ils * 1.18, 2),
+                part_id, opts_json, cp_ils, round(cp_ils * 1.45, 2),
             )
             if upd.endswith(" 1"):
                 filled += 1
 
         print(f"[amayama_import] input_rows={len(parts)} unique_oems={len(by_oem)} "
               f"matched={matched} price_filled={filled} supplier_offers={supplier_offers} "
-              f"unmatched={unmatched} skipped={skipped} rate={rate}")
+              f"unmatched={unmatched} skipped={skipped} variant_rejected={variant_rejected} rate={rate}")
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

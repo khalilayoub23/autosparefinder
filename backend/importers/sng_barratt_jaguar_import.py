@@ -47,10 +47,12 @@ import argparse, asyncio, json, logging, os, sys, uuid
 from datetime import datetime
 from pathlib import Path
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
+from variant_identity import resolve, resolve_text
 
 INPUT    = Path("/opt/autosparefinder/jaguar_parts_raw.ndjson")
 LOGS_DIR = Path("/opt/autosparefinder/logs")
@@ -88,9 +90,32 @@ def year_range(model):
 def sku(pn):
     return "JAG-" + pn.strip().replace("_","-")
 
-def part_type(tn):
-    t = (tn or "").lower()
-    return "original" if any(x in t for x in ("original","oem","genuine")) else "aftermarket"
+# Variant of one SNG record, decided ONLY by the shared vocabulary (variant_identity). SNG's  field is a short free-text
+# label ("Genuine Land Rover Part", "OEM Equivalent", "Economy", ...): resolve_text() matches whole known labels, so an
+# OE-equivalent listing is oe_equivalent and a genuine one original. A label it cannot place is NOT defaulted: the scraper's own
+#  is tried as second evidence (OE_equivalent -> oe_equivalent, generic -> aftermarket); if that cannot place it
+# either, the offer is written UNTYPED (NULL) and counted/logged. The same decision gives BOTH the supplier offer value (stored
+# spelling) and the parts_catalog class (index key), so the two can never disagree.
+VARIANT_STATS = {"from_label": 0, "from_tier": 0, "unresolved": 0}
+_UNRESOLVED_SEEN: dict = {}
+
+
+def variant_of(type_name, tier=None):
+    """-> (offer_part_type or None, catalog_class or None)."""
+    r = resolve_text(type_name)
+    if r.ok:
+        VARIANT_STATS["from_label"] += 1
+        return r.stored, r.key
+    t = resolve(tier) if tier else None
+    if t is not None and t.ok:
+        VARIANT_STATS["from_tier"] += 1
+        return t.stored, t.key
+    VARIANT_STATS["unresolved"] += 1
+    key = (type_name or "").strip()[:60]
+    _UNRESOLVED_SEEN[key] = _UNRESOLVED_SEEN.get(key, 0) + 1
+    if _UNRESOLVED_SEEN[key] == 1:
+        log.warning("SNG type %r (%s) not placed by variant_identity: offer written untyped", type_name, r.kind)
+    return None, None
 
 def base_price_ils(gbp):
     if not gbp or gbp <= 0: return None
@@ -130,8 +155,8 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                 title = (rec.get("title","") or "").strip()
                 if not title: skp+=1; continue
                 desc = " | ".join(filter(None,[rec.get("description","").strip(),rec.get("sales_note","").strip()]))
-                pt = part_type(rec.get("type_name",""))
                 tier = rec.get("aftermarket_tier")
+                pt, pt_class = variant_of(rec.get("type_name",""), tier)
                 gbp  = rec.get("price_gbp")
                 oem  = rec.get("base_part_number") or None
                 apps = rec.get("applications") or []
@@ -161,7 +186,7 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                         part_condition,is_active,needs_oem_lookup,created_at,updated_at)
                     VALUES(gen_random_uuid(),$1,$2,$3,'Jaguar',$4,
                            $5,$6,$7,$8,
-                           $9,0,0,$9,$9,$10::jsonb,$11::jsonb,
+                           $9,0,0,$9,NULL,$10::jsonb,$11::jsonb,
                            'new',TRUE,FALSE,NOW(),NOW())
                     ON CONFLICT(sku) DO UPDATE SET
                         name=EXCLUDED.name, description=EXCLUDED.description,
@@ -172,14 +197,13 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                         min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
                                       THEN EXCLUDED.min_price_ils
                                       ELSE parts_catalog.min_price_ils END,
-                        max_price_ils=EXCLUDED.max_price_ils,
                         compatible_vehicles=EXCLUDED.compatible_vehicles,
                         specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb
                                         || EXCLUDED.specifications::jsonb,
                         updated_at=NOW()
                     RETURNING id,(xmax=0) AS was_inserted""",
                     sku(pn), title, category(title,desc), JAGUAR_BRAND_ID,
-                    pt, desc or None, oem, tier,
+                    pt_class, desc or None, oem, tier,
                     base_price_ils(gbp), json.dumps(apps), specs)
 
                 if row is None: skp+=1; continue
@@ -259,6 +283,7 @@ async def run(dry_run=False, limit=None, skip_fitment=False):
     conn = await asyncpg.connect(DB_DSN)
     try:
         sid = await ensure_supplier(conn)
+        _ph = PriceHistoryTracker(conn, "sng_barratt_jaguar_import"); await _ph.snapshot(sid)
         total_ins, total_skp, total_proc = 0, 0, 0
         batch = []
         t0 = datetime.utcnow()
@@ -282,6 +307,7 @@ async def run(dry_run=False, limit=None, skip_fitment=False):
             total_ins+=i; total_skp+=s
         el=(datetime.utcnow()-t0).total_seconds()
         log.info("Done: processed=%d inserted=%d skipped=%d in %.1fs", total_proc,total_ins,total_skp,el)
+        log.info("Variant decisions: %s | unresolved type names: %s", VARIANT_STATS, dict(sorted(_UNRESOLVED_SEEN.items(), key=lambda x: -x[1])[:10]))
         cnt = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE manufacturer='Jaguar' AND is_active")
         log.info("Jaguar parts in catalog: %d", cnt)
 
@@ -298,6 +324,7 @@ async def run(dry_run=False, limit=None, skip_fitment=False):
             """, str(cnt))
         except Exception:
             pass
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

@@ -46,6 +46,7 @@ Last Updated: 2026-06-01
 """
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, json, urllib.request, urllib.parse, sys, uuid
+from price_history_writer import PriceHistoryTracker
 from html.parser import HTMLParser
 
 # ONE category source of truth — never a private ruleset here.
@@ -190,6 +191,7 @@ async def run():
     conn=await asyncpg.connect(DB_URL)
     try:
         supplier_id = await ensure_supplier(conn)
+        _ph = PriceHistoryTracker(conn, "kia_import"); await _ph.snapshot(supplier_id)
         ex=await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id=$1::uuid",KIA_MFR_ID)
         print(f"Existing Kia parts in DB: {ex}")
         ins=upd=err=0;errs=[]
@@ -260,6 +262,7 @@ async def run():
         if errs:
             print(f"  First errors:")
             for e in errs[:5]:print(f"    {e}")
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

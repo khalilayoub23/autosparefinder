@@ -35,6 +35,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import json
 import time
 import urllib.request
@@ -240,6 +241,7 @@ async def import_parts(parts: list) -> dict:
 
     conn = await asyncpg.connect(DSN)
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "subaru_il_importer"); await _ph.snapshot(supplier_id)
 
     inserted = 0
     updated = 0
@@ -371,6 +373,7 @@ async def import_parts(parts: list) -> dict:
             elapsed = time.time() - t0
             print(f"  Progress: {idx+1}/{len(parts)} — inserted={inserted} updated={updated} fitment={fitment_rows} ({elapsed:.1f}s)")
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
     elapsed = time.time() - t0
     result = {

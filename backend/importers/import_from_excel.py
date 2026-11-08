@@ -26,6 +26,13 @@ from dotenv import load_dotenv
 from manufacturer_normalization import normalize_manufacturer_name
 from workbook_normalizer import build_normalized_workbook, iter_normalized_rows
 from warranty_policy import resolve as _warranty_resolve
+from variant_identity import resolve as _resolve_variant, try_canonical
+
+
+def _catalog_part_type(label):
+    """parts_catalog convention = variant class; None (keep the stored value) when the label is blank/unknown/ambiguous."""
+    r = _resolve_variant(label)
+    return r.key if r.ok else None
 
 load_dotenv()
 
@@ -117,7 +124,7 @@ def load_normalized_records(brands=None):
             "sku": sku,
             "name": name,
             "price": parse_price(record.get("base_price")),
-            "part_type": clean(record.get("part_type")) or "unknown",
+            "part_type": clean(record.get("part_type")),   # raw source label; resolved by variant_identity at write time
             "is_available": is_av,
             "availability": av_code,
         })
@@ -144,7 +151,9 @@ def build_supplier_insert_sql(column_names):
         INSERT INTO supplier_parts
             ({columns_sql})
         VALUES ({placeholders})
-        ON CONFLICT DO NOTHING
+        ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
+            price_ils = EXCLUDED.price_ils, price_usd = EXCLUDED.price_usd, is_available = EXCLUDED.is_available,
+            availability = EXCLUDED.availability, updated_at = NOW()
     """
 
 
@@ -176,7 +185,7 @@ def build_supplier_insert_payload(column_names, supplier_id, part_id, rec, now, 
         "express_last_checked": now,
         "created_at": now,
         "updated_at": now,
-        "part_type": rec["part_type"] if rec["part_type"] != "unknown" else "OEM",
+        "part_type": try_canonical(rec["part_type"]),   # shared vocabulary; unknown/blank -> NULL (untyped), never a guessed "OEM"
     }
     return [values[column_name] for column_name in column_names]
 
@@ -262,17 +271,8 @@ async def run(brands=None, dry_run=False):
                 by_name[p['name'].strip()] = val
         print(f"  DB: {len(db_parts)} parts")
 
-        # Delete old supplier_parts
-        if not dry_run:
-            dr = await conn.execute("""
-                DELETE FROM supplier_parts WHERE supplier_id=$1
-                AND part_id IN (
-                    SELECT id
-                    FROM parts_catalog
-                    WHERE LOWER(manufacturer) = ANY($2::text[])
-                )
-            """, supplier_id, [m.lower() for m in mfr_variants if m])
-            print(f"  Deleted: {dr}")
+        # OFFER_DEDUPLICATION_POLICY 1.0.0: no wholesale delete+reinsert (it destroyed price_history via FK cascade and every
+        # variant absent from the file). The same supplier+SKU is updated in place (class C) by the upsert below.
 
         unique = normalized_records.get(sheet_name, [])
         stats["parsed"] = len(unique)
@@ -302,16 +302,13 @@ async def run(brands=None, dry_run=False):
             try:
                 await conn.execute("""
                     UPDATE parts_catalog
-                    SET part_type = CASE
-                            WHEN $1::text IS NOT NULL AND $1::text <> 'unknown' THEN LEFT($1::text, 50)
-                            ELSE COALESCE(NULLIF(part_type, ''), 'OEM')
-                        END,
+                    SET part_type = COALESCE($1::text, part_type),
                         base_price = CASE WHEN $2 > 0 THEN $2 ELSE base_price END,
                         max_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE max_price_ils END,
                         importer_price_ils = CASE WHEN importer_price_ils > 0 THEN importer_price_ils ELSE 0 END,
                         online_price_ils=0, updated_at=NOW()
                     WHERE id=$3
-                """, rec["part_type"], price, uuid.UUID(part_id))
+                """, _catalog_part_type(rec["part_type"]), price, uuid.UUID(part_id))
                 stats["cat_fixed"] += 1
                 payload = build_supplier_insert_payload(
                     insert_column_order,

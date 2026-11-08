@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — categorize at INGEST so parts never land
 # with a NULL category and depend on the self-healing task to find them.
@@ -334,9 +335,11 @@ async def main() -> None:
     conn = await asyncpg.connect(DATABASE_URL)
     try:
         supplier_id = await get_or_create_supplier(conn)
+        _ph = PriceHistoryTracker(conn, "mct_importer"); await _ph.snapshot(supplier_id)
         log.info("Supplier id=%s (%s)", supplier_id, SUPPLIER_NAME)
         for brand_id, brand_name in brands_to_run.items():
             await import_brand(brand_id, brand_name, conn, supplier_id)
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

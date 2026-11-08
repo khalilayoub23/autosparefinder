@@ -1,0 +1,865 @@
+{
+ "taken_at_utc": "2026-11-06T12:58:35.859088Z",
+ "snapshot_note": "single repeatable-read read-only transaction; counts drift naturally between runs (harvesters/importers write continuously)",
+ "supplier_parts": {
+  "total": 4248896,
+  "available": 1523234,
+  "unavailable": 2725662,
+  "typed": 370204,
+  "untyped": 3878692,
+  "priced": 1937468,
+  "with_url": 3347520,
+  "max_updated_at": "2026-11-06 00:27:36.315778",
+  "max_created_at": "2026-11-06 00:27:36.315778"
+ },
+ "supplier_parts_typed_by_type": {
+  "None": 3878692,
+  "original": 210837,
+  "aftermarket": 85473,
+  "oem": 73865,
+  "oe_equivalent": 26,
+  "remanufactured": 1,
+  "unknown": 1,
+  "used": 1
+ },
+ "distinct_part_supplier_pairs": 4248896,
+ "distinct_supplier_sku_pairs": 4248896,
+ "parts_catalog": {
+  "total": 4632819,
+  "active": 4137685
+ },
+ "price_history": {
+  "rows": 8671037,
+  "max_created_at": "2026-11-06 00:27:36.315778"
+ },
+ "per_supplier_all": [
+  {
+   "id": "88f6ce24-ab5f-4f99-8b41-03cf6828cf3d",
+   "name": "Car-Parts.ie",
+   "is_active": true,
+   "offers": 754529,
+   "available": 753042,
+   "typed": 0,
+   "max_updated": "2026-11-03 00:32:16.608960"
+  },
+  {
+   "id": "1c8bb3fb-2060-48d4-8b34-32f9e88f912f",
+   "name": "Kia OEM Parts Online",
+   "is_active": true,
+   "offers": 412288,
+   "available": 379,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:19:22.691664"
+  },
+  {
+   "id": "849c857e-761e-4d9c-b543-829ef0915036",
+   "name": "Toyota OEM Parts Online",
+   "is_active": true,
+   "offers": 367808,
+   "available": 100,
+   "typed": 0,
+   "max_updated": "2026-07-29 12:28:58.220207"
+  },
+  {
+   "id": "3b038e45-80b3-4d1a-9807-7bf5bd6ac2b0",
+   "name": "Official Manufacturer Sites",
+   "is_active": false,
+   "offers": 297447,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-09-11 06:00:00.108022"
+  },
+  {
+   "id": "8ab160b2-906b-4486-a943-aadc68e27f78",
+   "name": "Porsche OEM Parts Online",
+   "is_active": true,
+   "offers": 262808,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:31:43.977477"
+  },
+  {
+   "id": "6b6aea48-8d7b-44b9-8578-8b411c9159cf",
+   "name": "SNG Barratt",
+   "is_active": true,
+   "offers": 243895,
+   "available": 134893,
+   "typed": 243895,
+   "max_updated": "2026-10-26 22:57:05.704141"
+  },
+  {
+   "id": "64bebbe1-c221-4e15-880f-0cacbbba7392",
+   "name": "Lexus OEM Parts Online",
+   "is_active": true,
+   "offers": 220835,
+   "available": 1067,
+   "typed": 0,
+   "max_updated": "2026-06-22 22:23:44.333099"
+  },
+  {
+   "id": "c09a3f71-db96-4774-8ec1-e9659d230ec6",
+   "name": "BMW OEM Parts Online",
+   "is_active": true,
+   "offers": 210801,
+   "available": 17889,
+   "typed": 0,
+   "max_updated": "2026-07-12 15:34:28.109129"
+  },
+  {
+   "id": "8b9d7142-081e-4b0e-991a-803d2681c92b",
+   "name": "Mazda OEM Parts Online",
+   "is_active": true,
+   "offers": 182645,
+   "available": 8927,
+   "typed": 0,
+   "max_updated": "2026-06-22 21:48:13.573876"
+  },
+  {
+   "id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "name": "AutoParts Pro IL",
+   "is_active": true,
+   "offers": 115116,
+   "available": 98407,
+   "typed": 115115,
+   "max_updated": "2026-09-11 06:00:25.263855"
+  },
+  {
+   "id": "d66a156a-6cb3-4cc2-be59-2ee8d4af2dc4",
+   "name": "Volvo OEM Parts Online",
+   "is_active": true,
+   "offers": 105036,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:08:49.787393"
+  },
+  {
+   "id": "e2245287-2701-4441-b4a5-2505e98fc629",
+   "name": "MCT (Mayer Group)",
+   "is_active": true,
+   "offers": 76815,
+   "available": 11902,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:20:23.827289"
+  },
+  {
+   "id": "58e4fd19-e2af-4e56-8e39-ac839825e791",
+   "name": "Infiniti OEM Parts Online",
+   "is_active": true,
+   "offers": 67609,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-06-09 22:01:52.827601"
+  },
+  {
+   "id": "fd23d253-5d35-4de8-82c8-3b32eec085ef",
+   "name": "Champion Motors",
+   "is_active": true,
+   "offers": 64544,
+   "available": 64544,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:56:01.078407"
+  },
+  {
+   "id": "5acab6cc-04fa-42dd-a2ff-b1b1541307f4",
+   "name": "Mitsubishi OEM Parts Online",
+   "is_active": true,
+   "offers": 48042,
+   "available": 4,
+   "typed": 0,
+   "max_updated": "2026-07-29 12:57:17.625190"
+  },
+  {
+   "id": "d115c0bb-74f2-4c4e-85c4-52eaaf1f47c8",
+   "name": "Mopar OEM Parts Online",
+   "is_active": true,
+   "offers": 46966,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-09-11 05:51:32.157883"
+  },
+  {
+   "id": "bd5ed262-f3be-48fb-8085-bb58b9f22430",
+   "name": "Land Rover OEM Parts Online",
+   "is_active": true,
+   "offers": 46137,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-07-29 15:10:06.536443"
+  },
+  {
+   "id": "f3325479-6ee7-46f5-9e1c-468307d04cb0",
+   "name": "Kia Official Importer Israel",
+   "is_active": true,
+   "offers": 45320,
+   "available": 45320,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:19:22.733895"
+  },
+  {
+   "id": "4b83de86-bc9a-4690-ae29-0e5663cecaef",
+   "name": "BMW Delek Motors",
+   "is_active": true,
+   "offers": 44386,
+   "available": 34104,
+   "typed": 0,
+   "max_updated": "2026-10-24 02:02:48.158852"
+  },
+  {
+   "id": "3b9631db-2ae8-4639-97a5-65928f9acb99",
+   "name": "Fiat Official Importer Israel",
+   "is_active": true,
+   "offers": 39204,
+   "available": 38937,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:03.379403"
+  },
+  {
+   "id": "2700fe68-88a8-48e8-b8cc-f616b40564ec",
+   "name": "Hyundai OEM Parts Online",
+   "is_active": true,
+   "offers": 37902,
+   "available": 3,
+   "typed": 0,
+   "max_updated": "2026-07-29 16:47:53.701142"
+  },
+  {
+   "id": "7535b042-7535-42bb-8f27-0b52ca47b9ac",
+   "name": "eBay Motors",
+   "is_active": true,
+   "offers": 37733,
+   "available": 37536,
+   "typed": 0,
+   "max_updated": "2026-11-05 23:50:29.231262"
+  },
+  {
+   "id": "4e6def63-9cb6-4b19-8908-3ca19dd8581e",
+   "name": "Subaru Official Importer Israel",
+   "is_active": true,
+   "offers": 36136,
+   "available": 16834,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:49.587560"
+  },
+  {
+   "id": "e08a1d5d-0449-4952-a86e-ae0e2925dfe0",
+   "name": "Ford OEM Parts Online",
+   "is_active": true,
+   "offers": 36104,
+   "available": 2,
+   "typed": 0,
+   "max_updated": "2026-06-12 21:08:07.857634"
+  },
+  {
+   "id": "00e5e153-8138-4aea-97a2-32bcf1122071",
+   "name": "Jaguar OEM Parts Online",
+   "is_active": true,
+   "offers": 33833,
+   "available": 4,
+   "typed": 0,
+   "max_updated": "2026-07-29 22:29:15.792229"
+  },
+  {
+   "id": "be35f823-6540-4eea-ad1c-4314f805d05c",
+   "name": "Audi OEM Parts Online",
+   "is_active": true,
+   "offers": 32504,
+   "available": 545,
+   "typed": 0,
+   "max_updated": "2026-07-29 18:05:11.248337"
+  },
+  {
+   "id": "832a4d60-7b02-4c19-86e0-2b56ee40df23",
+   "name": "Kia Israel",
+   "is_active": true,
+   "offers": 30108,
+   "available": 19861,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:19:15.399626"
+  },
+  {
+   "id": "12288cfd-a81b-4e45-bcd0-20a29651009c",
+   "name": "Delek Motors Ford IL",
+   "is_active": true,
+   "offers": 28767,
+   "available": 22150,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:14:29.886013"
+  },
+  {
+   "id": "ab8b02f5-100a-422e-9df9-c3e1ff599be5",
+   "name": "Honda OEM Parts Online",
+   "is_active": true,
+   "offers": 28602,
+   "available": 1,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:27:45.413155"
+  },
+  {
+   "id": "d13a3d68-1918-4660-b94d-61b109b58121",
+   "name": "Nissan OEM Parts Online",
+   "is_active": true,
+   "offers": 26572,
+   "available": 3,
+   "typed": 0,
+   "max_updated": "2026-06-12 21:08:07.857634"
+  },
+  {
+   "id": "c98180f1-8821-4896-bc47-6a05267bfb69",
+   "name": "MINI Delek Motors",
+   "is_active": true,
+   "offers": 26037,
+   "available": 26037,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:14:29.886013"
+  },
+  {
+   "id": "32e2d26e-54dc-479a-b840-05ac9fe90006",
+   "name": "Ford Delek Motors",
+   "is_active": true,
+   "offers": 24864,
+   "available": 24864,
+   "typed": 0,
+   "max_updated": "2026-07-29 15:06:03.003926"
+  },
+  {
+   "id": "5b3674f4-dcff-47d8-8bca-0e5f09f2753b",
+   "name": "Colmobil - Hyundai Israel",
+   "is_active": true,
+   "offers": 21920,
+   "available": 21920,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:21:14.431293"
+  },
+  {
+   "id": "6fe3c08c-7954-468c-bb12-11fb85db39dc",
+   "name": "Subaru OEM Parts Online",
+   "is_active": true,
+   "offers": 19223,
+   "available": 22,
+   "typed": 0,
+   "max_updated": "2026-07-29 15:16:20.837580"
+  },
+  {
+   "id": "55d6d62b-1702-464f-83f9-4fc5128d5486",
+   "name": "Toyota Israel - Union Motors",
+   "is_active": true,
+   "offers": 19128,
+   "available": 19128,
+   "typed": 0,
+   "max_updated": "2026-08-06 00:37:03.166108"
+  },
+  {
+   "id": "f5f195ae-e1be-4b7e-bfdd-118b166d0bbc",
+   "name": "Acura OEM Parts Online",
+   "is_active": true,
+   "offers": 18436,
+   "available": 5733,
+   "typed": 0,
+   "max_updated": "2026-06-15 18:24:42.284979"
+  },
+  {
+   "id": "4d24f395-6800-4eed-a37f-cca760b5edfa",
+   "name": "Mazda Israel - Delek Motors",
+   "is_active": true,
+   "offers": 15423,
+   "available": 15423,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:16:49.725721"
+  },
+  {
+   "id": "235eda42-33b4-4977-8715-d24370837e89",
+   "name": "JLR Delek Motors",
+   "is_active": true,
+   "offers": 14895,
+   "available": 14895,
+   "typed": 0,
+   "max_updated": "2026-07-29 22:29:52.929685"
+  },
+  {
+   "id": "8581e3d1-1b19-40f5-b985-db6bdb8bd89a",
+   "name": "WEY Official Importer Israel",
+   "is_active": true,
+   "offers": 13086,
+   "available": 4371,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:56.825579"
+  },
+  {
+   "id": "dd9df210-d98f-4242-b8f5-cbb9d1d432a8",
+   "name": "Colmobil - Mitsubishi Israel",
+   "is_active": true,
+   "offers": 7025,
+   "available": 7025,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:30:24.794355"
+  },
+  {
+   "id": "043eb9a8-5139-403c-9ba7-16373a7f6fd4",
+   "name": "BYD IL (Shlomo Motors)",
+   "is_active": true,
+   "offers": 6875,
+   "available": 6875,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:53:35.141114"
+  },
+  {
+   "id": "2c6ef2e1-0d83-49e0-8050-c87e409adebd",
+   "name": "Jeep Official Importer Israel",
+   "is_active": true,
+   "offers": 6846,
+   "available": 6676,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:21.860171"
+  },
+  {
+   "id": "124b86e7-a133-4e41-9b58-53fa025cc200",
+   "name": "RAM Official Importer Israel",
+   "is_active": true,
+   "offers": 6841,
+   "available": 6671,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:32.036045"
+  },
+  {
+   "id": "9f7c3f7b-5d58-4dba-b67a-bcba3890d827",
+   "name": "Champion Motors IL",
+   "is_active": true,
+   "offers": 6373,
+   "available": 3364,
+   "typed": 6373,
+   "max_updated": "2026-10-10 02:03:37.681403"
+  },
+  {
+   "id": "6caa9b8f-f978-47b9-86e6-91f980ce955a",
+   "name": "Abarth Official Importer Israel",
+   "is_active": true,
+   "offers": 5732,
+   "available": 5416,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:53:06.476871"
+  },
+  {
+   "id": "11c30519-1811-4d20-947f-b3acf4b8b408",
+   "name": "Alfa Romeo Official Importer Israel",
+   "is_active": true,
+   "offers": 5718,
+   "available": 5451,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:53:18.987981"
+  },
+  {
+   "id": "f558a1b7-fc19-49bd-8190-ed9dd8ffcaa7",
+   "name": "Inbar Group - Land Rover Israel",
+   "is_active": true,
+   "offers": 4928,
+   "available": 4927,
+   "typed": 0,
+   "max_updated": "2026-07-02 08:36:26.953669"
+  },
+  {
+   "id": "895c015d-b535-46e1-9b3b-f473b8247b87",
+   "name": "Colmobil - JAECOO Israel",
+   "is_active": true,
+   "offers": 4798,
+   "available": 4798,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:41:18.516935"
+  },
+  {
+   "id": "ad1d02c5-7ce6-4a26-85e9-ea7fb515ac9e",
+   "name": "Colmobil - Genesis Israel",
+   "is_active": true,
+   "offers": 4514,
+   "available": 4514,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:34:58.058137"
+  },
+  {
+   "id": "c39c2970-d19b-4651-886c-f87c4296b947",
+   "name": "Motorstore IL",
+   "is_active": true,
+   "offers": 4396,
+   "available": 1730,
+   "typed": 0,
+   "max_updated": "2026-10-07 14:26:51.776010"
+  },
+  {
+   "id": "919001ab-8a59-431a-bcd6-d129d3783426",
+   "name": "AliExpress",
+   "is_active": true,
+   "offers": 3995,
+   "available": 3995,
+   "typed": 3995,
+   "max_updated": "2026-11-06 00:27:36.315778"
+  },
+  {
+   "id": "312f010f-f29c-4258-b4bd-d74a8c4a3eb8",
+   "name": "Geo Mobility - Zeekr Israel",
+   "is_active": true,
+   "offers": 2301,
+   "available": 2301,
+   "typed": 0,
+   "max_updated": "2026-07-29 16:21:46.897906"
+  },
+  {
+   "id": "4d44209a-ee4e-4ceb-8d06-8a1fd23781d9",
+   "name": "NIO Delek Motors IL",
+   "is_active": true,
+   "offers": 2277,
+   "available": 1306,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:33:46.384994"
+  },
+  {
+   "id": "71f2daa6-dc61-4099-bc83-73daff0459d4",
+   "name": "NIO Delek Motors",
+   "is_active": true,
+   "offers": 2269,
+   "available": 2269,
+   "typed": 0,
+   "max_updated": "2026-06-15 22:15:02.691872"
+  },
+  {
+   "id": "89594747-b780-40cd-979e-8efa8e18be35",
+   "name": "GM OEM Parts Online",
+   "is_active": true,
+   "offers": 1935,
+   "available": 410,
+   "typed": 0,
+   "max_updated": "2026-06-12 21:58:35.148257"
+  },
+  {
+   "id": "8237c52f-ec2b-4f8d-93e3-8fe66c02c830",
+   "name": "ASAP Network",
+   "is_active": false,
+   "offers": 1906,
+   "available": 1336,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:12:40.314346"
+  },
+  {
+   "id": "d9f7c614-87d2-4e89-827d-ac15db0039e0",
+   "name": "Delek Motors Voyah IL",
+   "is_active": true,
+   "offers": 1898,
+   "available": 1536,
+   "typed": 0,
+   "max_updated": "2026-07-29 15:09:19.009428"
+  },
+  {
+   "id": "06c89ee5-fca8-4a0e-9e0f-b0ae8a6f4033",
+   "name": "VOYAH Delek Motors",
+   "is_active": true,
+   "offers": 1870,
+   "available": 1870,
+   "typed": 0,
+   "max_updated": "2026-07-29 18:13:00.215301"
+  },
+  {
+   "id": "2092e6da-4477-4735-beb4-45302fbaed49",
+   "name": "Colmobil - Smart Israel",
+   "is_active": true,
+   "offers": 1825,
+   "available": 1825,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:37:31.061159"
+  },
+  {
+   "id": "e450bd13-cd19-4e44-a61f-5c49a2c8cc2d",
+   "name": "Volkswagen OEM Parts Online",
+   "is_active": true,
+   "offers": 1707,
+   "available": 1707,
+   "typed": 0,
+   "max_updated": "2026-09-11 05:53:31.023914"
+  },
+  {
+   "id": "2f9ada4a-9530-4525-a26f-26c42b807427",
+   "name": "Colmobil - ORA Israel",
+   "is_active": true,
+   "offers": 1386,
+   "available": 1386,
+   "typed": 0,
+   "max_updated": "2026-08-06 01:35:59.680221"
+  },
+  {
+   "id": "6fdfef6d-31a4-4fe4-93f5-82903f06ecaf",
+   "name": "Elite Parts",
+   "is_active": true,
+   "offers": 1313,
+   "available": 1309,
+   "typed": 0,
+   "max_updated": "2026-06-12 21:08:07.857634"
+  },
+  {
+   "id": "2668dd3b-5a76-4668-9992-2fedce597e1f",
+   "name": "Delek Motors MAXUS IL",
+   "is_active": true,
+   "offers": 1206,
+   "available": 679,
+   "typed": 0,
+   "max_updated": "2026-07-28 18:02:53.614292"
+  },
+  {
+   "id": "4f65cc6b-a25e-4897-8306-17a9b23f92f1",
+   "name": "M-HERO 2 Delek Motors",
+   "is_active": true,
+   "offers": 1174,
+   "available": 1174,
+   "typed": 0,
+   "max_updated": "2026-07-29 14:30:27.146988"
+  },
+  {
+   "id": "7a2f3f0d-85cd-4381-b414-95d326c19ae9",
+   "name": "M-HERO Delek Motors",
+   "is_active": true,
+   "offers": 1174,
+   "available": 1174,
+   "typed": 0,
+   "max_updated": "2026-07-29 14:30:27.788978"
+  },
+  {
+   "id": "fb46466c-70db-463d-a243-2dd023ddf1af",
+   "name": "Delek Motors IL",
+   "is_active": true,
+   "offers": 1070,
+   "available": 1070,
+   "typed": 0,
+   "max_updated": "2026-07-28 18:02:53.927320"
+  },
+  {
+   "id": "bdc690e8-3bc6-483b-ad3f-11e918969ee0",
+   "name": "Amayama",
+   "is_active": true,
+   "offers": 823,
+   "available": 823,
+   "typed": 823,
+   "max_updated": "2026-08-06 15:55:08.058460"
+  },
+  {
+   "id": "73aa0010-b988-47dd-9e18-4521ecb5c6d4",
+   "name": "Subaru Israel - Samelet Motors",
+   "is_active": true,
+   "offers": 591,
+   "available": 283,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:57.728078"
+  },
+  {
+   "id": "1ecf2cdb-dc38-43ed-9816-5a282af94f1a",
+   "name": "Lexus Official Importer Israel",
+   "is_active": true,
+   "offers": 484,
+   "available": 483,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:57:58.114392"
+  },
+  {
+   "id": "cfcb1d45-fade-45f2-ac89-d70fa43e516a",
+   "name": "BMW Spare Parts EU",
+   "is_active": true,
+   "offers": 138,
+   "available": 1,
+   "typed": 0,
+   "max_updated": "2026-09-10 07:53:23.098312"
+  },
+  {
+   "id": "602f5bfa-9dab-4a6a-9f1c-161e8b656f0b",
+   "name": "RockAuto",
+   "is_active": true,
+   "offers": 3,
+   "available": 3,
+   "typed": 3,
+   "max_updated": "2026-07-28 18:02:59.498740"
+  },
+  {
+   "id": "3b88f3f8-53e7-4a67-a03b-87e26c80c486",
+   "name": "Sandbox Supplier QA",
+   "is_active": false,
+   "offers": 1,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-05-14 16:46:44.270389"
+  }
+ ],
+ "top15_suppliers": [
+  {
+   "id": "88f6ce24-ab5f-4f99-8b41-03cf6828cf3d",
+   "name": "Car-Parts.ie",
+   "is_active": true,
+   "offers": 754529,
+   "available": 753042,
+   "typed": 0,
+   "max_updated": "2026-11-03 00:32:16.608960"
+  },
+  {
+   "id": "1c8bb3fb-2060-48d4-8b34-32f9e88f912f",
+   "name": "Kia OEM Parts Online",
+   "is_active": true,
+   "offers": 412288,
+   "available": 379,
+   "typed": 0,
+   "max_updated": "2026-08-09 23:19:22.691664"
+  },
+  {
+   "id": "849c857e-761e-4d9c-b543-829ef0915036",
+   "name": "Toyota OEM Parts Online",
+   "is_active": true,
+   "offers": 367808,
+   "available": 100,
+   "typed": 0,
+   "max_updated": "2026-07-29 12:28:58.220207"
+  },
+  {
+   "id": "3b038e45-80b3-4d1a-9807-7bf5bd6ac2b0",
+   "name": "Official Manufacturer Sites",
+   "is_active": false,
+   "offers": 297447,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-09-11 06:00:00.108022"
+  },
+  {
+   "id": "8ab160b2-906b-4486-a943-aadc68e27f78",
+   "name": "Porsche OEM Parts Online",
+   "is_active": true,
+   "offers": 262808,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:31:43.977477"
+  },
+  {
+   "id": "6b6aea48-8d7b-44b9-8578-8b411c9159cf",
+   "name": "SNG Barratt",
+   "is_active": true,
+   "offers": 243895,
+   "available": 134893,
+   "typed": 243895,
+   "max_updated": "2026-10-26 22:57:05.704141"
+  },
+  {
+   "id": "64bebbe1-c221-4e15-880f-0cacbbba7392",
+   "name": "Lexus OEM Parts Online",
+   "is_active": true,
+   "offers": 220835,
+   "available": 1067,
+   "typed": 0,
+   "max_updated": "2026-06-22 22:23:44.333099"
+  },
+  {
+   "id": "c09a3f71-db96-4774-8ec1-e9659d230ec6",
+   "name": "BMW OEM Parts Online",
+   "is_active": true,
+   "offers": 210801,
+   "available": 17889,
+   "typed": 0,
+   "max_updated": "2026-07-12 15:34:28.109129"
+  },
+  {
+   "id": "8b9d7142-081e-4b0e-991a-803d2681c92b",
+   "name": "Mazda OEM Parts Online",
+   "is_active": true,
+   "offers": 182645,
+   "available": 8927,
+   "typed": 0,
+   "max_updated": "2026-06-22 21:48:13.573876"
+  },
+  {
+   "id": "a6534df9-2b37-4370-a823-1571f7f5dcf3",
+   "name": "AutoParts Pro IL",
+   "is_active": true,
+   "offers": 115116,
+   "available": 98407,
+   "typed": 115115,
+   "max_updated": "2026-09-11 06:00:25.263855"
+  },
+  {
+   "id": "d66a156a-6cb3-4cc2-be59-2ee8d4af2dc4",
+   "name": "Volvo OEM Parts Online",
+   "is_active": true,
+   "offers": 105036,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:08:49.787393"
+  },
+  {
+   "id": "e2245287-2701-4441-b4a5-2505e98fc629",
+   "name": "MCT (Mayer Group)",
+   "is_active": true,
+   "offers": 76815,
+   "available": 11902,
+   "typed": 0,
+   "max_updated": "2026-07-29 13:20:23.827289"
+  },
+  {
+   "id": "58e4fd19-e2af-4e56-8e39-ac839825e791",
+   "name": "Infiniti OEM Parts Online",
+   "is_active": true,
+   "offers": 67609,
+   "available": 0,
+   "typed": 0,
+   "max_updated": "2026-06-09 22:01:52.827601"
+  },
+  {
+   "id": "fd23d253-5d35-4de8-82c8-3b32eec085ef",
+   "name": "Champion Motors",
+   "is_active": true,
+   "offers": 64544,
+   "available": 64544,
+   "typed": 0,
+   "max_updated": "2026-11-05 21:56:01.078407"
+  },
+  {
+   "id": "5acab6cc-04fa-42dd-a2ff-b1b1541307f4",
+   "name": "Mitsubishi OEM Parts Online",
+   "is_active": true,
+   "offers": 48042,
+   "available": 4,
+   "typed": 0,
+   "max_updated": "2026-07-29 12:57:17.625190"
+  }
+ ],
+ "suppliers_with_offers": 72,
+ "index_state": [
+  {
+   "idx": "supplier_parts_pkey",
+   "indisvalid": true,
+   "indisunique": true
+  },
+  {
+   "idx": "supplier_parts_supplier_id_supplier_sku_key",
+   "indisvalid": true,
+   "indisunique": true
+  },
+  {
+   "idx": "idx_supplier_parts_part_avail_price",
+   "indisvalid": true,
+   "indisunique": false
+  },
+  {
+   "idx": "idx_supplier_parts_part_type_part_id",
+   "indisvalid": true,
+   "indisunique": false
+  },
+  {
+   "idx": "ix_supplier_parts_part_id",
+   "indisvalid": true,
+   "indisunique": false
+  },
+  {
+   "idx": "ix_supplier_parts_supplier_id",
+   "indisvalid": true,
+   "indisunique": false
+  },
+  {
+   "idx": "uq_supplier_parts_part_supplier",
+   "indisvalid": true,
+   "indisunique": true
+  },
+  {
+   "idx": "ix_supplier_parts_updated_at",
+   "indisvalid": true,
+   "indisunique": false
+  }
+ ]
+}

@@ -1204,16 +1204,15 @@ async def _run_buckets(session_factory, fetch, specs, timeout_ms: Optional[int] 
 # GET /api/v1/parts/search
 # ==============================================================================
 
-# Quality-bucket -> part_type synonyms, ALL lowercase (compared against
-# lower(btrim(parts_catalog.part_type))). Mirrors PART_TYPE_MAP in db_update_agent so the
-# same vocabulary works whether a row holds the raw form ("oem") or the canonical
-# normalized form ("OEM"). Added 2026-07-20 with the case-sensitivity root fix.
-_PT_ORIGINAL = ["original", "oem_original", "genuine", "מקורי", "מקורימקורי"]
-_PT_OEM = ["oem", "oem_equivalent", "oe_equivalent", "oe"]
-_PT_AFTERMARKET = [
-    "aftermarket", "after market", "generic", "third party", "third_party",
-    "refurbished", "remanufactured", "תחליפי", "חליפיחליפי", "תחליפיתחליפי", "שוק משני",
-]
+# Quality-bucket -> part_type synonyms, ALL lowercase (compared against lower(btrim(parts_catalog.part_type))).
+# Derived from variant_identity (the ONE vocabulary) so the spellings accepted here can never drift from the
+# spellings the writers/normalizers produce. Bucket composition (UI grouping, not identity) is unchanged:
+# original = stored 'original'; oem = oem + oe_equivalent; aftermarket = aftermarket + remanufactured.
+from variant_identity import labels_for_stored as _pt_labels  # noqa: E402
+
+_PT_ORIGINAL = _pt_labels("original")
+_PT_OEM = _pt_labels("oem", "oe_equivalent")
+_PT_AFTERMARKET = _pt_labels("aftermarket", "remanufactured")
 
 
 @router.get("/api/v1/parts/search")

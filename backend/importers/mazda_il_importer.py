@@ -45,6 +45,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
@@ -180,6 +181,7 @@ async def main():
 
     conn = await asyncpg.connect(DSN)
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "mazda_il_importer"); await _ph.snapshot(supplier_id)
 
     inserted = updated = fitment_count = errors_count = 0
     errors = []
@@ -330,6 +332,7 @@ async def main():
             log.info("Progress: %d/%d | inserted=%d updated=%d fitment=%d errors=%d",
                      i + 1, len(raw_parts), inserted, updated, fitment_count, errors_count)
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
     elapsed = round(time.time() - start, 1)
     result = {

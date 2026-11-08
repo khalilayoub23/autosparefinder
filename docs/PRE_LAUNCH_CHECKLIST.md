@@ -43,11 +43,6 @@
 
 - [x] **DB password on VPS** — verified 2026-06-04: DB_PASSWORD is a 64-char hex key (256-bit entropy), NOT the dev default
 
-- [ ] **Run populate_supplier_parts** — links all parts to all suppliers (run once after first deploy):
-      ```
-      POST /api/v1/admin/db-agent/run/populate_supplier_parts
-      ```
-
 - [ ] **Run validate_migrations** — pre-flight check before first `alembic upgrade head` on production:
       ```
       POST /api/v1/admin/db-agent/run/validate_migrations
@@ -67,7 +62,7 @@
 - [x] 333 tests passing, 0 failing
 - [x] HF client — connection pool, retry on 503/429, Redis cache (736× speedup proven)
 - [x] Dual DB migrations at head (catalog + PII)
-- [x] populate_supplier_parts + validate_migrations wired as admin workers
+- [x] validate_migrations wired as an admin worker (populate_supplier_parts was removed 2026-11-07: it fabricated prices from base_price)
 - [x] All docker services with `restart: unless-stopped`
 - [x] .gitignore clean, no secrets in git history
 - [x] Dead code and duplicate files removed
@@ -78,7 +73,6 @@
 - [x] REAL_DATA_ONLY split: synthetic guard kept, REX_HARVEST_ENABLED=true added (2026-06-04)
 - [x] Search cache upgraded to Redis write-through with in-memory L1 fallback (2026-06-04)
 - [x] COMPANY_PHONE set to +972-53-242-6920, company vars added to docker-compose (2026-06-04)
-- [x] populate_supplier_parts implemented and running (78%+ parts now have supplier links) (2026-06-04)
 - [x] normalize_categories optimized — skips already-canonical 804K rows (2026-06-04)
 - [x] Golden rules added to claude.md (2026-06-04)
 

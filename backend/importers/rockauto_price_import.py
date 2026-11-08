@@ -18,7 +18,7 @@ Pricing (international/ex-VAT, same as eBay/online parts — CLAUDE.md policy):
     price_ils         = price_usd * usd_to_ils         # our cost (ex-VAT)
     online_price_ils  = price_ils
     base_price        = price_ils * 1.45               # 45% margin
-    max_price_ils     = price_ils * 1.18               # consumer ref (incl VAT)
+    # max_price_ils is NOT written: a foreign (US) source never sets the Israeli consumer reference (#127)
 Writes supplier_parts (RockAuto) with price + is_available, and updates
 parts_catalog base_price/online_price_ils ONLY when currently unpriced (never
 overwrites a real IL importer price).
@@ -30,10 +30,15 @@ import re
 import sys
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE warranty source of truth — resolve() returns (months, source);
 # never hardcode a warranty or drop its provenance. See warranty_policy.py.
 from warranty_policy import resolve as _warranty_resolve
+from variant_identity import canonical_part_type
+
+# RockAuto lists aftermarket parts; the stored variant comes from the ONE shared vocabulary, never a literal in the SQL.
+_OFFER_PART_TYPE = canonical_part_type("aftermarket")
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 STATE = os.environ.get("ROCKAUTO_PARTS_JSON", "/app/state/rockauto_parts.json")
@@ -79,6 +84,7 @@ async def main(path: str) -> None:
                 "VALUES (gen_random_uuid(),'RockAuto','US',true,NOW(),NOW()) RETURNING id"
             )
         rate = await _usd_to_ils(conn)
+        _ph = PriceHistoryTracker(conn, "rockauto_price_import"); await _ph.snapshot(supplier_id)
         # RockAuto international shipping to Israel — MEASURED live 2026-07-11 in
         # the RockAuto cart (OEM 04152-YZZA1 → Tel Aviv): cheapest option $57.99
         # (Economy). Per-ORDER floor, weight-scales above it. Converted at the
@@ -140,7 +146,7 @@ async def main(path: str) -> None:
                     (id, supplier_id, part_id, supplier_sku, price_ils, price_usd,
                      availability, is_available, part_type, shipping_cost_ils,
                      warranty_months, warranty_source, created_at, updated_at)
-                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, 'aftermarket', $6,
+                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'in_stock', true, $9, $6,
                         $7, $8, NOW(), NOW())
                 -- (part_id, supplier_id) is NOT the constraint that fires on re-import;
                 -- when the same OEM arrives from several sources the collision is on
@@ -154,6 +160,7 @@ async def main(path: str) -> None:
                 """,
                 supplier_id, part_id, f"RA-{norm}", cp_ils, cheapest["price_usd"], ship_ils,
                 *_warranty_resolve(cheapest.get("warranty_months"), cheapest.get("warranty")),
+                _OFFER_PART_TYPE,
             )
             supplier_offers += 1
 
@@ -166,13 +173,12 @@ async def main(path: str) -> None:
                                                '{rockauto_options}', $2::jsonb, true),
                     online_price_ils = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE online_price_ils END,
                     base_price       = CASE WHEN (base_price IS NULL OR base_price=0) THEN $4 ELSE base_price END,
-                    max_price_ils    = CASE WHEN (base_price IS NULL OR base_price=0) THEN COALESCE(NULLIF(max_price_ils,0), $5) ELSE max_price_ils END,
                     min_price_ils    = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE min_price_ils END,
                     updated_at       = NOW()
                 WHERE id = $1
                 RETURNING (base_price = $4) AS was_filled
                 """,
-                part_id, opts_json, cp_ils, round(cp_ils * 1.45, 2), round(cp_ils * 1.18, 2),
+                part_id, opts_json, cp_ils, round(cp_ils * 1.45, 2),
             )
             if upd.endswith(" 1"):
                 filled += 1
@@ -180,6 +186,7 @@ async def main(path: str) -> None:
         print(f"[rockauto_import] input_rows={len(parts)} unique_oems={len(by_oem)} "
               f"matched={matched} price_filled={filled} supplier_offers={supplier_offers} "
               f"unmatched={unmatched} skipped={skipped} rate={rate}")
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

@@ -60,6 +60,7 @@ import sys
 import uuid
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import pdfplumber
 
 sys.path.insert(0, '/app')
@@ -408,6 +409,7 @@ async def run():
     conn = await asyncpg.connect(DSN)
     try:
         supplier_id = await ensure_supplier(conn)
+        _ph = PriceHistoryTracker(conn, "zeekr_full_import"); await _ph.snapshot(supplier_id)
         log.info(f'Supplier ID: {supplier_id}')
 
         inserted = updated = skipped = fitment_count = 0
@@ -472,6 +474,7 @@ ZEEKR IMPORT COMPLETE
     Avg price (ILS)  : ₪{row['avg_price']}
 ============================================================""")
 
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

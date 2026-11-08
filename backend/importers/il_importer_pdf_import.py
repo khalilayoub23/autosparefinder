@@ -32,6 +32,8 @@ from typing import Optional
 import asyncpg
 import pdfplumber
 
+from variant_identity import canonical_part_type
+
 # ONE category source of truth — this INSERT used to hardcode
 # 'Parts & Accessories', which is not a category at all.
 from category_map import categorize_on_ingest
@@ -100,8 +102,6 @@ def compute_price_triple(raw_price: float, brand: str) -> tuple[float, float, fl
 
 # Words that indicate "in stock"
 IN_STOCK_WORDS = {"זמין", "yes", "available", "in stock", "במלאי"}
-# Words that indicate OEM (original) parts
-OEM_WORDS = {"מקורי", "original", "oem", "genuine"}
 
 
 def parse_price(raw: str) -> Optional[float]:
@@ -184,9 +184,9 @@ def parse_row(cells: list[str]) -> Optional[dict]:
         in_stock = True
 
     # --- Detect part type ---
-    part_type = "oem"
+    part_type = canonical_part_type("oem")
     if "תחליפי" in all_text or "T." in str(cells[0] if cells else ""):
-        part_type = "aftermarket"
+        part_type = canonical_part_type("aftermarket")
 
     # --- Detect warranty (raw text from PDF; warranty_policy.resolve() normalises) ---
     warranty_text = None

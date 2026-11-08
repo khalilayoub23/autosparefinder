@@ -26,6 +26,7 @@ import urllib.parse as up
 from pathlib import Path
 
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — the literal that used to sit in this
 # INSERT ('General Parts'/'Auto Parts') is not a category at all.
@@ -92,6 +93,7 @@ async def run_import():
         )
         sup = await conn.fetchrow("SELECT id FROM suppliers WHERE name='Kia Israel' LIMIT 1")
     supplier_id = str(sup["id"])
+    _ph = PriceHistoryTracker(conn, "import_kia_israel"); await _ph.snapshot(supplier_id)
     print(f"[DB] Supplier Kia Israel: {supplier_id}")
 
     stats = {"updated": 0, "inserted": 0, "skipped": 0, "errors": 0, "sp_upserted": 0}
@@ -214,6 +216,7 @@ async def run_import():
             pct = 100 * batch_count / len(parts_raw)
             print(f"  {batch_count}/{len(parts_raw)} ({pct:.0f}%) — updated={stats['updated']} inserted={stats['inserted']}")
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     print(f"\n[DONE] updated={stats['updated']}  inserted={stats['inserted']}  skipped={stats['skipped']}  errors={stats['errors']}")

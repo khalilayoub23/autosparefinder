@@ -126,8 +126,17 @@ services:
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_REFRESH_SECRET_KEY: ${JWT_REFRESH_SECRET_KEY}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # OFFER_DEDUPLICATION_POLICY hash pin (policy section 8). The loader refuses any policy file whose SHA-256 is not listed
+      # here (several hashes allowed, comma/space separated, so a version bump has no refusal window) and, with REQUIRE_PIN=1,
+      # refuses to run at all when this is empty. Sibling: docs/policies/OFFER_DEDUPLICATION_POLICY.md.sha256 (a test keeps them equal).
+      OFFER_POLICY_EXPECTED_SHA256: "${OFFER_POLICY_EXPECTED_SHA256:-041c62d1f0b3a42e8f54765c7d5de7a8d79690af71fbe5fc289c61068fb91e9f}"
+      OFFER_POLICY_REQUIRE_PIN: "1"
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       HF_TOKEN: ${HF_TOKEN}
+      # NOA reel (social/video_gen.py). SkyReels = owner's ZeroGPU Space, ~5 min of quota per call.
+      SKYREELS_ENABLED: ${SKYREELS_ENABLED:-0}
+      SKYREELS_DAILY_MAX: ${SKYREELS_DAILY_MAX:-3}
+      NOA_REEL_ENABLED: ${NOA_REEL_ENABLED:-0}
       GROQ_API_KEY: ${GROQ_API_KEY}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
@@ -400,6 +409,8 @@ services:
     # Python deps still come from the image (site-packages); these sub-path volumes
     # override /app/uploads and /app/state on top of the bind mount.
     - ./backend:/app
+    # OFFER_DEDUPLICATION_POLICY: canonical policy, read-only, outside the writable /app tree (loader candidate '/policies')
+    - ./docs/policies:/policies:ro
     - upload_files:/app/uploads
     - worker_state:/app/state
     command: "/bin/bash -c \"\n  alembic -c alembic.ini upgrade head &&\n  alembic\

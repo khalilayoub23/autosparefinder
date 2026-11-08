@@ -37,6 +37,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import json
 import logging
 import os
@@ -368,6 +369,7 @@ async def main():
 
     conn = await asyncpg.connect(DB_DSN)
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "eliteparts_scraper"); await _ph.snapshot(supplier_id)
 
     # Load existing OEMs to avoid duplicates (also check 'Haval' — prior import used that name)
     existing_gwm = await get_existing_oems(conn, "GWM")
@@ -427,6 +429,7 @@ async def main():
             if stats["updated"] % 100 == 0:
                 log.info("Progress: %d inserted, %d skipped", stats["updated"], stats["skipped"])
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     elapsed = round(_time.time() - t0, 1)

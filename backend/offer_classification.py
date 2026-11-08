@@ -20,21 +20,15 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-# normalised vocabulary: oem | oe_equivalent | aftermarket | remanufactured | used
-_NORMAL = {
-    "original": "oem", "genuine": "oem", "oem": "oem", "oe": "oem",
-    "oem_equivalent": "oe_equivalent", "oe_equivalent": "oe_equivalent", "oe equivalent": "oe_equivalent",
-    "oem equivalent": "oe_equivalent",
-    "aftermarket": "aftermarket", "remanufactured": "remanufactured", "used": "used",
-}
+from variant_identity import lenient_class, sql_labels
+
+# The label dictionary lives in variant_identity.py ONLY (one vocabulary, one index-identical key). A class here IS the
+# variant key: oem | oe_equivalent | aftermarket | remanufactured | used.
 
 
 def normalize_type(value: Optional[str]) -> Optional[str]:
     """Canonical class of a part_type/offer label, or None when unknown/blank (never guessed)."""
-    v = (value or "").strip().lower()
-    if not v or v in ("unknown", "none", "null"):
-        return None
-    return _NORMAL.get(v, v)
+    return lenient_class(value)
 
 
 def is_compatible(part_type: Optional[str], offer_type: Optional[str]) -> bool:
@@ -54,11 +48,14 @@ def offer_label(part_type: Optional[str], offer_type: Optional[str]) -> Optional
 
 
 def norm_type_sql(col: str) -> str:
-    """SQL twin of normalize_type() for a column expression ('' when unknown)."""
+    """SQL twin of normalize_type() for a column expression ('' when unknown). Spellings come from variant_identity."""
     c = f"lower(btrim(coalesce({col}, '')))"
+
+    def _in(key: str) -> str:
+        return ",".join("'" + x.replace("'", "''") + "'" for x in sql_labels(key))
     return (f"(CASE WHEN {c} IN ('unknown','none','null') THEN '' "
-            f"WHEN {c} IN ('original','genuine','oe') THEN 'oem' "
-            f"WHEN {c} IN ('oem_equivalent','oe equivalent','oem equivalent') THEN 'oe_equivalent' ELSE {c} END)")
+            f"WHEN {c} IN ({_in('oem')}) THEN 'oem' "
+            f"WHEN {c} IN ({_in('oe_equivalent')}) THEN 'oe_equivalent' ELSE {c} END)")
 
 
 def class_rank_sql(sp_col: str = "sp.part_type", pc_col: str = "pc.part_type") -> str:

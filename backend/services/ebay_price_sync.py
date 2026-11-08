@@ -158,11 +158,6 @@ async def _update_catalog_metadata(
                     WHEN min_price_ils IS NULL OR min_price_ils = 0 OR min_price_ils > CAST(:candidate_min_price_ils AS numeric) THEN CAST(:candidate_min_price_ils AS numeric)
                     ELSE min_price_ils
                 END,
-                max_price_ils = CASE
-                    WHEN CAST(:candidate_min_price_ils AS numeric) IS NULL THEN max_price_ils
-                    WHEN max_price_ils IS NULL OR max_price_ils < CAST(:candidate_min_price_ils AS numeric) THEN CAST(:candidate_min_price_ils AS numeric)
-                    ELSE max_price_ils
-                END,
                 updated_at = NOW()
             WHERE id = CAST(:part_id AS uuid)
             RETURNING
@@ -485,7 +480,13 @@ async def sync_ebay_prices(
                         part_id = CAST(:part_id AS uuid)
                         OR supplier_sku = :supplier_sku
                       )
-                    ORDER BY CASE WHEN part_id = CAST(:part_id AS uuid) THEN 0 ELSE 1 END
+                    -- OFFER_DEDUPLICATION_POLICY 1.0.0: offer identity is supplier + SKU, so an exact SKU match IS this
+                    -- offer (rank 0; updating any other row would also try to rename its SKU onto a taken one). Otherwise
+                    -- this supplier's untyped row on the part (eBay listings are unclassified), then a typed one, always
+                    -- oldest first: deterministic even once same-supplier variants coexist (old index dropped).
+                    ORDER BY CASE WHEN supplier_sku = :supplier_sku THEN 0
+                                  WHEN part_type IS NULL THEN 1 ELSE 2 END,
+                             created_at NULLS LAST, id
                     LIMIT 1
                     """
                 ),
@@ -517,7 +518,7 @@ async def sync_ebay_prices(
                             shipping_cost_usd = :shipping_cost_usd,
                             shipping_cost_ils = :shipping_cost_ils,
                             warranty_months = COALESCE(:warranty_months, warranty_months),
-                            supplier_sku = :supplier_sku,
+                            supplier_sku = COALESCE(supplier_sku, :supplier_sku),
                             supplier_url = :supplier_url,
                             is_available = true,
                             availability = 'in_stock',
@@ -703,8 +704,10 @@ async def sync_ebay_prices(
     except Exception as exc:
         try:
             await db.rollback()
-        except Exception:
-            pass
+        except Exception as _rb:
+            logger.warning("sync_ebay_prices: rollback after failure also failed: %s", _rb)
         logger.error("sync_ebay_prices failed: %s", exc, exc_info=True)
         report["errors"].append(str(exc))
+        # parts_updated / price_history_rows count writes made since the last commit; those were just rolled back
+        report["rolled_back_pending_writes"] = pending_writes
         return report

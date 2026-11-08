@@ -1,0 +1,29 @@
+[offer-policy] maintenance/restore_merged_offers_133.py: policy 1.0.0 sha256=9e05c714d3e193f3
+{
+ "mode": "dry run (read-only)",
+ "input_rows": 7971,
+ "input_sha256": "1778da76ff124638deb249dc4f99573d0dd830dbfa0966d80d46df5bdaabfd46",
+ "policy": {
+  "policy_version": "1.0.0",
+  "policy_sha256": "9e05c714d3e193f381fe128e7e68e1c74abc2b091c02ed54aa7f6195e3318235"
+ },
+ "index_state": {
+  "old_index_present": false,
+  "new_indexes_valid": true,
+  "indexes": {
+   "uq_supplier_parts_part_supplier": null,
+   "uq_sp_part_supplier_variant": true,
+   "uq_sp_part_supplier_untyped": true
+  }
+ },
+ "apply_would_refuse": null,
+ "verdicts": {
+  "blocked_by_variant_unique_index": 2846,
+  "eligible": 4963,
+  "supplier_sku_already_present": 162
+ },
+ "by_supplier_eligible": {
+  "6b6aea48-8d7b-44b9-8578-8b411c9159cf": 4932,
+  "a6534df9-2b37-4370-a823-1571f7f5dcf3": 31
+ }
+}

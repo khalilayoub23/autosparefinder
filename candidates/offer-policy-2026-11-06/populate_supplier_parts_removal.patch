@@ -1,0 +1,241 @@
+--- a/backend/db_update_agent.py
++++ b/backend/db_update_agent.py
+@@ -17,9 +17,7 @@
+ 9.  run_all_tasks             – orchestrator that runs core tasks and returns a report dict
+ 
+ On-demand tasks (NOT in run_all_tasks — must be triggered explicitly):
+-9.  populate_supplier_parts   – link every active part to every active supplier
+-                                (ON CONFLICT DO NOTHING; safe to re-run)
+-10. validate_migrations       – pre-flight safety scan of all Alembic migration
++9.  validate_migrations       – pre-flight safety scan of all Alembic migration
+                                 files for patterns that can cause downtime
+ 
+ Admin endpoints call run_all_tasks or individual tasks through get_db.
+@@ -3762,178 +3760,6 @@
+         "elapsed_s": round(time.monotonic() - t0, 2),
+     }
+ 
+-async def _populate_supplier_parts_task(db: AsyncSession) -> Dict[str, Any]:
+-    """
+-    Link manufacturer-direct suppliers to their own-brand parts with computed pricing.
+-    Idempotent — skips supplier+part pairs that already have any offer; ON CONFLICT DO NOTHING.
+-    Heavy operation; only runs on demand via the admin API, not in run_all_tasks.
+-
+-    REAL_DATA_ONLY rule: only manufacturer-specific suppliers are linked here.
+-    Generic marketplace suppliers (eBay Motors, Motorstore IL) must NOT be added to
+-    _UNIVERSAL_SUPPLIERS — their rows must come from real scrapers/importers only.
+-    price_ils = base_price (mult=1.0) — 45% margin already in base_price.
+-    """
+-
+-    import json
+-    import uuid as _uuid
+-
+-    t0 = time.monotonic()
+-
+-    # ── Load active suppliers ────────────────────────────────────────────────
+-    rows = (await db.execute(text(
+-        "SELECT id, name, is_manufacturer, manufacturer_name "
+-        "FROM suppliers WHERE is_active = TRUE ORDER BY priority"
+-    ))).mappings().fetchall()
+-    suppliers: Dict[str, Any] = {r["name"]: dict(r) for r in rows}
+-
+-    if not suppliers:
+-        return {"task": "populate_supplier_parts", "status": "error",
+-                "error": "No active suppliers found — run seed_data.py first"}
+-
+-    ils_rate: float = ILS_PER_USD  # from module-level constant (overridden by settings)
+-    total_inserted = 0
+-
+-    async def _insert_batch(records: list) -> int:
+-        if not records:
+-            return 0
+-        payload = json.dumps(records)
+-        result = await db.execute(text("""
+-            INSERT INTO supplier_parts (
+-                id, supplier_id, part_id, supplier_sku,
+-                price_usd, price_ils, shipping_cost_usd, shipping_cost_ils,
+-                availability, warranty_months, estimated_delivery_days,
+-                is_available, last_checked_at, created_at
+-            )
+-            SELECT
+-                CAST(j->>'id' AS UUID),
+-                CAST(j->>'supplier_id' AS UUID),
+-                CAST(j->>'part_id' AS UUID),
+-                j->>'supplier_sku',
+-                CAST(j->>'price_usd' AS NUMERIC),
+-                CAST(j->>'price_ils' AS NUMERIC),
+-                CAST(j->>'shipping_cost_usd' AS NUMERIC),
+-                CAST(j->>'shipping_cost_ils' AS NUMERIC),
+-                j->>'availability',
+-                CAST(j->>'warranty_months' AS INT),
+-                CAST(j->>'estimated_delivery_days' AS INT),
+-                CAST(j->>'is_available' AS BOOLEAN),
+-                NOW(), NOW()
+-            FROM json_array_elements(CAST(:payload AS json)) AS j
+-            -- OFFER_DEDUPLICATION_POLICY 1.0.0: this synthetic, untyped link must never sit next to a REAL offer of the same
+-            -- supplier+part (typed or not) once uq_supplier_parts_part_supplier is replaced by the per-variant indexes, so
+-            -- it is skipped when any offer exists. The target-less ON CONFLICT also stays valid with either index set
+-            -- (a named (supplier_id, part_id) target stops resolving the day the old index is dropped).
+-            WHERE NOT EXISTS (
+-                SELECT 1 FROM supplier_parts sp0
+-                WHERE sp0.part_id = CAST(j->>'part_id' AS UUID)
+-                  AND sp0.supplier_id = CAST(j->>'supplier_id' AS UUID)
+-            )
+-            ON CONFLICT DO NOTHING
+-        """), {"payload": payload})
+-        await db.commit()
+-        return result.rowcount if result.rowcount and result.rowcount > 0 else len(records)
+-
+-    # ── Pass 1: Universal suppliers → all active parts ───────────────────────
+-    offset = 0
+-    while True:
+-        parts = (await db.execute(text(
+-            "SELECT id, category, part_type, base_price FROM parts_catalog "
+-            "WHERE is_active = TRUE ORDER BY id OFFSET :o LIMIT :l"
+-        ), {"o": offset, "l": _BATCH})).mappings().fetchall()
+-        if not parts:
+-            break
+-
+-        records: list = []
+-        for part in parts:
+-            part_id = str(part["id"])
+-            base = float(part["base_price"] or 0)
+-            if base <= 1.0:
+-                base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
+-            warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
+-
+-            for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _UNIVERSAL_SUPPLIERS:
+-                if s_name not in suppliers:
+-                    continue
+-                price = round(base * mult, 2)
+-                records.append({
+-                    "id": str(_uuid.uuid4()),
+-                    "supplier_id": str(suppliers[s_name]["id"]),
+-                    "part_id": part_id,
+-                    "supplier_sku": f"{prefix}-{part_id}",
+-                    "price_usd": round(price / ils_rate, 2),
+-                    "price_ils": price,
+-                    "shipping_cost_usd": s_usd,
+-                    "shipping_cost_ils": s_ils,
+-                    "availability": avail,
+-                    "warranty_months": warranty,
+-                    "estimated_delivery_days": days,
+-                    "is_available": is_av,
+-                })
+-
+-        total_inserted += await _insert_batch(records)
+-        offset += _BATCH
+-
+-    # ── Pass 2: Manufacturer-direct suppliers → filtered by manufacturer ──────
+-    for (s_name, prefix, mult, s_ils, s_usd, days, avail, is_av) in _MANUFACTURER_SUPPLIERS:
+-        if s_name not in suppliers:
+-            continue
+-        sup = suppliers[s_name]
+-        mfr = sup.get("manufacturer_name") if sup.get("is_manufacturer") else None
+-        where = "AND LOWER(manufacturer) = LOWER(:mfr)" if mfr else ""
+-        params_base: Dict[str, Any] = {"mfr": mfr} if mfr else {}
+-
+-        offset = 0
+-        while True:
+-            parts = (await db.execute(text(
+-                f"SELECT id, category, part_type, base_price FROM parts_catalog "
+-                f"WHERE is_active = TRUE {where} ORDER BY id OFFSET :o LIMIT :l"
+-            ), {**params_base, "o": offset, "l": _BATCH})).mappings().fetchall()
+-            if not parts:
+-                break
+-
+-            records = []
+-            for part in parts:
+-                part_id = str(part["id"])
+-                base = float(part["base_price"] or 0)
+-                if base <= 1.0:
+-                    base = _CATEGORY_FALLBACK_ILS.get(part["category"] or "כללי", _DEFAULT_PRICE)
+-                warranty = _WARRANTY_MAP.get(part["part_type"] or "", 12)
+-                price = round(base * mult, 2)
+-                records.append({
+-                    "id": str(_uuid.uuid4()),
+-                    "supplier_id": str(sup["id"]),
+-                    "part_id": part_id,
+-                    "supplier_sku": f"{prefix}-{part_id}",
+-                    "price_usd": round(price / ils_rate, 2),
+-                    "price_ils": price,
+-                    "shipping_cost_usd": s_usd,
+-                    "shipping_cost_ils": s_ils,
+-                    "availability": avail,
+-                    "warranty_months": warranty,
+-                    "estimated_delivery_days": days,
+-                    "is_available": is_av,
+-                })
+-
+-            total_inserted += await _insert_batch(records)
+-            offset += _BATCH
+-
+-    # ── Final count ──────────────────────────────────────────────────────────
+-    total_rows = (await db.execute(text("SELECT COUNT(*) FROM supplier_parts"))).scalar_one()
+-    parts_covered = (await db.execute(text(
+-        "SELECT COUNT(*) FROM (SELECT part_id FROM supplier_parts "
+-        "GROUP BY part_id HAVING COUNT(DISTINCT supplier_id) >= 5) t"
+-    ))).scalar_one()
+-
+-    logger.info("populate_supplier_parts: inserted=%d total_rows=%d", total_inserted, total_rows)
+-    return {
+-        "task": "populate_supplier_parts",
+-        "status": "ok",
+-        "inserted": total_inserted,
+-        "total_supplier_parts_rows": total_rows,
+-        "parts_with_5plus_suppliers": parts_covered,
+-        "elapsed_s": round(time.monotonic() - t0, 2),
+-    }
+-
+ 
+ # ---------------------------------------------------------------------------
+ # Task: validate_migrations
+@@ -4524,7 +4350,6 @@
+     "validate_supplier_countries": validate_supplier_countries,
+     "sync_transport_market_priority": _sync_transport_market_priority_task,
+     # on-demand heavy tasks — NOT included in run_all_tasks
+-    "populate_supplier_parts":   _populate_supplier_parts_task,
+     "validate_migrations":       _validate_migrations_task,
+ }
+ 
+--- a/docs/PRE_LAUNCH_CHECKLIST.md
++++ b/docs/PRE_LAUNCH_CHECKLIST.md
+@@ -43,11 +43,6 @@
+ 
+ - [x] **DB password on VPS** — verified 2026-06-04: DB_PASSWORD is a 64-char hex key (256-bit entropy), NOT the dev default
+ 
+-- [ ] **Run populate_supplier_parts** — links all parts to all suppliers (run once after first deploy):
+-      ```
+-      POST /api/v1/admin/db-agent/run/populate_supplier_parts
+-      ```
+-
+ - [ ] **Run validate_migrations** — pre-flight check before first `alembic upgrade head` on production:
+       ```
+       POST /api/v1/admin/db-agent/run/validate_migrations
+@@ -67,7 +62,7 @@
+ - [x] 333 tests passing, 0 failing
+ - [x] HF client — connection pool, retry on 503/429, Redis cache (736× speedup proven)
+ - [x] Dual DB migrations at head (catalog + PII)
+-- [x] populate_supplier_parts + validate_migrations wired as admin workers
++- [x] validate_migrations wired as an admin worker (populate_supplier_parts was removed 2026-11-07: it fabricated prices from base_price)
+ - [x] All docker services with `restart: unless-stopped`
+ - [x] .gitignore clean, no secrets in git history
+ - [x] Dead code and duplicate files removed
+@@ -78,7 +73,6 @@
+ - [x] REAL_DATA_ONLY split: synthetic guard kept, REX_HARVEST_ENABLED=true added (2026-06-04)
+ - [x] Search cache upgraded to Redis write-through with in-memory L1 fallback (2026-06-04)
+ - [x] COMPANY_PHONE set to +972-53-242-6920, company vars added to docker-compose (2026-06-04)
+-- [x] populate_supplier_parts implemented and running (78%+ parts now have supplier links) (2026-06-04)
+ - [x] normalize_categories optimized — skips already-canonical 804K rows (2026-06-04)
+ - [x] Golden rules added to claude.md (2026-06-04)
+ 
+--- a/docs/roadmap.md
++++ b/docs/roadmap.md
+@@ -167,7 +167,6 @@
+   - SENDGRID_API_KEY
+ - Confirm frontend production API URL build configuration.
+ - Run and verify startup data tasks where required:
+-  - populate_supplier_parts
+   - validate_migrations
+ - Confirm production-grade DB password and secret rotation plan.
+ 

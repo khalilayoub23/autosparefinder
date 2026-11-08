@@ -1639,26 +1639,25 @@ async def _write_price_history(
         if old_price_ils and old_price_ils > 0:
             change_pct = round((new_price_ils - old_price_ils) / old_price_ils * 100, 2)
 
+        # Real price_history columns (the old statement named part_id / supplier_id / price_usd / price_ils /
+        # recorded_at, none of which exist, so every call failed and was swallowed: no history was ever written).
         await db.execute(
             text("""
                 INSERT INTO price_history
-                    (id, part_id, supplier_part_id, supplier_id,
-                     price_usd, price_ils, old_price_ils, change_pct,
-                     ils_per_usd_rate, recorded_at)
+                    (id, supplier_part_id, old_price_ils, new_price_ils, old_price_usd, new_price_usd,
+                     change_pct, source, ils_per_usd_rate, created_at)
                 VALUES
-                    (:id, :part_id, :sp_id, :sup_id,
-                     :price_usd, :price_ils, :old_ils, :chg_pct,
-                     :rate, NOW())
+                    (CAST(:id AS uuid), CAST(:sp_id AS uuid), :old_ils, :new_ils, :old_usd, :new_usd,
+                     :chg_pct, 'catalog_scraper', :rate, NOW())
             """),
             {
                 "id": str(uuid.uuid4()),
-                "part_id": part_id,
                 "sp_id": supplier_part_id,
-                "sup_id": supplier_id,
-                "price_usd": new_price_usd,
-                "price_ils": new_price_ils,
                 "old_ils": old_price_ils,
-                "chg_pct": change_pct,
+                "new_ils": new_price_ils,
+                "old_usd": old_price_usd,
+                "new_usd": new_price_usd,
+                "chg_pct": None if change_pct is None else max(-999.9999, min(999.9999, change_pct)),
                 "rate": ils_per_usd,
             },
         )
@@ -2385,26 +2384,10 @@ async def _scrape_one_part(
 
     # --- Update min_price_ils / max_price_ils on parts_catalog ---
     try:
-        await db.execute(
-            text("""
-                UPDATE parts_catalog pc
-                SET
-                    min_price_ils = sub.min_p,
-                    max_price_ils = sub.max_p,
-                    updated_at    = NOW()
-                FROM (
-                    SELECT
-                        part_id,
-                        MIN(COALESCE(price_ils, price_usd * :rate)) * 1.18 AS min_p,
-                        MAX(COALESCE(price_ils, price_usd * :rate)) * 1.18 AS max_p
-                    FROM supplier_parts
-                    WHERE part_id = :part_id AND is_available = TRUE
-                    GROUP BY part_id
-                ) sub
-                WHERE pc.id = sub.part_id
-            """),
-            {"rate": ILS_PER_USD, "part_id": part_id},
-        )
+        # #127: the SAME refresh as the scheduled task (eligible offers only, VAT per supplier country, max_price_ils
+        # only from an eligible LOCAL offer) - this used to be a second copy of the formula over EVERY offer x 1.18.
+        from db_update_agent import refresh_min_max_for_parts
+        await refresh_min_max_for_parts(db, [part_id], ILS_PER_USD)
         await db.commit()
     except Exception as exc:
         print(f"[Scraper] min_max update error for {sku}: {exc}")

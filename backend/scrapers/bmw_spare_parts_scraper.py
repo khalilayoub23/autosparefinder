@@ -46,6 +46,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 # Category rules DELEGATED to category_map — the single source of truth.
 from category_map import CATCH_ALL, categorize_on_ingest
@@ -299,7 +300,6 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
     sku = f"BMW-{oem}"
     price_eur = part["price_eur"]
     price_ils = round(price_eur * eur_to_ils, 2) if price_eur > 0 else 0.0
-    max_price = round(price_ils * 1.05, 2)  # slight markup for max
 
     specs = {
         "vat_included": False,
@@ -323,7 +323,7 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
                 ) VALUES(
                     gen_random_uuid(), $1, $2, $3, 'BMW', $4::uuid,
                     $5, $6, $7::jsonb, '[]'::jsonb,
-                    $8, $8, $9,
+                    $8, $8, NULL,
                     'new', NULL, 'original',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
@@ -331,7 +331,6 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
                 ON CONFLICT (sku) DO UPDATE SET
                     online_price_ils = EXCLUDED.online_price_ils,
                     min_price_ils = EXCLUDED.min_price_ils,
-                    max_price_ils = EXCLUDED.max_price_ils,
                     updated_at = NOW()
                 RETURNING id
                 """,
@@ -339,7 +338,6 @@ async def insert_part(conn, supplier_id: str, part: dict, eur_to_ils: float) -> 
                 part["category"], part.get("description", ""),
                 json.dumps(specs),
                 price_ils if price_ils > 0 else None,
-                max_price if price_ils > 0 else None,
             )
 
             if part_id is None:
@@ -498,6 +496,7 @@ async def main():
     conn = await asyncpg.connect(DB_DSN)
 
     supplier_id = await ensure_supplier(conn)
+    _ph = PriceHistoryTracker(conn, "bmw_spare_parts_scraper"); await _ph.snapshot(supplier_id)
     eur_to_ils = await get_eur_rate(conn)
     existing_oems = await get_existing_oems(conn)
 
@@ -512,6 +511,7 @@ async def main():
             log.error("Model %s failed: %s", model, e)
             stats["errors"].append(f"{model}: {e}")
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     elapsed = round(time.time() - t0, 1)

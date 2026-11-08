@@ -448,6 +448,19 @@ async def test_e2e_flow_control_response_is_unconfirmed_counted_and_not_retried(
 async def test_discovery_brands_are_found_on_a_small_catalog(db):
     """#96: the 1% page sample is empty on a small catalog; the bounded fallback must still return the catalog's
     manufacturers — deterministically, most common first (the fixture population: Toyota, Kia, Mazda, Honda)."""
-    brands = await svc._discovery_brands(db, n=14)
+    # The function first tries a random 1% PAGE sample (TABLESAMPLE SYSTEM(1)); on this tiny catalog that sample is empty only
+    # most of the time (leftover committed rows can share a page and make it non-empty, flipping the result between calls). This
+    # test is about the bounded deterministic FALLBACK, so make the "sample came back empty" premise deterministic.
+    class _EmptySample:
+        def __init__(self, inner):
+            self._inner = inner
+
+        async def execute(self, stmt, *a, **k):
+            if "TABLESAMPLE" in str(stmt):
+                return await self._inner.execute(sa.text("SELECT NULL::text AS manufacturer WHERE FALSE"))
+            return await self._inner.execute(stmt, *a, **k)
+
+    sdb = _EmptySample(db)
+    brands = await svc._discovery_brands(sdb, n=14)
     assert {"Toyota", "Kia", "Mazda", "Honda"} <= set(brands)
-    assert brands == await svc._discovery_brands(db, n=14)          # deterministic
+    assert brands == await svc._discovery_brands(sdb, n=14)          # deterministic

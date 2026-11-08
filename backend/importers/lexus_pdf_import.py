@@ -31,6 +31,7 @@ import sys
 import json
 import time
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import pdfplumber
 
 # ONE category source of truth — the literal that used to sit in this
@@ -238,6 +239,7 @@ async def run(dry_run: bool = False):
                 _sid, IMPORTER)
             sup = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1 LIMIT 1", IMPORTER)
         supplier_id = str(sup["id"])
+        _ph = PriceHistoryTracker(conn, "lexus_pdf_import"); await _ph.snapshot(supplier_id)
         print(f"Supplier: {IMPORTER} ({supplier_id})")
 
         # Existing counts
@@ -420,6 +422,7 @@ async def run(dry_run: bool = False):
         print(f"  After: {after_price} parts with IL price (was {before_price})")
         print(f"  After: {after_fitment} parts with fitment (was {before_fitment})")
 
+        await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:
         await conn.close()
 

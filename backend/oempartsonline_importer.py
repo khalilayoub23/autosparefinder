@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 import asyncpg
+from price_history_writer import record_row_change as _record_price_change
 
 # ── Graceful shutdown support ─────────────────────────────────────────────────
 _shutdown_flag = False
@@ -461,7 +462,6 @@ async def import_products(
                     price_usd = sale_usd if sale_usd > 0 else msrp_usd
                     price_ils = round(price_usd * usd_to_ils, 2)
                     min_price = price_ils
-                    max_price = round(price_ils * 1.17, 2)  # incl 17% IL VAT
                     base_price_ils = round(price_ils * 1.45, 2)  # 45% margin
 
                     category_path = product.get("category_path", "")
@@ -526,10 +526,10 @@ async def import_products(
                             ) VALUES (
                                 gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                                 $6, $7, $8::jsonb, $9::jsonb,
-                                $10, $13,
-                                $10, $10, $11,
+                                $10, $12,
+                                $10, $10, NULL,
                                 'original', NULL,
-                                $12, $14, FALSE,
+                                $11, $13, FALSE,
                                 TRUE, NOW(), NOW()
                             )
                             ON CONFLICT (sku) DO UPDATE SET
@@ -544,7 +544,6 @@ async def import_products(
                                     ELSE parts_catalog.base_price END,
                                 online_price_ils = EXCLUDED.online_price_ils,
                                 min_price_ils = LEAST(parts_catalog.min_price_ils, EXCLUDED.min_price_ils),
-                                max_price_ils = GREATEST(parts_catalog.max_price_ils, EXCLUDED.max_price_ils),
                                 updated_at = NOW()
                             RETURNING id
                             """,
@@ -558,7 +557,6 @@ async def import_products(
                             json.dumps(specs),
                             json.dumps(compatible_vehicles),
                             min_price,
-                            max_price,
                             safety_critical,
                             base_price_ils,
                             name_missing,
@@ -592,6 +590,9 @@ async def import_products(
 
                         # Insert/update supplier_parts
                         if part_id:
+                            _old_offer = await conn.fetchrow(
+                                "SELECT id, price_ils, price_usd FROM supplier_parts WHERE supplier_id=$1::uuid AND supplier_sku=$2",
+                                supplier_id, sku)
                             await conn.execute(
                                 """
                                 INSERT INTO supplier_parts(
@@ -606,7 +607,7 @@ async def import_products(
                                     NOW(), NOW()
                                 )
                                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                                    price_ils = EXCLUDED.price_ils,
+                                    price_ils = CASE WHEN EXCLUDED.price_ils > 0 THEN EXCLUDED.price_ils ELSE supplier_parts.price_ils END,
                                     is_available = EXCLUDED.is_available,
                                     availability = EXCLUDED.availability,
                                     updated_at = NOW()
@@ -620,6 +621,7 @@ async def import_products(
                                 warranty_months,
                                 product_url,
                             )
+                            await _record_price_change(conn, _old_offer, min_price, "oempartsonline_import")
 
                         # Part photo → parts_images (source for the thumbnail pipeline).
                         # NOT EXISTS guard: no unique (part_id,url) index → avoid re-import dups.

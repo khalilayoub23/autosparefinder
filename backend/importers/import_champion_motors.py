@@ -46,6 +46,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 import asyncio, json, os, re, sys, uuid
 from pathlib import Path
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 import urllib.parse as up
 
 # ONE category source of truth — never a private ruleset here.
@@ -121,6 +122,7 @@ async def run_import():
             sup_id)
         supplier = await conn.fetchrow("SELECT id FROM suppliers WHERE name='Champion Motors' LIMIT 1")
     supplier_id = supplier["id"]
+    _ph = PriceHistoryTracker(conn, "import_champion_motors"); await _ph.snapshot(supplier_id)
     print(f"[DB] Supplier Champion Motors: {supplier_id}")
 
     stats = {"inserted":0,"skipped_no_oem":0,"skipped_no_brand":0,"errors":0}
@@ -244,7 +246,7 @@ async def run_import():
     sp_count = 0
     # Pull warranty from stored specs so each row carries the supplier-stated value.
     cm_parts = await conn.fetch(
-        "SELECT id, oem_number, base_price, specifications FROM parts_catalog "
+        "SELECT id, oem_number, importer_price_ils, specifications FROM parts_catalog "
         "WHERE sku LIKE 'CM-%' AND is_active = TRUE"
     )
     cm_url = 'https://www.championmotors.co.il'
@@ -268,7 +270,7 @@ async def run_import():
                     warranty_source=EXCLUDED.warranty_source,
                     updated_at=NOW()
             """, str(supplier_id), str(part['id']),
-                 str(part['oem_number'] or ''), float(part['base_price'] or 0),
+                 str(part['oem_number'] or ''), float(part['importer_price_ils'] or 0),  # ex-VAT COST, never base_price (#129)
                  _wm, _ws, cm_url)
             sp_count += 1
         except Exception:
@@ -289,6 +291,7 @@ async def run_import():
     except Exception:
         pass
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
 
     print(f"\n[DONE] inserted={stats['inserted']}  errors={stats['errors']}")

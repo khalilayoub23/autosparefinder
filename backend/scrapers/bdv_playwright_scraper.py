@@ -15,6 +15,8 @@ import logging
 import urllib.parse
 import httpx
 import asyncpg
+from price_history_writer import PriceHistoryTracker
+from currency_rate import DEFAULT_USD_TO_ILS as _USD_TO_ILS
 from playwright.async_api import async_playwright
 
 # ONE warranty source of truth — resolve() returns (months, source).
@@ -208,6 +210,7 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
         supplier_id = supplier["id"]
         log.info(f"Using existing BDV supplier: {supplier_id}")
 
+    _ph = PriceHistoryTracker(conn, "bdv_playwright_scraper"); await _ph.snapshot(supplier_id)
     updated_catalog = 0
     supplier_rows = 0
     not_matched = 0
@@ -261,15 +264,17 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
 
             await conn.execute("""
                 INSERT INTO supplier_parts
-                    (id, part_id, supplier_id, supplier_sku, price_ils, is_available,
+                    (id, part_id, supplier_id, supplier_sku, price_ils, price_usd, is_available,
                      warranty_months, warranty_source, created_at, updated_at)
-                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+                VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE
-                SET price_ils = EXCLUDED.price_ils, is_available = EXCLUDED.is_available, updated_at = NOW()
-            """, str(m["id"]), str(supplier_id), sku, price_with_vat, in_stock,
-                *_warranty_resolve(None))
+                SET price_ils = EXCLUDED.price_ils, price_usd = EXCLUDED.price_usd, is_available = EXCLUDED.is_available, updated_at = NOW()
+            """, str(m["id"]), str(supplier_id), sku, price_with_vat,
+                round(price_with_vat / _USD_TO_ILS, 2),  # price_usd is NOT NULL: the insert never worked without it
+                in_stock, *_warranty_resolve(None))
             supplier_rows += 1
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     log.info(f"DB import: catalog_updated={updated_catalog}, supplier_rows={supplier_rows}, not_matched={not_matched}")
     return updated_catalog, supplier_rows
 

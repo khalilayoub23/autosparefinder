@@ -46,14 +46,6 @@ def reset_unclassifiable_cache() -> None:
     print("[Cleanup] In-memory task3 index and unclassifiable cache reset")
 
 
-_PART_TYPE_FIX_VALUES = {
-    'חליפיחליפי': 'חליפי',
-    'מקורימקורי': 'מקורי',
-    'משופץמשופץ': 'משופץ',
-    'unknownunknown': 'unknown',
-}
-
-
 def _guess_category(text: str) -> str | None:
     """
     Keyword-classify a text blob → canonical slug, or None when nothing matches.
@@ -82,46 +74,32 @@ def _is_suspicious_renault_oem(oem_number: str) -> bool:
 
 
 async def task1_fix_part_types() -> int:
+    """parts_catalog.part_type -> the catalog convention (= the variant class: oem | oe_equivalent | aftermarket |
+    remanufactured | used). The spellings and their targets come from variant_identity (ONE vocabulary); this task keeps no
+    dictionary of its own. parts_catalog has no variant unique index, so there is no collision to guard here
+    (supplier_parts is normalised, collision-safe, by db_update_agent.normalize_part_types)."""
+    from variant_identity import noncanonical_literals
+    fixes = noncanonical_literals("class")
+    olds, news = list(fixes), [fixes[k] for k in fixes]
     fixed = 0
     async with scraper_session_factory() as db:
         try:
             result = await db.execute(text("""
-                WITH batch AS (
-                    SELECT id,
-                           CASE part_type
-                               WHEN 'חליפיחליפי' THEN 'חליפי'
-                               WHEN 'מקורימקורי' THEN 'מקורי'
-                               WHEN 'משופץמשופץ' THEN 'משופץ'
-                               WHEN 'unknownunknown' THEN 'unknown'
-                               WHEN 'aftermarket' THEN 'aftermarket'
-                               WHEN 'Aftermarket' THEN 'aftermarket'
-                               WHEN 'ALTERNATIVE' THEN 'aftermarket'
-                               WHEN 'original' THEN 'oem'
-                               WHEN 'Original' THEN 'oem'
-                               WHEN 'OEM' THEN 'oem'
-                               WHEN 'refurbished' THEN 'remanufactured'
-                               WHEN 'Refurbished' THEN 'remanufactured'
-                               WHEN 'used' THEN 'used'
-                               WHEN 'Used' THEN 'used'
-                               WHEN 'USED' THEN 'used'
-                               ELSE part_type
-                           END AS fixed_part_type
-                    FROM parts_catalog
-                    WHERE part_type IN ('חליפיחליפי', 'מקורימקורי', 'משופץמשופץ', 'unknownunknown',
-                                       'aftermarket', 'Aftermarket', 'ALTERNATIVE',
-                                       'original', 'Original', 'OEM',
-                                       'refurbished', 'Refurbished',
-                                       'used', 'Used', 'USED')
-                    ORDER BY updated_at NULLS FIRST, created_at NULLS FIRST, id
+                WITH m AS (SELECT * FROM unnest(CAST(:olds AS text[]), CAST(:news AS text[])) AS t(old, new)),
+                batch AS (
+                    SELECT pc.id, pc.part_type
+                    FROM parts_catalog pc
+                    WHERE pc.part_type = ANY(CAST(:olds AS text[]))
+                    ORDER BY pc.updated_at NULLS FIRST, pc.created_at NULLS FIRST, pc.id
                     LIMIT 500
                 )
                 UPDATE parts_catalog pc
-                SET part_type = batch.fixed_part_type,
+                SET part_type = m.new,
                     updated_at = NOW()
-                FROM batch
+                FROM batch JOIN m ON m.old = batch.part_type
                 WHERE pc.id = batch.id
                 RETURNING pc.id
-            """))
+            """), {"olds": olds, "news": news})
             fixed = len(result.fetchall())
             if fixed:
                 await db.commit()
@@ -1451,7 +1429,11 @@ _FILL_COST_COLUMNS_SQL = """
     FROM (
         SELECT sp.part_id,
                MIN(sp.price_ils) AS any_min,
-               MIN(sp.price_ils) FILTER (WHERE __LOCAL__) AS local_min
+               -- ex-VAT cost of the cheapest LOCAL offer (#131): a VAT-inclusive supplier's stored cost is divided by 1.18
+               -- first, a local supplier with an unknown/unclassified basis contributes nothing
+               MIN(ROUND((sp.price_ils / CASE WHEN LOWER(BTRIM(COALESCE(s.vat_price_basis, ''))) = 'inclusive'
+                                              THEN __VAT_FACTOR__ ELSE 1 END)::numeric, 2))
+                   FILTER (WHERE __LOCAL__ AND NOT __BLOCKED__) AS local_min
         FROM supplier_parts sp
         JOIN suppliers s ON s.id = sp.supplier_id
         JOIN parts_catalog pcx ON pcx.id = sp.part_id
@@ -1467,16 +1449,14 @@ def _local_supplier_sql() -> str:
     """SQL twin of price_policy.is_local_supplier (s = suppliers): a known country decides; no country -> the
     local supplier names."""
     import price_policy as pp
-    keys = ", ".join("'" + k.replace("'", "''") + "'" for k in sorted(pp.LOCAL_COUNTRY_KEYS))
-    names = ", ".join("'" + n.replace("'", "''") + "'" for n in sorted(pp.LOCAL_SUPPLIER_NAMES))
-    return (f"(CASE WHEN BTRIM(COALESCE(s.country, '')) <> '' THEN LOWER(BTRIM(s.country)) IN ({keys}) "
-            f"ELSE LOWER(BTRIM(COALESCE(s.name, ''))) IN ({names}) END)")
+    return pp.local_supplier_sql("s")
 
 
 def _cleanup_sql(sql: str, only_ids: bool = False) -> str:
     import price_policy as pp
     from offer_classification import class_rank_sql
     return (sql.replace("__RANK__", class_rank_sql("sp.part_type", "pcx.part_type"))
+               .replace("__BLOCKED__", pp.vat_basis_blocks_sql("s"))
                .replace("__LOCAL__", _local_supplier_sql())
                .replace("__VAT_FACTOR__", repr(1 + pp.VAT_RATE))
                .replace("__ONLY__", "AND sp.part_id = ANY(CAST(:only_ids AS uuid[]))" if only_ids else ""))

@@ -41,6 +41,7 @@ Last Updated: 2026-06-01
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, json, os, re, sys, uuid
 import asyncpg
+from price_history_writer import PriceHistoryTracker
 
 LR_SUPPLIER_URL = 'https://www.landrover.co.il'
 
@@ -110,6 +111,7 @@ async def main():
         """, sup_id, sup_name, LR_SUPPLIER_URL, mfr_id)
         sup_row = await conn.fetchrow("SELECT id FROM suppliers WHERE name=$1", sup_name)
     sup_id = str(sup_row["id"]) if sup_row else None
+    _ph = PriceHistoryTracker(conn, "lr_import"); await _ph.snapshot(sup_id)
 
     inserted = updated = errors = 0
     import json as json_mod
@@ -264,6 +266,7 @@ async def main():
     except Exception:
         pass
 
+    await _ph.flush()  # price_history for changed prices (price_history_writer)
     await conn.close()
     print(f"\nDone. inserted={inserted}, updated={updated}, errors={errors}")
     print(f"Run meili sync: docker exec autospare_backend python3 /app/meili_sync.py --manufacturer 'Land Rover' --no-rebuild")
