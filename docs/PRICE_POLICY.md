@@ -67,3 +67,7 @@ The two populations are disjoint, so the tasks cannot undo each other. The clean
 Change `price_policy.py` only, then run `tests/test_price_policy_unified.py`. A new surface that shows a price
 must call `price_policy` (or `_customer_price_fields`); the guard fails on any `1.45` / `1.18` / `0.18` number
 in a customer-facing module.
+
+
+## Supplier VAT price basis (2026-11-05, #131 — code only, not deployed)
+`suppliers.vat_price_basis` = `inclusive | exclusive | unknown` describes what the STORED offer cost (`supplier_parts.price_ils`) contains. Local supplier: exclusive -> VAT added once (unchanged); inclusive -> cost/1.18 first (`cost_ex_vat`), then the normal rule; unknown -> not priced (`unit_price` returns None). Not supplied (None) = legacy exclusive. Foreign suppliers: always 0% VAT whatever the basis. Example, source 100: exclusive net 145.00 + VAT 26.10 = 171.10; inclusive 145.01 total (100 x 1.45); unknown blocked. Audit evidence and the supplier list: `candidates/vat-basis-2026-11-05/REPORT.md`.

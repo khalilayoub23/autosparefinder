@@ -21,7 +21,7 @@ from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_verified_user, get_current_admin_user, get_redis, check_rate_limit,
     decode_access_token,
 )
-from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_checkout_link_metrics_snapshot
+from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_checkout_link_metrics_snapshot, load_owned_conversation
 from jose import JWTError
 from routes.utils import _scan_bytes_for_virus, _guarded_task
 
@@ -352,8 +352,12 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
     # ── 1. Get or create conversation (fast DB write only) ──────────────────
     conversation = None
     if data.conversation_id:
-        result = await db.execute(select(Conversation).where(Conversation.id == data.conversation_id))
-        conversation = result.scalar_one_or_none()
+        try:
+            uuid.UUID(str(data.conversation_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="conversation_id is not valid")
+        # Owner only (#117): a foreign id behaves exactly like an unknown one.
+        conversation = await load_owned_conversation(db, data.conversation_id, current_user.id)
     if not conversation:
         conversation = Conversation(
             user_id=current_user.id,
@@ -368,11 +372,15 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
         conversation.last_message_at = datetime.utcnow()
 
     # ── 2. Save user message immediately ─────────────────────────────────────
+    # Tagged with its chat request id (#84) in the same transaction, so after any crash the lifecycle can tell
+    # "question saved, answer not" from "nothing saved" (the same evidence WhatsApp/Telegram use).
+    chat_rid = f"web:{uuid.uuid4().hex}"
     user_msg = Message(
         conversation_id=conversation.id,
         role="user",
         content=data.message,
         content_type="text",
+        analysis={"chat_request_id": chat_rid, "chat_turn": "user"},
     )
     db.add(user_msg)
     await db.commit()
@@ -434,34 +442,13 @@ async def send_message(data: ChatMessageRequest, request: Request, current_user:
             ),
         }
 
-    # ── 3. Fire agent as asyncio background task (non-blocking) ──────────────
-    async def _run_agent_bg():
-        async with pii_session_factory() as bg_db:
-            try:
-                await process_agent_response_for_message(
-                    user_id,
-                    message,
-                    conv_id,
-                    bg_db,
-                    source="web",
-                )
-            except Exception as exc:
-                print(f"[BG AGENT FATAL] conv={conv_id}: {exc}")
-                # Save a visible error message so the user isn't left with a stuck spinner
-                try:
-                    async with pii_session_factory() as err_db:
-                        err_db.add(Message(
-                            conversation_id=conv_id,
-                            role="assistant",
-                            agent_name="service_agent",
-                            content="מצטער, נתקלתי בבעיה טכנית. אנא נסה שוב בעוד מספר שניות.",
-                            content_type="text",
-                        ))
-                        await err_db.commit()
-                except Exception:
-                    pass
-
-    asyncio.create_task(_guarded_task(_run_agent_bg()))
+    # ── 3. Agent on the durable chat-request lifecycle (#84) ──────────────────
+    # Before #84 the agent was a fire-and-forget asyncio task: no kept reference, no deadline and nothing
+    # recorded, so a slow provider, a dropped task or a restart left the page waiting forever. The shared
+    # pipeline (routes/webhooks.py) keeps the task, enforces the deadline, writes ONE honest failure row in the
+    # conversation, and a restarted process takes the request over. Returns at once; the page polls.
+    from routes.webhooks import start_web_chat_request
+    await start_web_chat_request(redis, chat_rid, user_id=user_id, conv_id=conv_id, message=message, lang="")
 
     # ── 4. Return immediately — frontend will poll for the assistant reply ───
     return {
@@ -490,12 +477,7 @@ async def admin_checkout_smoke(
 
     conversation = None
     if body.conversation_id:
-        result = await db.execute(
-            select(Conversation).where(
-                and_(Conversation.id == body.conversation_id, Conversation.user_id == current_user.id)
-            )
-        )
-        conversation = result.scalar_one_or_none()
+        conversation = await load_owned_conversation(db, body.conversation_id, current_user.id)
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -572,8 +554,7 @@ async def request_human_handoff(
 ):
     conversation = None
     if body.conversation_id:
-        result = await db.execute(select(Conversation).where(and_(Conversation.id == body.conversation_id, Conversation.user_id == current_user.id)))
-        conversation = result.scalar_one_or_none()
+        conversation = await load_owned_conversation(db, body.conversation_id, current_user.id)
 
     note = (body.note or "").strip()
     fallback_text = "אני רוצה לדבר עם נציג אנושי"
@@ -638,16 +619,7 @@ async def submit_handoff_feedback(
     current_user: User = Depends(get_current_verified_user),
     db: AsyncSession = Depends(get_pii_db),
 ):
-    conversation = (
-        await db.execute(
-            select(Conversation).where(
-                and_(
-                    Conversation.id == body.conversation_id,
-                    Conversation.user_id == current_user.id,
-                )
-            )
-        )
-    ).scalar_one_or_none()
+    conversation = await load_owned_conversation(db, body.conversation_id, current_user.id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -737,8 +709,7 @@ async def get_conversations(current_user: User = Depends(get_current_user), limi
 
 @router.get("/api/v1/chat/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
-    conv = result.scalar_one_or_none()
+    conv = await load_owned_conversation(db, conversation_id, current_user.id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     handoff_settings = await _load_handoff_settings()
@@ -760,10 +731,10 @@ async def get_conversation(conversation_id: str, current_user: User = Depends(ge
 
 @router.get("/api/v1/chat/conversations/{conversation_id}/messages")
 async def get_messages(conversation_id: str, current_user: User = Depends(get_current_user), limit: int = 100, db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
-    if not result.scalar_one_or_none():
+    conv = await load_owned_conversation(db, conversation_id, current_user.id)
+    if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    result = await db.execute(select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at.asc()).limit(limit))
+    result = await db.execute(select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at.asc()).limit(limit))
     msgs = result.scalars().all()
     return {
         "messages": [
@@ -783,8 +754,7 @@ async def get_messages(conversation_id: str, current_user: User = Depends(get_cu
 
 @router.delete("/api/v1/chat/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    result = await db.execute(select(Conversation).where(and_(Conversation.id == conversation_id, Conversation.user_id == current_user.id)))
-    conv = result.scalar_one_or_none()
+    conv = await load_owned_conversation(db, conversation_id, current_user.id)
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
     await db.delete(conv)
@@ -994,6 +964,8 @@ async def chat_websocket(websocket: WebSocket, token: Optional[str] = None, db: 
 
 @router.post("/api/v1/chat/rate")
 async def rate_agent(conversation_id: str, agent_name: str, rating: int, feedback: Optional[str] = None, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
+    if await load_owned_conversation(db, conversation_id, current_user.id) is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     db.add(AgentRating(conversation_id=conversation_id, user_id=current_user.id, agent_name=agent_name, rating=rating, feedback=feedback))
     await db.commit()
     return {"message": "Rating submitted"}

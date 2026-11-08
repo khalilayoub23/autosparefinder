@@ -149,7 +149,7 @@ def run_case(name, channel, steps, *, agent=None, send=None, settle_s=1.5, retry
     async def fake_shorten(url):
         return url
 
-    async def fake_agent(user_id, message, conversation_id, db, source="web"):
+    async def fake_agent(user_id, message, conversation_id, db, source="web", trusted_conversation=False):
         calls.append(message)
         s = (agent or (lambda m, n: spec()))(message, len(calls))
         # what the REAL history loader gives the model for this call

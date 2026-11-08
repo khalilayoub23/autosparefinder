@@ -287,17 +287,17 @@ def test_identify_vehicle_from_image_route_uses_catalog_db():
 
 
 def test_run_agent_bg_opens_pii_session():
-    """_run_agent_bg background task must open its own pii_session_factory."""
+    """The web chat's background agent run must open its own pii_session_factory (the request's session is closed
+    when the route returns). Since #84 the run goes through the shared chat-request lifecycle:
+    start_web_chat_request → _process_request → _run_agent_for, which opens its own session."""
     src = _routes_source()
-    # Find the background function
-    match = re.search(
-        r'async def _run_agent_bg\(\):.*?asyncio\.create_task\(',
-        src, re.DOTALL
+    assert "async def _run_agent_bg(" not in src, "the old unreferenced background task is back"
+    match = re.search(r'async def _run_agent_for\(.*?\n(?=async def |def )', src, re.DOTALL)
+    assert match, "Could not locate _run_agent_for"
+    assert "pii_session_factory" in match.group() and "async with _psf() as _adb" in match.group(), (
+        "_run_agent_for does not open its own pii_session_factory — session will be closed"
     )
-    assert match, "Could not locate _run_agent_bg"
-    assert "pii_session_factory" in match.group(), (
-        "_run_agent_bg does not open pii_session_factory — session will be closed"
-    )
+    assert "start_web_chat_request(" in src
 
 
 def test_test_agent_route_uses_pii_db():

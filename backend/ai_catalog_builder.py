@@ -470,11 +470,15 @@ async def run(mode_new=True, mode_expand=True, specific_brands=None, dry_run=Fal
                 print(f"  [{brand}] already has {existing} parts, skipping (use --expand to grow)")
                 continue
 
-            # Delete any stub entries first
+            # OFFER_DEDUPLICATION_POLICY 1.0.0: never delete supplier offers (they belong to real suppliers and compete
+            # independently). Stub parts are replaced only when the brand carries NO supplier offer at all.
             if not dry_run and existing > 0:
-                await conn.execute("""
-                    DELETE FROM supplier_parts WHERE part_id IN
-                    (SELECT id FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1))""", brand)
+                n_offers = await conn.fetchval(
+                    "SELECT COUNT(*) FROM supplier_parts WHERE part_id IN "
+                    "(SELECT id FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1))", brand)
+                if n_offers:
+                    print(f"  [{brand}] refusing to replace {existing} parts: {n_offers} supplier offers exist (offer policy)")
+                    continue
                 await conn.execute(
                     "DELETE FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1)", brand)
 

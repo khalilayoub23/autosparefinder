@@ -131,7 +131,7 @@ async def main() -> None:
                         ) VALUES (
                             gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                             $6, $7, '{}'::jsonb,
-                            $8, $8, $9,
+                            $8, $8, NULL,
                             'original', FALSE, FALSE,
                             FALSE, TRUE, NOW(), NOW()
                         )
@@ -142,7 +142,7 @@ async def main() -> None:
                             updated_at = NOW()
                         RETURNING id
                     """, sku, oem, name, "Geely", mfr_id,
-                         category, desc, price_ils, round(price_ils * 1.2, 2))
+                         category, desc, price_ils)
                     if part_id:
                         inserted += 1
             except Exception as e:

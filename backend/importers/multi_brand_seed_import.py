@@ -144,7 +144,7 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, parts: list)
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
-                        $8, $8, $9,
+                        $8, $8, NULL,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
@@ -155,7 +155,7 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, parts: list)
                         updated_at = NOW()
                     RETURNING id
                 """, sku, oem, name, manufacturer, mfr_id,
-                     category, desc, price_ils, round(price_ils * 1.2, 2))
+                     category, desc, price_ils)
                 if part_id:
                     inserted += 1
         except Exception as e:

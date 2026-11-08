@@ -234,8 +234,8 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
-                        $8, $8, $9,
-                        'original', FALSE, $10,
+                        $8, $8, NULL,
+                        'original', FALSE, $9,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -245,8 +245,8 @@ async def import_brand(conn: asyncpg.Connection, manufacturer: str, raw_parts: l
                         updated_at = NOW()
                     RETURNING id
                 """, sku, oem, name, manufacturer, mfr_id,
-                     category, desc, price_ils, round(price_ils * 1.18, 2),
-                     name_missing)   # $10 -> needs_oem_lookup (RULE 7)
+                     category, desc, price_ils,
+                     name_missing)   # $9 -> needs_oem_lookup (RULE 7)
                 if part_id:
                     inserted += 1
                     # RULE (fitment): the seed rows carry fits_model — write the

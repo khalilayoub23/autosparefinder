@@ -17,6 +17,7 @@ required" — they always produce a video.
 
 Author: AutoSpareFinder Agent — Last Updated: 2026-08-13
 """
+import asyncio
 import logging
 import os
 import re
@@ -64,10 +65,18 @@ def configured_platforms() -> list:
     return [p for p in ALL_PLATFORMS if is_configured(p)]
 
 
+def _looks_like_video(url: str) -> bool:
+    return (url or "").lower().split("?", 1)[0].endswith((".mp4", ".mov", ".webm"))
+
+
 async def dispatch(platform: str, content: str, *, media_url: str | None = None,
-                   hashtags: list | None = None, link: str | None = None) -> dict:
+                   hashtags: list | None = None, link: str | None = None,
+                   video_key: str | None = None) -> dict:
     """Publish `content` to one platform. Uniform result:
-    {"ok", "id", "error", "not_configured"}."""
+    {"ok", "id", "error", "not_configured"}.
+
+    video_key: S3 key of the reel NOA built at draft time (social/video_gen.build_post_reel),
+    approved together with the post. TikTok publishes exactly those bytes."""
     p = (platform or "").strip().lower()
 
     # Legacy modules with their own signatures — adapt to the uniform result.
@@ -81,8 +90,25 @@ async def dispatch(platform: str, content: str, *, media_url: str | None = None,
         caption, tags = _split_caption_hashtags(content)
         all_tags = hashtags or tags
 
-        # If caller supplies a ready-made video URL, download and publish it directly.
-        if media_url:
+        # The reel NOA stored with this post (approved with the caption) — publish it as-is.
+        if video_key and str(video_key).startswith("thumbs/video/"):
+            try:
+                import s3_storage
+                obj = await asyncio.to_thread(s3_storage.get_object, video_key)
+                if obj:
+                    from social.tiktok_publisher import publish_video
+                    r = await publish_video(obj[0], caption=caption, hashtags=all_tags)
+                    return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
+                            "error": None if r.get("ok") else str(r.get("error"))[:180],
+                            "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
+                logger.warning("tiktok: stored reel %s missing in S3, generating video", video_key)
+            except Exception as exc:
+                logger.warning("tiktok: stored reel publish failed (%s), generating video", exc)
+
+        # If caller supplies a ready-made VIDEO URL, download and publish it directly. An image
+        # media_url (NOA's thumbnail+QR JPEG) is not a video: it used to be downloaded and sent to
+        # TikTok as video bytes, so fall through to the generated video instead.
+        if media_url and _looks_like_video(media_url):
             try:
                 import urllib.request as _ur
                 video_bytes = _ur.urlopen(media_url, timeout=30).read()

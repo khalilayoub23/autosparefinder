@@ -40,7 +40,7 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 log = logging.getLogger("fb_browser.session")
 
@@ -106,6 +106,77 @@ async def _save_failure_screenshot(page: Any, label: str) -> None:
         log.info("fb_browser: failure screenshot saved → %s", path)
     except Exception as exc:
         log.debug("fb_browser: screenshot failed: %s", exc)
+
+
+# ── selected Facebook profile (#130) ────────────────────────────────────────────────────────────────────────────
+# Facebook's account picker lists several profiles on this browser. Which one the group scan runs as is a DECISION that
+# must be stored, never guessed on each login: /app/state/fb_selected_profile.json = {"name": <tile name>, "uid":
+# <c_user the session must end up with>}. FB_PROFILE_NAME / FB_EXPECTED_UID override it. The uid is the guard: a login
+# that ends as a different c_user is REJECTED (no silent fallback to another profile).
+_SELECTED_PROFILE_FILE = Path(os.getenv("STATE_DIR", "/app/state")) / "fb_selected_profile.json"
+
+
+def selected_profile() -> dict:
+    """{"name","uid"} of the profile the scan must run as ({} when none is stored). Env overrides the file."""
+    sel: dict = {}
+    try:
+        sel = json.loads(_SELECTED_PROFILE_FILE.read_text())
+    except Exception:
+        sel = {}
+    name = os.getenv("FB_PROFILE_NAME", "").strip() or str(sel.get("name") or "").strip()
+    uid = os.getenv("FB_EXPECTED_UID", "").strip() or str(sel.get("uid") or "").strip()
+    return {"name": name, "uid": uid}
+
+
+_REJECTED_FILE = Path(os.getenv("STATE_DIR", "/app/state")) / "fb_picker_rejected.json"
+
+
+def _pw_fingerprint(password: str) -> str:
+    import hashlib
+    return hashlib.sha256(("fb-picker:" + password).encode()).hexdigest()[:16]
+
+
+def password_already_rejected(password: str) -> bool:
+    """True when THIS password was already rejected by the picker login - never send a rejected password twice."""
+    try:
+        return json.loads(_REJECTED_FILE.read_text()).get("fp") == _pw_fingerprint(password)
+    except Exception:
+        return False
+
+
+def uid_matches_selected(c_user: Optional[str]) -> bool:
+    """True when no uid is pinned, or c_user is exactly the pinned uid."""
+    uid = selected_profile().get("uid")
+    return not uid or str(c_user or "") == uid
+
+
+
+
+_KEEPALIVE_FILE = Path(os.getenv("STATE_DIR", "/app/state")) / "fb_keepalive.json"
+
+
+async def keepalive_once() -> dict:
+    """One light, read-only visit with the persistent profile (#130): keeps the Facebook session warm and reports
+    whether it is still the pinned profile. FacebookSession serialises on the profile lock, so it never runs inside a
+    group scan; an invalid session reuses the normal owner alert (6 h cooldown). No posting, no clicking."""
+    result = {"at": time.time(), "valid": False, "uid_ok": False, "error": None}
+    try:
+        sess = FacebookSession()
+        async with sess as page:
+            result["valid"] = bool(sess.is_valid)
+            if page is not None and sess.is_valid:
+                await page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=45_000)
+                await asyncio.sleep(random.uniform(3, 8))
+                names = {c["name"]: c["value"] for c in await sess._context.cookies() if "facebook" in c.get("domain", "")}
+                result["uid_ok"] = uid_matches_selected(names.get("c_user")) and "xs" in names
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)[:200]
+    try:
+        _KEEPALIVE_FILE.write_text(json.dumps(result))
+    except Exception:
+        pass
+    log.info("fb_browser: keepalive valid=%s uid_ok=%s error=%s", result["valid"], result["uid_ok"], result["error"])
+    return result
 
 
 class FacebookSession:
@@ -177,6 +248,9 @@ class FacebookSession:
             ],
             viewport={"width": 1280, "height": 800},
             locale="he-IL",
+            # FB_PROXY (e.g. socks5://host:1080) routes the Facebook browser through the owner's own IP: Facebook
+            # distrusts the datacenter address (Contabo AS51167) this server goes out from. Unset = direct (unchanged).
+            **({"proxy": {"server": os.environ["FB_PROXY"].strip()}} if os.environ.get("FB_PROXY", "").strip() else {}),
         )
 
         # The profile is the source of truth. Only seed from the cookies.json backup when
@@ -199,6 +273,21 @@ class FacebookSession:
 
         if not self._valid:
             log.warning("fb_browser: health-check → %s — attempting auto-relogin", auth_state.value)
+            if auth_state == _AuthState.ACCOUNT_PICKER and await self._login_via_picker():
+                post_state = await self._health_check()
+                self._valid = (post_state == _AuthState.AUTHENTICATED)
+                if self._valid:
+                    log.info("fb_browser: picker login succeeded - session authenticated")
+                    return
+                log.error("fb_browser: picker login completed but re-check shows %s", post_state.value)
+                await self._notify_owner_reauth_required("picker login ran but session still invalid")
+                return
+            if auth_state == _AuthState.ACCOUNT_PICKER:
+                # The picker attempt failed (rejected password / checkpoint / wrong profile). Do NOT fall through to
+                # the legacy fresh-browser login: it would send the same credentials again (account-lock risk).
+                log.error("fb_browser: picker login failed - not retrying with the legacy login; owner action needed")
+                await self._notify_owner_reauth_required("account_picker: stored profile login rejected (check FB_PASSWORD)")
+                return
             relogin_ok = await self._try_auto_relogin()
             if relogin_ok:
                 # Reload fresh cookies into the existing context and re-validate
@@ -358,6 +447,62 @@ class FacebookSession:
         except Exception as exc:
             log.warning("fb_browser: health-check ERROR: %s", exc)
             return _AuthState.ERROR
+
+    async def _login_via_picker(self) -> bool:
+        """ACCOUNT_PICKER recovery in the PERSISTENT profile (#130): choose the stored profile's tile, enter the
+        password in the modal Facebook shows, and accept ONLY a session whose c_user is the pinned uid. The old
+        fb_browser_login.login() opens a fresh browser and waits for an email field - on the picker there is none, so it
+        timed out ("still on the login page"). Never picks another tile; one attempt, no retries (account-safety)."""
+        sel = selected_profile()
+        name, password = sel.get("name"), os.environ.get("FB_PASSWORD", "").strip()
+        if not name or not password:
+            log.error("fb_browser: picker login skipped - no stored profile name (%s) or FB_PASSWORD missing",
+                      _SELECTED_PROFILE_FILE)
+            return False
+        if password_already_rejected(password):
+            log.error("fb_browser: picker login skipped - this FB_PASSWORD was already rejected; update it in .env "
+                      "(no repeated attempts: account-lock risk)")
+            return False
+        page = self._page
+        try:
+            tiles = await page.evaluate(
+                "() => Array.from(document.querySelectorAll('[role=button]')).map(e => (e.innerText||'').trim())"
+                ".filter(t => t && t.length < 60)")
+            if name not in tiles:
+                log.error("fb_browser: selected profile %r is not on the account picker (tiles: %s) - NOT choosing "
+                          "another profile", name, tiles[:8])
+                return False
+            await page.get_by_role("button", name=name, exact=True).first.click()
+            pass_el = await page.wait_for_selector('input[type="password"]', state="visible", timeout=15_000)
+            await pass_el.fill(password)
+            await pass_el.press("Enter")
+            names: dict = {}
+            for _ in range(15):
+                await asyncio.sleep(2)
+                names = {c["name"]: c["value"] for c in await self._context.cookies()
+                         if "facebook" in c.get("domain", "")}
+                if "c_user" in names and "xs" in names:
+                    break
+            url = page.url.lower()
+            if "c_user" not in names or "xs" not in names:
+                log.error("fb_browser: picker login did not produce a session (url=%s; checkpoint/2FA/captcha or a "
+                          "wrong password - a human step is needed)", url[:80])
+                await _save_failure_screenshot(page, "picker_login_failed")
+                try:
+                    _REJECTED_FILE.write_text(json.dumps({"fp": _pw_fingerprint(password), "at": time.time()}))
+                except Exception:
+                    pass
+                return False
+            if not uid_matches_selected(names.get("c_user")):
+                log.error("fb_browser: picker login ended as a DIFFERENT profile (c_user %s != pinned %s) - rejected",
+                          names.get("c_user"), selected_profile().get("uid"))
+                await self._context.clear_cookies()
+                return False
+            log.info("fb_browser: picker login OK as %r (c_user matches the pinned uid)", name)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.error("fb_browser: picker login failed: %s", exc)
+            return False
 
     async def _try_auto_relogin(self) -> bool:
         """Call fb_browser_login.login() using FB_EMAIL + FB_PASSWORD from .env.

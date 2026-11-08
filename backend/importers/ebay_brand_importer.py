@@ -366,8 +366,8 @@ async def harvest_brand(
             price_ils = round(price_float * GBP_TO_ILS, 2)  # assume GBP
 
         # eBay price has no IL VAT component (international source).
-        # min_price_ils = online_price_ils = max_price_ils = raw eBay price.
-        # normalize_base_price will later compute base_price = max_price_ils * 1.45.
+        # min_price_ils = online_price_ils = raw eBay price. max_price_ils stays NULL (#127): a foreign source never sets
+        # the Israeli consumer reference; the policy estimate then falls to online_price_ils at 0% VAT.
         price_ex_vat = price_ils
 
         item_id = item.get("itemId", "")
@@ -403,14 +403,13 @@ async def harvest_brand(
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
-                        $8, $9, $8,
+                        $8, $9, NULL,
                         'aftermarket', FALSE, TRUE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         online_price_ils = EXCLUDED.online_price_ils,
                         min_price_ils    = EXCLUDED.min_price_ils,
-                        max_price_ils    = EXCLUDED.max_price_ils,
                         name             = EXCLUDED.name,
                         updated_at       = NOW()
                     RETURNING xmax

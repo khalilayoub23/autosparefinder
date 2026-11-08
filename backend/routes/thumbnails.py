@@ -38,7 +38,11 @@ async def get_thumbnail(key: str):
     if obj is None:
         return Response(status_code=404, headers=_NEG_CACHE)
     data, content_type = obj
-    if content_type not in _ALLOWED_CT:
+    # NOA reels (social/video_gen.build_post_reel) are stored as thumbs/video/<sha>.mp4 so the owner can
+    # preview what will be posted; only that prefix may be served as video.
+    if key.startswith("thumbs/video/") and content_type == "video/mp4":
+        pass
+    elif content_type not in _ALLOWED_CT:
         content_type = "image/jpeg"
     return Response(
         content=data,

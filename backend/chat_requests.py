@@ -1,10 +1,10 @@
 """
 Script: chat_requests.py
-Purpose: Durable lifecycle record for every customer chat message (WhatsApp, Telegram) the AI agent answers, so a
+Purpose: Durable lifecycle record for every customer chat message (WhatsApp, Telegram, web chat #84) the AI agent answers, so a
          request survives a slow agent, a transport outage and a backend restart, and "answer generated",
          "saved in conversation history" and "delivered" are never conflated (FIXES_TRACKER #73, #74).
 Process:
-  record   Redis hash chat_req:<rid> (rid = "wa:<message id>" | "tg:<update id>"; Redis runs AOF; 2-day TTL);
+  record   Redis hash chat_req:<rid> (rid = "wa:<message id>" | "tg:<update id>" | "web:<uuid>"; Redis runs AOF; 2-day TTL);
            open ids in the set chat_req:open. Created BEFORE the agent task starts.
            status      received → processing → answered | failed  (ambiguous = outcome not yet reconciled)
            reason      deadline | exception:<Type> | empty_answer | malformed_answer | interrupted | unreconciled
@@ -17,7 +17,7 @@ Process:
   classify a transport result is "sent", "not_sent" (provably nothing left → safe to retry), "invalid"/"rejected"
            (permanent) or "unknown" (timeout / 5xx — may have been delivered → never retried, no duplicates).
 Data Imported/Modified: Redis keys chat_req:* only. Logs carry the request id and the last 4 digits only.
-Last Updated: 2026-10-21
+Last Updated: 2026-10-27 (#84: web chat channel — its delivery is the history row the page polls)
 """
 from __future__ import annotations
 

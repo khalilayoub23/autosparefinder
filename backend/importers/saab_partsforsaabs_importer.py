@@ -158,14 +158,13 @@ async def import_products(conn: asyncpg.Connection, products: list[dict], brand_
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, 'Saab', $4::uuid,
                         $5, $6, '{}'::jsonb,
-                        $7, $8, $7,
+                        $7, $8, NULL,
                         'aftermarket', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         online_price_ils = EXCLUDED.online_price_ils,
                         min_price_ils    = EXCLUDED.min_price_ils,
-                        max_price_ils    = EXCLUDED.max_price_ils,
                         name             = EXCLUDED.name,
                         updated_at       = NOW()
                     RETURNING xmax

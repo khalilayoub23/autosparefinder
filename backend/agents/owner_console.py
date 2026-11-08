@@ -332,13 +332,14 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
     content = post["content"]
     platforms = post.get("platforms") or []
     # media/link best-effort from the app's meta helper (image-required platforms need it)
-    media_url = link = None
+    media_url = link = video_key = None
     try:
         from BACKEND_API_ROUTES import _social_meta  # type: ignore
         res = await db.execute(_sql("SELECT * FROM social_posts WHERE id=:id"), {"id": pid})
         meta = _social_meta(res.fetchone())
         media_url = (meta or {}).get("media_url") or (meta or {}).get("image_url")
         link = (meta or {}).get("link") or (meta or {}).get("cta_url")
+        video_key = (meta or {}).get("video_key")
     except Exception:
         pass
     from social import registry
@@ -363,7 +364,8 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
             results.append(f"• {p}: ⚠️ לא מוגדר")
             continue
         try:
-            r = await registry.dispatch(p, content, media_url=media_url, hashtags=hashtags, link=link)
+            r = await registry.dispatch(p, content, media_url=media_url, hashtags=hashtags, link=link,
+                                        video_key=video_key)
             if r.get("ok"):
                 published[p] = r.get("id")
                 results.append(f"• {p}: ✅ פורסם")
@@ -408,6 +410,26 @@ async def _reject_post(db, post: Dict[str, Any], reason: str = "") -> str:
         rejected_by="owner_whatsapp",
     )
     return f"🚫 הפוסט נדחה ({_short(post['id'])})."
+
+
+async def edit_post_text(db, post_id: str, new_text: str) -> str:
+    """Owner edit of a NOA post — the ONE edit path for the WhatsApp `ערוך` command and the Telegram
+    "✏️ ערוך" button. Delegates to campaign_manager.update_post_content, which bumps content_version and
+    resets the post to pending_approval (a stale approval can never publish the edited text); nothing is
+    published until the owner approves again."""
+    from social.campaign_manager import update_post_content
+    new_text = (new_text or "").strip()
+    if not new_text:
+        return "הטקסט המתוקן ריק — לא שיניתי כלום."
+    try:
+        res = await update_post_content(db, post_id=post_id, new_content=new_text)
+    except Exception as exc:
+        await db.rollback()
+        return f"⚠️ העריכה נכשלה: {str(exc)[:120]}"
+    if not res:
+        return f"⚠️ לא ניתן לערוך את הפוסט ({_short(post_id)}) — לא נמצא או שכבר פורסם."
+    return (f"✏️ הפוסט עודכן ({_short(post_id)}, גרסה {res['content_version']}) וממתין לאישור מחדש.\n"
+            f"לפרסום: *אשר {_short(post_id)}* · לדחייה: *דחה {_short(post_id)}*\n\n{new_text[:600]}")
 
 
 # ── rolling conversation memory (Redis) ───────────────────────────────────────
@@ -800,6 +822,7 @@ _HELP = (
     "• *אשרפניותספקים* / *בטלפניותספקים* — הרשאה ל-NIR לפניות מידע לא מחייבות לספקים\n"
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
+    "• *ערוך <מזהה> <טקסט מתוקן>* — מחליף את תוכן הפוסט וממתין לאישור מחדש\n"
     "• *קמפיין [נושא]* — SHIRA בונה קמפיין, NOA מייצרת תוכן לאישורך\n"
     "• *ביצועים [מזהה]* — SHIRA מנתחת נתוני ביצועים אמיתיים ומחליטה על צעד המשך\n"
     "• *טוקן טיקטוק* — מצב אישור טיקטוק לאיסוף ביצועים, ואם צריך — קישור לאישור\n"
@@ -1946,6 +1969,14 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         if not post:
             return "לא מצאתי פוסט ממתין לאישור. כתוב *פוסטים* לרשימה."
         return await _approve_and_publish(db, post)
+    m_ed = re.match(r"^(edit|ערוך)\b\s*(\S+)?\s*(.*)$", msg, re.I | re.S)
+    if m_ed:
+        post = await _resolve_post(db, m_ed.group(2) or "") if m_ed.group(2) else None
+        if not post:
+            return "פורמט: *ערוך <מזהה> <הטקסט המתוקן>* (המזהה מהרשימה: *פוסטים*)."
+        if not (m_ed.group(3) or "").strip():
+            return f"חסר הטקסט המתוקן: *ערוך {_short(post['id'])} <הטקסט החדש>*"
+        return await edit_post_text(db, post["id"], m_ed.group(3))
     m_rj = re.match(r"^(reject|דחה)\b\s*(\S+)?", msg, re.I)
     if m_rj:
         post = await _resolve_post(db, m_rj.group(2) or "")

@@ -108,12 +108,38 @@ _CRASH_ALERT_TASKS: set = set()  # strong refs for in-flight crash alerts
 _BACKEND_START_UTC: "datetime" = datetime.now(timezone.utc)  # set at import time; used by watchdog to identify orphaned DB connections
 
 
-def _supervised_task(name: str, coro) -> "asyncio.Task":
+# Bounded auto-restart (#86). Only a task that ENDS WITH AN EXCEPTION and was registered with restart=<factory>
+# is started again: a normal return (a loop disabled by its toggle) and a cancellation (shutdown) never are.
+# Backoff 30 s → 2 min → 10 min; at most len(_RESTART_BACKOFF_S) restarts per rolling hour, then it stays down and
+# the owner is told so. Loops that launch subprocesses or a browser, or that hold job locks reconciled only at
+# startup, are registered WITHOUT a factory and stay alert-only (a second copy of their subprocess is worse).
+_RESTART_BACKOFF_S = [float(x) for x in os.getenv("SUPERVISED_RESTART_BACKOFF_S", "30,120,600").split(",") if x.strip()]
+_RESTART_WINDOW_S = float(os.getenv("SUPERVISED_RESTART_WINDOW_S", "3600"))
+_RESTART_HISTORY: dict = {}    # name → [restart timestamps] (this process)
+_RESTART_TASKS: set = set()     # strong references to scheduled restarts
+
+
+def _restart_delay(name: str, exc, has_factory: bool, now: float):
+    """Seconds until the restart, or None (no restart). Records the restart when one is planned."""
+    if exc is None or not has_factory:
+        return None
+    hist = [t for t in _RESTART_HISTORY.get(name, []) if now - t < _RESTART_WINDOW_S]
+    if len(hist) >= len(_RESTART_BACKOFF_S):
+        _RESTART_HISTORY[name] = hist
+        return None
+    delay = _RESTART_BACKOFF_S[len(hist)]
+    _RESTART_HISTORY[name] = hist + [now]
+    return delay
+
+
+def _supervised_task(name: str, coro, restart=None) -> "asyncio.Task":
     """
     Drop-in replacement for asyncio.create_task() that:
       1. Registers the task in _SUPERVISED_TASKS for health-monitor inspection.
       2. Adds a done-callback: alerts owner via WhatsApp if the task exits for any
          reason other than intentional CancelledError (i.e. a crash).
+      3. restart: zero-argument factory returning a fresh coroutine. When given, a task that ended with an exception
+         is started again after a bounded backoff (#86); see _restart_delay.
     """
     task = asyncio.create_task(coro, name=name)
 
@@ -125,22 +151,27 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             exc = t.exception()
         except Exception:
             pass
+        delay = _restart_delay(name, exc, restart is not None, time.time())
         owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
         if owner:
             msg_parts = [f"🔴 *משימת רקע קרסה: {name}*"]
             if exc:
                 msg_parts.append(f"שגיאה: {type(exc).__name__}: {str(exc)[:200]}")
-            msg_parts.append("⚠️ המשימה לא תאותחל אוטומטית — יש לבדוק את השרת.")
+            if delay is not None:
+                n = len(_RESTART_HISTORY.get(name, []))
+                msg_parts.append(f"♻️ תאותחל אוטומטית בעוד {int(delay)} שניות (הפעלה מחדש {n}/{len(_RESTART_BACKOFF_S)} בשעה האחרונה).")
+            elif restart is not None and exc is not None:
+                msg_parts.append(f"⚠️ קרסה {len(_RESTART_BACKOFF_S)} פעמים בשעה האחרונה — לא תאותחל שוב אוטומטית. יש לבדוק את השרת.")
+            else:
+                msg_parts.append("⚠️ המשימה לא תאותחל אוטומטית — יש לבדוק את השרת.")
             # Root-fix 2026-09-01: a dying background task is a production failure
             # and must bypass quiet hours — pass critical=True.
             #
             # INTENTIONAL DIRECT DELIVERY (owner alert architecture audit, 2026-09-09):
             # this is a synchronous asyncio done-callback, not an `async def` — it
             # cannot `await notify_owner(...)` itself, only schedule a fire-and-forget
-            # task the same way it already does. A supervised task never auto-restarts
-            # after crashing (see the message above), so this fires once per genuine
-            # crash event, not in a respawn loop — there is no observed burst/duplicate
-            # behavior to fix here. Left as direct _wa_send_update(critical=True); an
+            # task the same way it already does. Bursts are bounded: a restartable task
+            # alerts at most len(_RESTART_BACKOFF_S)+1 times per rolling hour (#86). An
             # existing regression test (devtests/notify_policy_test.py, "supervised task
             # crash uses critical=True") pins this exact call.
             # t.get_loop() (the deprecated module-level loop getter is gone); keep a strong
@@ -151,7 +182,15 @@ def _supervised_task(name: str, coro) -> "asyncio.Task":
             )
             _CRASH_ALERT_TASKS.add(_alert_task)
             _alert_task.add_done_callback(_CRASH_ALERT_TASKS.discard)
-        print(f"[TaskMonitor] DIED: {name} exc={exc}")
+        print(f"[TaskMonitor] DIED: {name} exc={exc}" + (f" — restart in {int(delay)}s" if delay is not None else ""))
+        if delay is not None:
+            async def _again():
+                await asyncio.sleep(delay)
+                _supervised_task(name, restart(), restart=restart)
+                print(f"[TaskMonitor] RESTARTED: {name}")
+            _rt = t.get_loop().create_task(_again())
+            _RESTART_TASKS.add(_rt)
+            _rt.add_done_callback(_RESTART_TASKS.discard)
 
     task.add_done_callback(_on_done)
     _SUPERVISED_TASKS[name] = task
@@ -2723,6 +2762,47 @@ async def _meili_verify_parity() -> None:
         print(f"[meili_parity] check failed (non-fatal): {exc}", flush=True)
 
 
+async def _vat_basis_refresh_once() -> int:
+    """Load suppliers.vat_price_basis into the price policy's registry (#129). On any failure (e.g. the column does not
+    exist yet) the registry keeps its previous state - never a half-loaded one - and the error is logged loudly."""
+    import price_policy as _pp
+    try:
+        async with async_session_factory() as db:
+            rows = (await db.execute(text("SELECT name, vat_price_basis FROM suppliers"))).all()
+        n = _pp.load_vat_bases({r[0]: r[1] for r in rows})
+        return n
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[vat_basis] registry refresh FAILED (prices keep the previous basis state): %s", exc)
+        return -1
+
+
+async def _vat_basis_registry_loop() -> None:
+    """Keeps the supplier VAT-basis registry fresh (every 10 min) so a basis change needs no restart."""
+    while True:
+        await asyncio.sleep(600)
+        await _vat_basis_refresh_once()
+
+
+async def _fb_keepalive_loop() -> None:
+    """Keeps the Facebook browser session warm (#130): one light visit every FB_KEEPALIVE_INTERVAL_S (default 4 h),
+    timed from the last COMPLETED visit so restarts do not re-anchor it. Toggle FB_KEEPALIVE_ENABLED (default 1)."""
+    import json as _json
+    from datetime import datetime, timezone
+    from local_schedule import delay_after_restart
+    from social.facebook_browser.session import keepalive_once, _KEEPALIVE_FILE
+    interval = float(os.getenv("FB_KEEPALIVE_INTERVAL_S", "14400"))
+    try:
+        _last = _json.loads(_KEEPALIVE_FILE.read_text()).get("at")
+    except Exception:
+        _last = None
+    await asyncio.sleep(delay_after_restart(datetime.fromtimestamp(float(_last), timezone.utc) if _last else None,
+                                            interval, 1800.0))
+    while True:
+        if os.getenv("FB_KEEPALIVE_ENABLED", "1").lower() in ("1", "true", "yes"):
+            await keepalive_once()
+        await asyncio.sleep(interval)
+
+
 async def _meili_sync_loop() -> None:
     """
     Keeps the Meilisearch index in sync with parts_catalog. Found 2026-06-30:
@@ -2967,16 +3047,21 @@ async def startup():
     # #73/#74: chat (WhatsApp/Telegram) requests whose owner process died are taken over and finished — the
     # saved turn reused, else a bounded re-run, else one honest failure; this process's heartbeat lives here too.
     from routes.webhooks import chat_request_recovery_loop as _chat_recovery
-    _supervised_task("chat_request_recovery", _chat_recovery())
-    _supervised_task("stuck_orders_monitor",        _stuck_orders_monitor_loop())
-    _supervised_task("notify_search_miss_loop",     _notify_search_miss_loop())
-    _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop())
-    _supervised_task("abandoned_cart_loop",         _abandoned_cart_loop())
-    _supervised_task("pending_payment_reminder",    _pending_payment_reminder_loop())
-    _supervised_task("price_watch_loop",            _price_watch_loop())
-    _supervised_task("health_monitor_loop",         _health_monitor_loop())
-    _supervised_task("oom_watchdog",                _oom_watchdog_loop())
-    _supervised_task("vip_detection_loop",          _vip_detection_loop())
+    _supervised_task("chat_request_recovery", _chat_recovery(), restart=_chat_recovery)
+    _loaded = await _vat_basis_refresh_once()   # before the first request is priced (#129)
+    print(f"[vat_basis] registry loaded: {_loaded} suppliers" if _loaded >= 0 else "[vat_basis] registry NOT loaded")
+    # browser loop: alert-only by the reviewed restart policy (tests/test_supervised_restart.py)
+    _supervised_task("fb_keepalive",                _fb_keepalive_loop())
+    _supervised_task("vat_basis_registry",          _vat_basis_registry_loop(), restart=_vat_basis_registry_loop)
+    _supervised_task("stuck_orders_monitor",        _stuck_orders_monitor_loop(), restart=_stuck_orders_monitor_loop)
+    _supervised_task("notify_search_miss_loop",     _notify_search_miss_loop(), restart=_notify_search_miss_loop)
+    _supervised_task("scrape_search_misses_loop",   _scrape_search_misses_loop(), restart=_scrape_search_misses_loop)
+    _supervised_task("abandoned_cart_loop",         _abandoned_cart_loop(), restart=_abandoned_cart_loop)
+    _supervised_task("pending_payment_reminder",    _pending_payment_reminder_loop(), restart=_pending_payment_reminder_loop)
+    _supervised_task("price_watch_loop",            _price_watch_loop(), restart=_price_watch_loop)
+    _supervised_task("health_monitor_loop",         _health_monitor_loop(), restart=_health_monitor_loop)
+    _supervised_task("oom_watchdog",                _oom_watchdog_loop(), restart=_oom_watchdog_loop)
+    _supervised_task("vip_detection_loop",          _vip_detection_loop(), restart=_vip_detection_loop)
     # THE single automatic entry point for every heavy night job (#57, 2026-10-03):
     # auto_backup → eBay fitment → sync_prices → REX night cycle → monthly brand discovery →
     # category discovery → weekly maintenance, one at a time, each started only after the
@@ -2987,34 +3072,34 @@ async def startup():
     start_scraper_task()           # ← catalog scraper: FX refresh + Jaguar todos every 3h (heavy night work → night_pipeline)
     start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent — fixed Israel slots DB_AGENT_RUN_TIMES_IL (default 21:30,00:15,07:15); the 3.0 is ignored
     _supervised_task("cleanup_loop",                run_cleanup_loop())
-    _supervised_task("noa_marketing_loop",          _noa_marketing_loop())
-    _supervised_task("noa_engagement_loop",         _noa_engagement_loop())
+    _supervised_task("noa_marketing_loop",          _noa_marketing_loop(), restart=_noa_marketing_loop)
+    _supervised_task("noa_engagement_loop",         _noa_engagement_loop(), restart=_noa_engagement_loop)
     # Email Agent (Gmail read -> classify -> context -> policy -> DRAFT only; never sends).
     # Idles unless EMAIL_AGENT_ENABLED=1 and the GMAIL_OAUTH_* values are set - docs/EMAIL_AGENT.md.
     from email_agent.loop import email_agent_loop as _email_agent_loop
     _supervised_task("email_agent_loop",            _email_agent_loop(notify=notify_owner))
-    _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop())
+    _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop(), restart=_supplier_sourcing_loop)
     _supervised_task("boaz_task_loop",              _boaz_task_loop())
-    _supervised_task("social_feedback_loop",        _social_feedback_loop())
+    _supervised_task("social_feedback_loop",        _social_feedback_loop(), restart=_social_feedback_loop)
     _supervised_task("group_scan_loop",             _group_scan_loop())
-    _supervised_task("noa_eod_report_loop",         _noa_eod_report_loop())
-    _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop())
-    _supervised_task("status_update_loop",          _status_update_loop())
-    _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop())
-    _supervised_task("zombie_reaper",               _zombie_reaper_loop())
+    _supervised_task("noa_eod_report_loop",         _noa_eod_report_loop(), restart=_noa_eod_report_loop)
+    _supervised_task("enrich_catalog_loop",         _enrich_catalog_loop(), restart=_enrich_catalog_loop)
+    _supervised_task("status_update_loop",          _status_update_loop(), restart=_status_update_loop)
+    _supervised_task("rex_dispatch_loop",           _rex_dispatch_loop(), restart=_rex_dispatch_loop)
+    _supervised_task("zombie_reaper",               _zombie_reaper_loop(), restart=_zombie_reaper_loop)
     _supervised_task("car_parts_ie_harvester_loop",  _car_parts_ie_harvester_loop())
     _supervised_task("car_parts_ie_full_seed",       _car_parts_ie_full_seed_loop())
     _supervised_task("thumbnail_import_loop",        _thumbnail_import_loop())
     _supervised_task("job_queue_loop",               _job_queue_loop())
-    _supervised_task("job_queue_report",             _job_queue_report_loop())
-    _supervised_task("whatsapp_link_monitor",        _whatsapp_link_monitor_loop())
-    _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop())
-    _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop())
+    _supervised_task("job_queue_report",             _job_queue_report_loop(), restart=_job_queue_report_loop)
+    _supervised_task("whatsapp_link_monitor",        _whatsapp_link_monitor_loop(), restart=_whatsapp_link_monitor_loop)
+    _supervised_task("car_parts_ie_stall_watchdog",  _car_parts_ie_stall_watchdog_loop(), restart=_car_parts_ie_stall_watchdog_loop)
+    _supervised_task("car_parts_ie_healthcheck",     _car_parts_ie_harvester_healthcheck_loop(), restart=_car_parts_ie_harvester_healthcheck_loop)
     _supervised_task("meili_sync_loop",              _meili_sync_loop())
-    _supervised_task("amayama_harvest_monitor",      _amayama_harvest_monitor_loop())
+    _supervised_task("amayama_harvest_monitor",      _amayama_harvest_monitor_loop(), restart=_amayama_harvest_monitor_loop)
     _supervised_task("amayama_fs_harvester",         _amayama_fs_harvester_loop())
     _supervised_task("amayama_server_browser",       _amayama_server_browser_loop())
-    _supervised_task("harvest_supervisor",           _harvest_supervisor_loop())
+    _supervised_task("harvest_supervisor",           _harvest_supervisor_loop(), restart=_harvest_supervisor_loop)
     # Background, not awaited (2026-10-09): awaiting it held "Application startup complete" -
     # and therefore every API request and the container health check - behind an OPTIONAL warm-up
     # whose cases may legitimately take up to ~230s cold. The warm-up never raises.
@@ -4119,7 +4204,8 @@ async def _noa_featured_thumbnail(car: str, eng_part: str) -> "str | None":
 
 async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "str | None",
                                    topic: str, part_text: str = "",
-                                   topic_performance: "object | None" = None) -> "str | None":
+                                   topic_performance: "object | None" = None,
+                                   reel: "dict | None" = None) -> "str | None":
     """Create a pending_approval SocialPost so NOA's drafts flow through the SAME
     approval→publish queue the admin endpoints + social/registry consume. Returns the id.
 
@@ -4158,6 +4244,10 @@ async def _noa_enqueue_social_post(caption: str, platforms: list, media_url: "st
             meta["guard_sim"] = round(float(guard_score), 3)
         if media_url:
             meta["media_url"] = media_url
+        if reel:
+            meta["video_key"] = reel["video_key"]
+            meta["video_url"] = reel["video_url"]
+            meta["video_ai"] = bool(reel.get("ai"))
         if topic_performance is not None:
             meta["topic_weight_applied"] = round(float(topic_performance.weight), 3)
             meta["topic_weight_sample_size"] = int(topic_performance.sample_size)
@@ -4932,6 +5022,7 @@ async def _noa_marketing_loop():
                     # Attach a clean part thumbnail (from the thumbnail pipeline) so
                     # image-required platforms (instagram/tiktok) have media.
                     media_url = await _noa_featured_thumbnail(car, eng_part)
+                    _clean_thumb_url = media_url   # the composite below replaces media_url
 
                     # G8 2026-07-20: EVERY post gets media with a QR code (thumbnail+QR
                     # composite, or brand-canvas+QR when no clean thumbnail matches).
@@ -4956,11 +5047,26 @@ async def _noa_marketing_loop():
                     except Exception:
                         _guard_part = f"{heb_part} {eng_part}".strip()
 
+                    # Reel for the video platform(s): built NOW, at draft time, so the owner approves
+                    # what will really be posted and approval never waits on a GPU (the SkyReels
+                    # shot takes ~5 min). Off unless NOA_REEL_ENABLED=1; any failure -> no reel,
+                    # and TikTok falls back to the template video exactly as before.
+                    _reel = None
+                    if "tiktok" in (_configured or []) and os.getenv("NOA_REEL_ENABLED", "0") == "1":
+                        try:
+                            from social.video_gen import build_post_reel
+                            _reel = await asyncio.wait_for(
+                                build_post_reel(_clean_thumb_url, heb_part, car, eng_part,
+                                                f"qr_tiktok_w{week_num}"), timeout=1200)
+                        except Exception as _re:
+                            logger.warning("noa_marketing_loop: reel build failed: %s", _re)
+
                     social_post_id = await _noa_enqueue_social_post(
                         caption=caption, platforms=_configured, media_url=media_url,
                         topic=f"{heb_part} — {car}",
                         part_text=_guard_part,
                         topic_performance=_applied_weight,
+                        reel=_reel,
                     )
 
                     pending_payload = {
@@ -4992,6 +5098,8 @@ async def _noa_marketing_loop():
                         wa_post_body = (
                             f"{_wa_caption}\n\n"
                             + (f"🖼️ מדיה (עם QR): {media_url}\n" if media_url else "")
+                            + (f"🎬 סרטון (15 שנ׳{', עם תנועת AI' if _reel.get('ai') else ''}): {_reel['video_url']}\n"
+                               if _reel else "")
                             + f"לאישור ופרסום: כתוב *אשר {_post_short_id}*\n"
                             + f"לדחייה: כתוב *דחה {_post_short_id}*"
                         )

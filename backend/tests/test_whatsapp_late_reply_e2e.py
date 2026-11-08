@@ -30,7 +30,7 @@ def _scenario(messages, agent_delays, *, wait_s=0.3, deadline_s=1.5, settle_s=2.
     sends, calls = [], []
     delays = list(agent_delays)
 
-    async def fake_agent(user_id, message, conversation_id, db, source="web"):
+    async def fake_agent(user_id, message, conversation_id, db, source="web", trusted_conversation=False):
         calls.append(message)
         await asyncio.sleep(delays.pop(0) if delays else 0)
         if fail:

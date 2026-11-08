@@ -293,7 +293,7 @@ async def upsert_parts(conn: asyncpg.Connection, parts: list[dict], brand_id: st
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
-                        $8, $9, $8,
+                        $8, $9, NULL,
                         'aftermarket', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )

@@ -106,44 +106,18 @@ async def _merge_group(conn, canonical, losers, dry):
             "SELECT COUNT(*) FROM part_vehicle_fitment WHERE part_id = ANY($1::uuid[])", losers) or 0
         return st
 
-    # 1a. supplier_parts that CONFLICT (canonical already has that supplier): keep the
-    #     cheaper price on canonical, then delete the loser's redundant offer.
-    await conn.execute("""
-        UPDATE supplier_parts c
-        SET price_ils = LEAST(NULLIF(c.price_ils,0), NULLIF(l.price_ils,0)),
-            updated_at = NOW()
-        FROM supplier_parts l
-        WHERE l.part_id = ANY($2::uuid[]) AND c.part_id = $1
-          AND c.supplier_id = l.supplier_id
-          AND COALESCE(l.price_ils,0) > 0
-          AND (COALESCE(c.price_ils,0) = 0 OR l.price_ils < c.price_ils)
-    """, canonical, losers)
+    # OFFER_DEDUPLICATION_POLICY 1.0.0: offers are never deleted or price-overwritten. A loser offer whose supplier
+    # already has an offer on the canonical (or on another loser) keeps its place on the loser part, which then stays
+    # active (step 4). Only conflict-free offers are repointed (id and price_history are preserved).
     r = await conn.execute("""
-        DELETE FROM supplier_parts l
+        UPDATE supplier_parts l SET part_id = $1, updated_at = NOW()
         WHERE l.part_id = ANY($2::uuid[])
-          AND EXISTS (SELECT 1 FROM supplier_parts c
-                      WHERE c.part_id = $1 AND c.supplier_id = l.supplier_id)
-    """, canonical, losers)
-    st["sp_dropped"] = int(r.split()[-1])
-    # 1a2. loser-vs-loser: two losers can share a supplier_id and would then collide
-    #      on (part_id, supplier_id) once both point at canonical. Keep the CHEAPEST
-    #      loser offer per supplier, drop the rest.
-    r = await conn.execute("""
-        DELETE FROM supplier_parts l
-        WHERE l.part_id = ANY($1::uuid[])
-          AND EXISTS (SELECT 1 FROM supplier_parts l2
-                      WHERE l2.part_id = ANY($1::uuid[]) AND l2.supplier_id = l.supplier_id
-                        AND (COALESCE(NULLIF(l2.price_ils,0), 1e18) < COALESCE(NULLIF(l.price_ils,0), 1e18)
-                             OR (COALESCE(NULLIF(l2.price_ils,0), 1e18) = COALESCE(NULLIF(l.price_ils,0), 1e18)
-                                 AND l2.id < l.id)))
-    """, losers)
-    st["sp_dropped"] += int(r.split()[-1])
-    # 1b. non-conflicting loser offers -> repoint to canonical
-    r = await conn.execute("""
-        UPDATE supplier_parts SET part_id = $1, updated_at = NOW()
-        WHERE part_id = ANY($2::uuid[])
+          AND NOT EXISTS (SELECT 1 FROM supplier_parts c WHERE c.part_id = $1 AND c.supplier_id = l.supplier_id)
+          AND l.id = (SELECT l2.id FROM supplier_parts l2 WHERE l2.part_id = ANY($2::uuid[]) AND l2.supplier_id = l.supplier_id
+                      ORDER BY l2.id LIMIT 1)
     """, canonical, losers)
     st["sp_moved"] = int(r.split()[-1])
+    st["sp_dropped"] = 0
 
     # 3a. drop loser fitment rows that would collide on the actual unique index
     #     uix_pvf_part_mfr_model_year_from = (part_id, manufacturer, model, year_from)
@@ -187,6 +161,7 @@ async def _merge_group(conn, canonical, losers, dry):
                                        '{dedup_merged_into}', to_jsonb($1::text), true),
             updated_at = NOW()
         WHERE id = ANY($2::uuid[])
+          AND NOT EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = parts_catalog.id)
     """, canonical, losers)
     return st
 
@@ -266,4 +241,6 @@ if __name__ == "__main__":
     ap.add_argument("--batch", type=int, default=300, help="groups per transaction")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    import offer_policy
+    offer_policy.gate_or_exit("maintenance/bmw_oem_dedup.py", a.dry_run)
     asyncio.run(run(a.brand, a.limit, a.batch, a.dry_run))

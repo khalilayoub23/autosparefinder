@@ -1,0 +1,48 @@
+{
+  "policy": {
+    "policy_version": "1.0.0",
+    "policy_sha256": "9e05c714d3e193f381fe128e7e68e1c74abc2b091c02ed54aa7f6195e3318235"
+  },
+  "mode": "audit (read-only)",
+  "totals": {
+    "parts": 4632819,
+    "parts_active": 4137685,
+    "suppliers": 153,
+    "suppliers_with_offers": 72,
+    "offers": 4248896,
+    "offers_available": 1523234
+  },
+  "class_A_competing": {
+    "parts_with_2plus_suppliers": 290664
+  },
+  "class_C_price_updates_recorded": {
+    "price_history_rows": 8671037
+  },
+  "same_part_same_supplier_rows_over_1": 0,
+  "same_supplier_groups": {
+    "groups": 8319,
+    "offers": 19036,
+    "by_pair_class": {
+      "UNRESOLVED": 7038,
+      "B": 1280,
+      "MIXED": 1
+    }
+  },
+  "motorstore": {
+    "offers": 4396,
+    "available": 1730,
+    "by_class_all": {
+      "UNRESOLVED": 3772,
+      "COMPETING_OFFERS": 444,
+      "MISATTRIBUTED": 180
+    },
+    "by_class_available": {
+      "COMPETING_OFFERS": 155,
+      "UNRESOLVED": 1395,
+      "MISATTRIBUTED": 180
+    },
+    "available_with_derived_price": 192,
+    "available_without_other_orderable_offer": 1564
+  },
+  "planned_writes": 0
+}

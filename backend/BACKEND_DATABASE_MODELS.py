@@ -719,8 +719,13 @@ class PartsCatalog(Base):
     # All ILS prices stored WITH 18% VAT included
     importer_price_ils = Column(Numeric(10, 2), nullable=True)     # IL importer price incl. VAT
     online_price_ils = Column(Numeric(10, 2), nullable=True)       # competitor online price incl. VAT
-    min_price_ils = Column(Numeric(10, 2), nullable=True)          # cheapest supplier incl. VAT
-    max_price_ils = Column(Numeric(10, 2), nullable=True)          # most expensive supplier incl. VAT
+    # INTERNAL, never a customer price: the cheapest ELIGIBLE offer (orderable, class-compatible) incl. the VAT that
+    # offer carries (18% local, 0% foreign) - written by db_update_agent.refresh_min_max_prices (#127).
+    min_price_ils = Column(Numeric(10, 2), nullable=True)
+    # ISRAELI CONSUMER REFERENCE incl. 18% VAT: the published Israeli consumer price (importer price lists, IL retail
+    # reference) or the highest eligible LOCAL offer x 1.18. Never derived from a foreign supplier's cost -
+    # price_policy.catalog_estimate reads it as a LOCAL cost (max / 1.18). docs/PRICE_POLICY.md "Catalog cost columns".
+    max_price_ils = Column(Numeric(10, 2), nullable=True)
     part_condition = Column(String(20), nullable=False, default="New")  # New/Used/Remanufactured
     aftermarket_tier = Column(String(20), nullable=True)
     aftermarket_brand_id = Column(

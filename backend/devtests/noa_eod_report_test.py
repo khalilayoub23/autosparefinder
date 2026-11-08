@@ -72,7 +72,7 @@ class TestEodReportLoopStructure(unittest.TestCase):
 
     def test_registered_as_supervised_task(self):
         self.assertIn(
-            '_supervised_task("noa_eod_report_loop",         _noa_eod_report_loop())',
+            '_supervised_task("noa_eod_report_loop",         _noa_eod_report_loop()',   # + restart= (#86)
             self.full_source,
         )
 

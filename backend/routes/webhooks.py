@@ -291,12 +291,30 @@ async def telegram_admin_webhook(request: Request):
                 )
 
             elif callback_data == "edit_post":
+                # Arm a one-shot edit: the owner's NEXT plain message in this chat replaces the pending
+                # post's text (consumed in the "message" branch below). Without this record the promised
+                # "send the corrected text" had nothing listening (2026-11-05).
+                armed = False
+                try:
+                    from agents.memory import AgentMemory
+                    from BACKEND_DATABASE_MODELS import async_session_factory
+                    async with async_session_factory() as db:
+                        mem = AgentMemory(db, agent_name="noa")
+                        pend = await mem.get("pending_post") or {}
+                        if pend.get("social_post_id"):
+                            await mem.set("pending_edit", {"social_post_id": pend["social_post_id"],
+                                                           "chat_id": str(chat_id)}, ttl_hours=1)
+                            armed = True
+                except Exception as _ee:
+                    logger.warning("telegram edit_post arm failed: %s", _ee)
                 await client.post(
                     f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/editMessageText",
                     json={
                         "chat_id": chat_id,
                         "message_id": message_id,
-                        "text": "✏️ שלח את הטקסט המתוקן כהודעה חדשה — אשמור אותו ואשאל אם לפרסם.",
+                        "text": ("✏️ שלח עכשיו את הטקסט המתוקן כהודעה אחת (בתוקף שעה) — אחליף את הפוסט "
+                                 "ואבקש אישור מחדש.") if armed else
+                                "⚠️ לא נמצא פוסט ממתין לעריכה. ערוך מהוואטסאפ: ערוך <מזהה> <טקסט>.",
                     }
                 )
 
@@ -320,6 +338,26 @@ async def telegram_admin_webhook(request: Request):
     # Record it into NOA's engagement inbox; the engagement loop drafts a reply for the
     # owner to approve. Additive + fully guarded — never affects the approval flow above.
     elif "message" in data:
+        # Armed owner edit (the "✏️ ערוך" button): the owner's next text replaces the post — not an inbox item.
+        try:
+            _m = data["message"]
+            _txt = (_m.get("text") or "").strip()
+            if _txt and TELEGRAM_OWNER_ID and str((_m.get("chat") or {}).get("id")) == str(TELEGRAM_OWNER_ID):
+                from agents.memory import AgentMemory
+                from agents.owner_console import edit_post_text
+                from BACKEND_DATABASE_MODELS import async_session_factory
+                async with async_session_factory() as _ndb:
+                    _mem = AgentMemory(_ndb, agent_name="noa")
+                    _pe = await _mem.get("pending_edit")
+                    if _pe and _pe.get("social_post_id"):
+                        await _mem.delete("pending_edit")
+                        _reply = await edit_post_text(_ndb, _pe["social_post_id"], _txt)
+                        async with httpx.AsyncClient(timeout=10.0) as _c:
+                            await _c.post(f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/sendMessage",
+                                          json={"chat_id": _m["chat"]["id"], "text": _reply[:3900]})
+                        return {"ok": True, "handled": "edit_post"}
+        except Exception as _ed:
+            logger.warning("telegram owner edit failed: %s", _ed)
         try:
             from social import engagement as _eng
             from BACKEND_DATABASE_MODELS import async_session_factory
@@ -584,6 +622,8 @@ WA_AGENT_REPLY_WAIT_S = float(os.getenv("WA_AGENT_REPLY_WAIT_S", "12"))
 WA_AGENT_LATE_DEADLINE_S = float(os.getenv("WA_AGENT_LATE_DEADLINE_S", "120"))
 _AGENT_REPLY_TASKS: set = set()
 WA_FAST_DELIVERY_WAIT_S = float(os.getenv("WA_FAST_DELIVERY_WAIT_S", "20"))
+# Web chat (#84): same deadline as the WhatsApp late reply unless set — one customer experience across channels (G2).
+WEB_CHAT_DEADLINE_S = float(os.getenv("WEB_CHAT_DEADLINE_S", str(WA_AGENT_LATE_DEADLINE_S)))
 
 _WAIT_TEXT = {
     "he": "⏳ אני עדיין מחפש עבורך — התשובה תגיע בהודעה נפרדת בעוד רגע, אין צורך לשלוח שוב.",
@@ -700,6 +740,12 @@ _TERMINAL_DELIVERY = ("sent", "failed", "unknown")
 
 def _transport(channel: str):
     """(send(rec, text) → result, classify(result) → sent|not_sent|invalid|rejected|unknown), resolved at call time."""
+    if channel == "web":
+        # Web chat (#84): the page polls the conversation's `messages`, so the history row IS the delivery — the
+        # answer row is written by the agent, the failure row by _sync_history BEFORE this "send". Nothing to push.
+        async def _send(rec, text):
+            return {"ok": True}
+        return _send, lambda result: "sent"
     if channel == "tg":
         from social import telegram_publisher as _tp
 
@@ -726,6 +772,37 @@ def _render_agent_answer(agent_result):
     return (text, "") if text else ("", "empty_answer")
 
 
+async def _run_web_agent(adb, rec: dict, rid: str) -> dict:
+    """Web chat's agent run (#84), inside _run_agent_for's tagged session. The route already saved (and tagged) the
+    customer's question, and the web channel answers through process_agent_response_for_message, which saves the
+    assistant row and commits but returns nothing — so the answer is read back by its request tag, the same
+    evidence _reconcile_turn uses. No tagged answer row → {"response": None} → an honest failure, never silence.
+    Runs under the shared fire-and-forget semaphore, as the web route's background task did before."""
+    from sqlalchemy import text as _t
+    from BACKEND_AI_AGENTS import process_agent_response_for_message
+    from routes.utils import _guarded_task
+    await _guarded_task(process_agent_response_for_message(rec["user_key"], rec["body"], rec["conv_id"], adb,
+                                                           source="web"))
+    row = (await adb.execute(_t(
+        "SELECT id, content FROM messages WHERE analysis->>'chat_request_id' = :rid AND role = 'assistant' "
+        "AND analysis->>'chat_kind' IS NULL AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1"),
+        {"rid": rid})).fetchone()
+    return {"response": row[1], "message_id": str(row[0])} if row else {"response": None}
+
+
+async def start_web_chat_request(r, rid: str, *, user_id: str, conv_id: str, message: str, lang: str) -> None:
+    """Web chat on the durable request lifecycle (#84): the record is written BEFORE the agent starts, then the
+    shared pipeline runs it with the shared deadline, a kept task reference, reconciliation, take-over after a
+    restart and one honest failure row. The route returns at once; the page polls `messages`.
+    Redis unavailable (r is None): the agent still runs under the deadline with a kept reference, but no record
+    exists, so there is no take-over after a restart and no failure row (same limitation as WhatsApp/Telegram)."""
+    # lang: "" → detected from the message, exactly as WhatsApp/Telegram do (the failure text matches the customer)
+    rec = {"channel": "web", "user_key": user_id, "body": message, "conv_id": conv_id,
+           "lang": lang if lang in ("he", "ar", "en") else _reply_lang(message), "target": ""}
+    await creq.create(r, rid, **rec)
+    await _process_request(r, rid, rec, wait_s=0, deadline_s=WEB_CHAT_DEADLINE_S)
+
+
 async def _run_agent_for(rec: dict, rid: str, reuse_user_id: str = ""):
     """One agent run in its own PII session. Every conversation-turn row it creates is tagged with the request id
     inside the agent's own transaction, so "was this turn saved?" is answerable after any crash (and the unique
@@ -750,9 +827,14 @@ async def _run_agent_for(rec: dict, rid: str, reuse_user_id: str = ""):
         # this task's context only: side-effecting agent code and the history loader see which request this is
         creq.CURRENT_REQUEST.set(rid)
         creq.REUSE_USER_ROW.set(reuse_user_id or "")
+        if rec.get("channel") == "web":
+            return await _run_web_agent(_adb, rec, rid)
+        # conv_id was resolved HERE from the channel identity (phone / chat id), never from a client, and a customer
+        # who registered after an anonymous chat is served as the new user in the old conversation (#117).
         _res = await process_user_message(user_id=rec["user_key"], message=rec["body"],
                                           conversation_id=rec.get("conv_id") or None, db=_adb,
-                                          source="telegram" if rec.get("channel") == "tg" else "whatsapp")
+                                          source="telegram" if rec.get("channel") == "tg" else "whatsapp",
+                                          trusted_conversation=True)
         await _adb.commit()
         return _res
 

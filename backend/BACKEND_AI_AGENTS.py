@@ -6927,6 +6927,27 @@ async def process_agent_response_for_message(
         _rl.REPLY_LANGUAGE.reset(_token)
 
 
+async def load_owned_conversation(db: AsyncSession, conversation_id, user_id, *, trusted: bool = False) -> Optional[Conversation]:
+    """The ONE place a conversation id becomes a conversation (#117, 2026-11-03).
+
+    Returns the conversation only when it is owned by `user_id`. A missing, malformed, unknown or foreign id all
+    return None, so a caller cannot tell "not yours" from "does not exist" and never reads or writes another
+    user's conversation. Every web / audio turn resolves its (client-supplied) conversation id here.
+
+    trusted=True is for SERVER-resolved ids only: the WhatsApp / Telegram webhooks choose the conversation from the
+    channel identity (phone number / chat id), never from client input, and a customer who chatted anonymously and
+    then registered is legitimately served as the new user inside the old, anonymously-owned conversation. Only
+    routes/webhooks.py may pass it (guard: tests/test_conversation_ownership.py)."""
+    try:
+        cid = _UUID(str(conversation_id))
+        uid = None if trusted else _UUID(str(user_id))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    cond = Conversation.id == cid if trusted else and_(Conversation.id == cid, Conversation.user_id == uid)
+    res = await db.execute(select(Conversation).where(cond))
+    return res.scalar_one_or_none()
+
+
 async def _process_agent_response_for_message_impl(
     user_id: str,
     message: str,
@@ -6938,9 +6959,8 @@ async def _process_agent_response_for_message_impl(
     Background-safe: load conversation, route to agent, call LLM, save assistant message.
     Called via asyncio.create_task with its own DB session.
     """
-    # Load conversation
-    conv_res = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
-    conversation = conv_res.scalar_one_or_none()
+    # Load conversation (owner only — #117)
+    conversation = await load_owned_conversation(db, conversation_id, user_id)
     if not conversation:
         print(f"[BG AGENT] conversation {conversation_id} not found")
         return
@@ -7363,14 +7383,17 @@ async def process_user_message(
     conversation_id: Optional[str],
     db: AsyncSession,
     source: str = "web",
+    trusted_conversation: bool = False,
 ) -> Dict[str, Any]:
     """
     Main entry point: routes message, calls agent, saves to DB, returns response.
     Scopes the turn's reply language (reply_language.REPLY_LANGUAGE) to this call only.
+    trusted_conversation: the id was resolved by the server from a channel identity (WhatsApp/Telegram), not
+    supplied by a client - see load_owned_conversation. Default False = the caller must own the conversation.
     """
     _token = _rl.REPLY_LANGUAGE.set(None)
     try:
-        return await _process_user_message_impl(user_id, message, conversation_id, db, source)
+        return await _process_user_message_impl(user_id, message, conversation_id, db, source, trusted_conversation)
     finally:
         _rl.REPLY_LANGUAGE.reset(_token)
 
@@ -7381,16 +7404,13 @@ async def _process_user_message_impl(
     conversation_id: Optional[str],
     db: AsyncSession,
     source: str = "web",
+    trusted_conversation: bool = False,
 ) -> Dict[str, Any]:
     """Body of process_user_message (see the wrapper)."""
     # ── 1. Get or create conversation ──────────────────────────────────────────
-    if conversation_id:
-        result = await db.execute(
-            select(Conversation).where(Conversation.id == conversation_id)
-        )
-        conversation = result.scalar_one_or_none()
-    else:
-        conversation = None
+    # Owner only (#117): a conversation id that is not the caller's is treated like an unknown one.
+    conversation = (await load_owned_conversation(db, conversation_id, user_id, trusted=trusted_conversation)
+                    if conversation_id else None)
 
     if not conversation:
         conversation = Conversation(
