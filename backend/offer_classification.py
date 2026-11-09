@@ -55,7 +55,10 @@ def norm_type_sql(col: str) -> str:
         return ",".join("'" + x.replace("'", "''") + "'" for x in sql_labels(key))
     return (f"(CASE WHEN {c} IN ('unknown','none','null') THEN '' "
             f"WHEN {c} IN ({_in('oem')}) THEN 'oem' "
-            f"WHEN {c} IN ({_in('oe_equivalent')}) THEN 'oe_equivalent' ELSE {c} END)")
+            f"WHEN {c} IN ({_in('oe_equivalent')}) THEN 'oe_equivalent' "
+            f"WHEN {c} IN ({_in('aftermarket')}) THEN 'aftermarket' "
+            f"WHEN {c} IN ({_in('remanufactured')}) THEN 'remanufactured' "
+            f"WHEN {c} IN ({_in('used')}) THEN 'used' ELSE {c} END)")
 
 
 def class_rank_sql(sp_col: str = "sp.part_type", pc_col: str = "pc.part_type") -> str:

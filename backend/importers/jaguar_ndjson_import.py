@@ -51,7 +51,8 @@ async def run():
         cost    = round(price_gbp * GBP_ILS, 2)
         retail  = round(cost * (1 + VAT), 2)
         selling = round(cost * 1.45, 2)
-        part_type = "original" if part_origin == "original" else "oe_equivalent"
+        from variant_identity import catalog_part_type
+        part_type = catalog_part_type("original" if part_origin == "original" else "oe_equivalent")
 
         part_spec = json.dumps({
             "source": "sng_barratt", "brand_name": brand_name,

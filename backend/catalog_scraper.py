@@ -1381,6 +1381,8 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
     Insert or update a parts_catalog row.
     Returns (part_id, was_created).
     """
+    from variant_identity import catalog_part_type
+    part_type = catalog_part_type(part_type)       # ONE vocabulary: "OEM Original" -> oem; unknown label -> NULL, never stored raw
     existing = (await db.execute(
         text("SELECT id FROM parts_catalog WHERE sku = :sku"), {"sku": sku}
     )).fetchone()
@@ -1390,7 +1392,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
             text("""
                 UPDATE parts_catalog SET
                     name = :name, manufacturer = :manufacturer, category = :category,
-                    part_type = :part_type, base_price = :base_price,
+                    part_type = COALESCE(:part_type, part_type), base_price = :base_price,
                     description = :description,
                     part_condition = CASE
                         WHEN :is_oem_source THEN 'OEM'

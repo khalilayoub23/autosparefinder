@@ -116,6 +116,30 @@ async def _update_catalog_min_price(
     }
 
 
+def select_existing_offer(rows, incoming):
+    """Which of this supplier's rows for the part does an incoming listing of variant `incoming` update?
+    1. the row whose stored variant EXACTLY equals the incoming one (typed match);
+    2. otherwise an UNTYPED row (fallback: it gets typed, no known variant is touched);
+    3. otherwise None (every stored row is a different known variant -> caller reports a variant conflict).
+    Never substitutes one known variant for another and never depends on row order."""
+    from offer_classification import normalize_type as _nt
+
+    def _stored(row):
+        t = _nt(getattr(row, "part_type", None))
+        return None if t in ("", "unknown", "none", "null") else t
+
+    inc = None if _nt(incoming) in ("", "unknown", "none", "null") else _nt(incoming)
+    rows = list(rows or [])
+    if inc is not None:
+        for r in rows:
+            if _stored(r) == inc:
+                return r
+    for r in rows:
+        if _stored(r) is None:
+            return r
+    return None
+
+
 async def _write_supplier_part(
     db: AsyncSession,
     *,
@@ -160,11 +184,7 @@ async def _write_supplier_part(
                 ORDER BY created_at, id"""),
         {"supplier_id": supplier_id, "part_id": part_id})).fetchall()
 
-    def _stored(row):
-        t = _nt(getattr(row, "part_type", None))
-        return None if t in ("unknown", "none", "null") else t
-
-    existing = next((r for r in _rows if _stored(r) == _incoming or not _stored(r) or not _incoming), None) if _rows else None
+    existing = select_existing_offer(_rows, _incoming)
 
     old_price_usd: Optional[Decimal] = None
     old_price_ils: Optional[Decimal] = None

@@ -656,8 +656,8 @@ def test_ebay_sync_first_repeat_change_and_non_il(state, monkeypatch):
 
 @pytest.mark.parametrize("state", STATES)
 def test_cpie_import_all_parts_skipped_is_loud_but_exit_0(state, tmp_path):
-    """Brand whose manufacturer_id is not in car_brands (slug not in MANUFACTURER_IDS): every part hits the FK. Data behaviour is
-    unchanged (nothing written, exit 0) but the failure is no longer silent: report skip_reasons, ERROR line, persistent record."""
+    """Brand the site does not list and car_brands does not know (car_brand_resolver -> unresolved): nothing is written (no guessed
+    UUID, no FK failure), exit 0, and the skip is loud: skip_reasons brand_unresolved + ERROR line."""
     run(_set_state(state))
     t = tag()
     f = tmp_path / "p.json"
@@ -668,6 +668,6 @@ def test_cpie_import_all_parts_skipped_is_loud_but_exit_0(state, tmp_path):
     assert r.returncode == 0, r.stderr[-400:]
     out = json.loads(r.stdout[r.stdout.index("{"):])
     assert out["parts_inserted"] == 0 and out["parts_updated"] == 0 and out["parts_skipped"] == 3
-    assert list(out["skip_reasons"].values()) == [3] and "ForeignKeyViolationError" in list(out["skip_reasons"])[0]
-    assert "ERROR car_parts_ie_import: 3 of 3 parts NOT imported for brand=zzbrand" in r.stderr
+    assert out["skip_reasons"] == {"brand_unresolved": 3}
+    assert "brand_unresolved brand='zzbrand'" in r.stderr
     assert run(V("SELECT count(*) FROM parts_catalog WHERE sku LIKE $1", f"ZZBRA-ZB{t}%")) == 0

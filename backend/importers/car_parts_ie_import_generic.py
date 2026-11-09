@@ -67,46 +67,7 @@ SUPPLIER_NAME = "Car-Parts.ie"
 _SKIP_LOG_LIMIT = 5          # skipped supplier_parts rows logged per run (all of them are counted)
 SUPPLIER_URL = "https://www.car-parts.ie"
 
-# Known manufacturer_ids for common brands (must match car_brands.id)
-MANUFACTURER_IDS: dict[str, str] = {
-    "toyota":       "01954786-65c7-4ff4-a6ad-4836b31da9f4",
-    "honda":        "6034f4f4-6dfa-4c88-998c-e62f45956ea9",
-    "nissan":       "98ca408f-19b6-48f9-a756-18b2387b0b90",
-    "ford":         "73fc77ef-5414-4270-9476-2444d8b7eb41",
-    "bmw":          "caa6ba39-02aa-4394-969d-a15f3f19104c",
-    "hyundai":      "eb828e88-d955-45a8-8b53-3b3677238b5a",
-    "kia":          "626947bf-be3f-4dd1-a52e-fbcff8168cfc",
-    "mazda":        "fde0f2dc-c6fb-4ab6-b699-765044fbc073",
-    "subaru":       "88a04aee-d7d5-45ff-8308-4c6b50c67c0e",
-    "mitsubishi":   "0e31fccd-8abf-4eb9-ac0c-5584f626a20f",
-    "volvo":        "2714a52d-fb43-4af5-bf96-6e677f0f8a25",
-    "jaguar":       "fde0f2dc-c6fb-4ab6-b699-765044fbc073",
-    "land rover":   "7f060acf-2382-42e1-8413-f9b045cb0836",
-    "landrover":    "7f060acf-2382-42e1-8413-f9b045cb0836",
-    "porsche":      "6129ed2e-3f88-4025-9f66-5bf8ab97a8c1",
-    "mercedes-benz":"c8ae1952-9e77-4acb-bf79-88271cf9bbce",
-    "mercedes":     "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
-    "volkswagen":   "04877cea-0889-4b57-978a-cff0a8f1ed25",
-    "vw":           "04877cea-0889-4b57-978a-cff0a8f1ed25",
-    "opel":         "86106424-41ba-434b-b107-4b6db23523b7",
-    "audi":         "4a718e3c-5b47-478d-9c62-0b6b5135593e",
-    "renault":      "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
-    "peugeot":      "2b6a2687-8227-4307-9c88-500545fc96ca",
-    "citroen":      "c9fba999-3265-4d99-99ec-3a959ac0ac66",
-    "citroën":      "c9fba999-3265-4d99-99ec-3a959ac0ac66",
-    "skoda":        "e062ba07-930c-489f-b43e-48bf90a42d11",
-    "fiat":         "471408c0-527b-49d3-a964-fb108916d586",
-    "chevrolet":    "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1",
-    "suzuki":       "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c",
-    # car-parts.ie brands
-    "rover":        "9e3b7475-c104-4f75-a006-26c5858b9c37",
-    "saab":         "c21a289d-5b3e-411f-afbb-5f7a4d022a88",
-    "daewoo":       "3b2a1c64-76ef-4960-ab3d-8b2337ea3409",
-    "chrysler":     "e7b5ae95-649c-4da8-81ad-cc565a86582a",
-    "mg":           "341be223-5852-4f29-bd96-085ef2c5d07b",
-    "haval":        "1f0da611-bb17-4749-91bd-90c7a6db54fe",
-    "ssangyong":    "588b0288-fb17-499e-83a8-750e3be2d318",
-}
+from car_brand_resolver import resolve_source_brand
 
 from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
 from warranty_policy import resolve as _warranty_resolve
@@ -132,16 +93,6 @@ def _extract_years(text: str) -> tuple[int | None, int | None]:
     if years:
         return years[0], years[0]
     return None, None
-
-
-def _resolve_manufacturer_id(brand_key: str) -> str:
-    mid = MANUFACTURER_IDS.get(brand_key.lower())
-    if mid:
-        return mid
-    # Generate stable UUID from brand name
-    return str(
-        __import__("uuid").UUID(hashlib.md5(brand_key.lower().encode()).hexdigest())
-    )
 
 
 def _map_category(slug: str) -> str:
@@ -215,7 +166,6 @@ async def import_file(
         # Pick up vehicle_slug from JSON if not passed as arg
         vehicle_slug = vehicle_slug or raw.get("vehicle_slug", "")
 
-    manufacturer_id = _resolve_manufacturer_id(maker_key)
     sku_prefix = re.sub(r"[^A-Z0-9]", "", manufacturer.upper())[:5] or "CPIE"
     model_name = re.sub(r"\(\d{2}\.\d{4}.*?\)", "", model_text).strip()
     year_from, year_to = _extract_years(f"{model_text} {engine_text}")
@@ -249,6 +199,18 @@ async def import_file(
         except Exception as _e:
             print(f"  [warn] session tuning not applied: {type(_e).__name__}: {str(_e)[:120]}", flush=True)
         supplier_id = await _ensure_supplier(conn)
+        # One canonical brand rule (car_brand_resolver): existing record / alias / validated creation; never a guessed UUID.
+        _brand_cache: dict = {}
+        _res = await resolve_source_brand(conn, maker_key, _brand_cache)
+        if _res.action == "unresolved":
+            print(f"ERROR car_parts_ie_import: brand_unresolved brand={maker_key!r} ({_res.reason}); nothing imported", file=sys.stderr, flush=True)
+            return {"manufacturer": manufacturer, "model": model_name, "parts_scanned": len(parts_list), "parts_inserted": 0,
+                    "parts_updated": 0, "fitment_rows": 0, "supplier_rows": 0, "supplier_skipped": 0, "image_rows": 0,
+                    "parts_skipped": len(parts_list), "skip_reasons": {"brand_unresolved": len(parts_list)},
+                    "fitment_skipped": 0, "image_skipped": 0, "checkpoint_at": None, "brand_resolution": _res.action}
+        manufacturer_id = _res.brand_id
+        if _res.action in ("created", "alias"):
+            print(f"  [brand] {maker_key!r} -> {_res.name} ({_res.action}: {_res.reason})", flush=True)
         inserted = updated = fitment_rows = supplier_rows = image_rows = supplier_skipped = 0
         parts_skipped = fitment_skipped = image_skipped = 0
         skip_reasons: dict = {}      # 'ErrorClass: first line' -> count (parts_catalog rows that could not be written)
@@ -400,7 +362,12 @@ async def import_file(
             for cv in compatible_vehicles:
                 try:
                     fit_maker = cv["manufacturer"]
-                    fit_mid = _resolve_manufacturer_id(fit_maker.lower())
+                    _fres = await resolve_source_brand(conn, fit_maker, _brand_cache)
+                    if _fres.action == "unresolved":
+                        fitment_skipped += 1
+                        skip_reasons["fitment_brand_unresolved"] = skip_reasons.get("fitment_brand_unresolved", 0) + 1
+                        continue
+                    fit_mid = _fres.brand_id
                     await conn.execute(
                         """
                         INSERT INTO part_vehicle_fitment(
@@ -518,6 +485,7 @@ async def import_file(
             "fitment_skipped": fitment_skipped,
             "image_skipped": image_skipped,
             "checkpoint_at": checkpoint_at,
+            "brand_resolution": _res.action,
         }
     finally:
         await conn.close()

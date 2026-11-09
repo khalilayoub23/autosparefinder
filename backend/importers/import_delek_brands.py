@@ -59,6 +59,7 @@ import asyncio, json, os, re, sys, uuid, argparse
 from pathlib import Path
 import asyncpg
 from price_history_writer import PriceHistoryTracker
+from variant_identity import catalog_part_type
 import urllib.parse as up
 
 # ONE category source of truth — never a private ruleset here.
@@ -356,7 +357,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
             "brand_id":     brand_id,
             "oem_number":   oem,
             "category":     categorise(name_he),
-            "part_type":    "original" if is_orig else "oe_equivalent",
+            "part_type":    catalog_part_type("original" if is_orig else "oe_equivalent"),
             "retail_price_ils": price,
             "tier":         None if is_orig else "OE_equivalent",
             "models":       [p.get("model", make)] if p.get("model") else [make],

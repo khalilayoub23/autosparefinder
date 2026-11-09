@@ -8,6 +8,8 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 import openpyxl
 
+from variant_identity import catalog_part_type
+
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
     normalize_manufacturer_name,
@@ -225,7 +227,7 @@ def _make_normalized_record(
         "category": manufacturer[:100],
         "manufacturer": manufacturer[:100],
         "manufacturer_id": manufacturer_id,
-        "part_type": (clean(part_type) or "unknown")[:50],
+        "part_type": catalog_part_type(clean(part_type)),
         "description": part_name[:500],
         "specifications": json.dumps(spec_payload, ensure_ascii=False),
         "compatible_vehicles": json.dumps(compatible_vehicles, ensure_ascii=False),

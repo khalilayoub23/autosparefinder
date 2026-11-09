@@ -326,7 +326,7 @@ async def run(dry_run: bool = False):
                             ) VALUES (
                                 gen_random_uuid(), $1, $1, $2, $2,
                                 'Lexus', $3::uuid,
-                                $8, 'new', 'original',
+                                $8, 'new', 'oem',
                                 $4, $5, $4, $7,
                                 $6::jsonb, true,
                                 true, false,

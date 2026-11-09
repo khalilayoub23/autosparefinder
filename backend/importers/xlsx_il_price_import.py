@@ -152,7 +152,7 @@ async def run(brand, xlsx_path):
                     ) VALUES(
                         gen_random_uuid(),$1,$2,$3,$3,$4,$9,
                         $5,$6,$7,$7,
-                        'Original','new',true,
+                        'oem','new',true,
                         true,false,$8::jsonb,
                         NOW(),NOW()
                     )

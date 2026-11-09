@@ -236,7 +236,7 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
     }
 
     # Part type: all eliteparts products are "original" genuine OEM or OE equivalent
-    part_type = "original"
+    part_type = "oem"      # catalog class
     aftermarket_tier = None  # genuine OEM
 
     try:
@@ -254,7 +254,7 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
                     gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                     $6, $7, $8::jsonb, $9::jsonb,
                     $10, 0, $10, $11,
-                    'new', NULL, 'original',
+                    'new', NULL, 'oem',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
                 )

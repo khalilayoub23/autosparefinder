@@ -38,6 +38,7 @@ from workbook_normalizer import build_normalized_workbook, iter_normalized_rows,
 
 # ONE category source of truth.
 from category_map import categorize_on_ingest
+from variant_identity import catalog_part_type
 
 XLSX_FILE = Path(__file__).parent.parent / "data" / "parts_database.xlsx"
 _raw_url = os.getenv("DATABASE_URL", "postgresql://autospare:autospare_dev@localhost:5432/autospare")
@@ -148,7 +149,7 @@ def _make_part_record(brand: str, avail, price, name, mfr, catalog, row_idx: int
         "category": brand[:100],
         "manufacturer": manufacturer[:100],
         "manufacturer_id": manufacturer_id,
-        "part_type": "unknown",
+        "part_type": None,
         "description": name[:500],
         "specifications": json.dumps(specs, ensure_ascii=False),
         "compatible_vehicles": "[]",
@@ -300,7 +301,7 @@ def parse_row(sheet_name: str, row: tuple, row_idx: int) -> dict | None:
         "category": brand[:100],
         "manufacturer": manufacturer[:100],
         "manufacturer_id": manufacturer_id,
-        "part_type": part_type[:50],
+        "part_type": catalog_part_type(part_type),
         "description": name[:500],
         "specifications": json.dumps(specs, ensure_ascii=False),
         "compatible_vehicles": json.dumps(compat, ensure_ascii=False),
@@ -320,7 +321,7 @@ ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
     category = EXCLUDED.category,
     manufacturer = EXCLUDED.manufacturer,
-    part_type = EXCLUDED.part_type,
+    part_type = COALESCE(EXCLUDED.part_type, parts_catalog.part_type),
     description = EXCLUDED.description,
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
@@ -343,7 +344,7 @@ ON CONFLICT (sku) DO UPDATE SET
     category = EXCLUDED.category,
     manufacturer = EXCLUDED.manufacturer,
     manufacturer_id = EXCLUDED.manufacturer_id,
-    part_type = EXCLUDED.part_type,
+    part_type = COALESCE(EXCLUDED.part_type, parts_catalog.part_type),
     description = EXCLUDED.description,
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
@@ -429,7 +430,7 @@ async def import_parts(selected_sheets: list[str] | None = None):
                                      extra=str(record.get("category", ""))),
                 str(record.get("manufacturer", "")),
                 manufacturer_id,
-                str(record.get("part_type", "unknown")),
+                record.get("part_type"),
                 str(record.get("description", "")),
                 str(record.get("specifications", "{}")),
                 str(record.get("compatible_vehicles", "[]")),
@@ -446,7 +447,7 @@ async def import_parts(selected_sheets: list[str] | None = None):
                 categorize_on_ingest(name=str(record.get("name", "")),
                                      extra=str(record.get("category", ""))),
                 str(record.get("manufacturer", "")),
-                str(record.get("part_type", "unknown")),
+                record.get("part_type"),
                 str(record.get("description", "")),
                 str(record.get("specifications", "{}")),
                 str(record.get("compatible_vehicles", "[]")),

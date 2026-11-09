@@ -208,7 +208,7 @@ async def insert_parts(conn, supplier_id, brand: str, parts: list,
                 cat_ins += 1; sp_ins += 1; continue
             part_id = uuid.uuid4()
             await conn.execute(CATALOG_UPSERT,
-                part_id, sku, name_full[:255], category, brand, "OEM",
+                part_id, sku, name_full[:255], category, brand, "oem",     # catalog class (variant_identity), was "OEM"
                 name_full[:500],
                 json.dumps({"catalog_num": cat_num, "source": "ai_gpt4o"}, ensure_ascii=False),
                 round(price, 2),

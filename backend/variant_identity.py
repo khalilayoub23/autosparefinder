@@ -236,6 +236,14 @@ KNOWN_VARIANTS: FrozenSet[str] = frozenset(index_key(v) for v in STORED_VALUES)
 canonical_variant = lenient_class
 
 
+def catalog_part_type(label: object) -> Optional[str]:
+    """Value to STORE in parts_catalog.part_type (catalog convention = the variant CLASS / index key: oem | oe_equivalent |
+    aftermarket | remanufactured | used). Missing, unknown and ambiguous labels give None (left untyped, never guessed) so a
+    catalog write can neither raise nor invent a variant. Every parts_catalog.part_type writer calls this."""
+    r = resolve(label)
+    return r.key if r.kind == "ok" else None
+
+
 def try_canonical(label: object) -> Optional[str]:
     """Write-time helper for importers: stored value, or None when missing/unknown/ambiguous (the offer is then written
     UNTYPED = uq_sp_part_supplier_untyped, never with a guessed variant). Use resolve() when the reason matters."""

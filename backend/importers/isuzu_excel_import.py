@@ -129,7 +129,7 @@ async def main() -> None:
                 "name_he": _name_he or None,
                 "manufacturer": MANUFACTURER,
                 "manufacturer_id": MANUFACTURER_ID,
-                "part_type": "original",
+                "part_type": "oem",       # catalog class (variant_identity.catalog_part_type)
                 "part_condition": "new",
                 "base_price": round(il_retail / 1.18 * 1.45, 2) if il_retail else 0.0,
                 "importer_price_ils": round(il_retail / 1.18, 2) if il_retail else 0.0,
