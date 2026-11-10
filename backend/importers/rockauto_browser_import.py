@@ -122,7 +122,7 @@ async def main() -> None:
         inserted = updated = skipped = 0
 
         for p in parts:
-            price_ex_vat = round(p["price_ils"] / 1.17, 2)
+            price_ex_vat = round(p["price_ils"], 2)   # foreign source: the displayed price carries NO Israeli VAT, so the cost is the converted price itself (was /1.17 - a VAT strip that never applied; FIXES_TRACKER #151)
             name = f"{p['brand']} {p['part_num']}"
             if p["model"]:
                 name = f"{args.make} {p['model']} - {name}"

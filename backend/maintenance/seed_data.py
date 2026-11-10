@@ -15,7 +15,7 @@ from BACKEND_DATABASE_MODELS import (
 
 # ---------------------------------------------------------------------------
 SUPPLIERS = [
-    {"name": "AutoParts Pro IL", "country": "Israel",      "website": "https://autopartspro.co.il",    "priority": 1, "reliability_score": 4.8, "is_manufacturer": False, "manufacturer_name": None},
+    {"name": "AutoParts Pro IL", "country": "Israel",      "website": None,    "priority": 1, "reliability_score": 4.8, "is_manufacturer": False, "manufacturer_name": None},
     {"name": "Global Parts Hub", "country": "Germany",     "website": "https://globalpartshub.de",     "priority": 2, "reliability_score": 4.5, "is_manufacturer": False, "manufacturer_name": None},
     {"name": "EastAuto Supply",  "country": "China",       "website": "https://eastauto.cn",           "priority": 3, "reliability_score": 3.9, "is_manufacturer": False, "manufacturer_name": None},
     {"name": "PartsPro USA",     "country": "USA",         "website": "https://partspro.com",          "priority": 4, "reliability_score": 4.6, "is_manufacturer": False, "manufacturer_name": None},

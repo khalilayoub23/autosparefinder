@@ -119,7 +119,7 @@ async def import_products(conn: asyncpg.Connection, products: list[dict], brand_
             continue
 
         price_ils = price_gbp_pence_to_ils(price_pence)
-        price_ex_vat = round(price_ils / 1.17, 2)
+        price_ex_vat = round(price_ils, 2)   # foreign source: the displayed price carries NO Israeli VAT, so the cost is the converted price itself (was /1.17 - a VAT strip that never applied; FIXES_TRACKER #151)
 
         # OEM number: prefer SKU if it looks like a part number, else from description
         desc_html = p.get("description") or ""

@@ -626,9 +626,8 @@ def _parse_text_fallback(pdf_path, manufacturer):
 # If brand NOT in map: prices are treated as excl. VAT (IL VAT 18% added to max_price).
 PRICES_INCL_VAT = {
     "PORSCHE":    0.18,   # Official IL price list incl. 18% VAT
+    # KGM / SSANGYONG removed: kgm.co.il states "המחירים ללא מע\"מ" (verified 2026-11-10, #151) -> ex-VAT (default for a brand not in this map)
     "CADILLAC":   0.17,   # IL importer (GM Israel) uses 17% VAT
-    "KGM":        0.17,   # kgm.co.il uses 17% VAT
-    "SSANGYONG":  0.17,   # same source as KGM
 }
 
 # International (eBay/online) brands — these get 0% IL VAT (no VAT added to max_price)
@@ -815,12 +814,7 @@ async def _get_manufacturer_id(conn, manufacturer):
         "SELECT id FROM car_brands WHERE LOWER(name)=LOWER($1) LIMIT 1", manufacturer)
     if row:
         return str(row["id"])
-    # Partial match
-    row = await conn.fetchrow(
-        "SELECT id FROM car_brands WHERE LOWER(name) LIKE $1 LIMIT 1",
-        f"%{manufacturer.lower()}%")
-    if row:
-        return str(row["id"])
+    # No substring match: LIKE '%name%' LIMIT 1 attached parts to whichever brand happened to contain the text (FIXES_TRACKER #150)
     # Not found — create it so the NOT NULL constraint is never violated
     import uuid as _uuid
     new_id = str(_uuid.uuid4())

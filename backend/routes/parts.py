@@ -3711,6 +3711,10 @@ async def get_part_suppliers(
 
     suppliers = []
     for r in rows:
+        # A LOCAL supplier whose VAT basis is unknown cannot be priced for a customer (price_policy.vat_basis_blocks), so it is
+        # not listed: a price-less "in stock, 7 days" row is a claim nothing supports (AutoParts Pro IL, FIXES_TRACKER #149).
+        if _pp.vat_basis_blocks(r[1], r[2]):
+            continue
         price_ils = float(r[6]) if r[6] else (float(r[5]) * usd_to_ils_rate if r[5] else None)
         ship_ils = _resolve_ship_fee(
             supplier_shipping_ils=float(r[7]) if r[7] else None,

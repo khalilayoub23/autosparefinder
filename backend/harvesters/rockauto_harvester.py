@@ -249,7 +249,7 @@ async def upsert_parts(conn: asyncpg.Connection, parts: list[dict], brand_id: st
             continue
 
         price_ils = round(p["price_usd"] * USD_TO_ILS, 2)
-        price_ex  = round(price_ils / 1.17, 2)
+        price_ex  = price_ils   # foreign source: the displayed price carries NO Israeli VAT, so the cost is the converted price itself (was /1.17 - a VAT strip that never applied; FIXES_TRACKER #151)
         sku_clean = re.sub(r"[^A-Z0-9]", "-", pn.upper())
         sku       = f"{brand_name[:3].upper()}-{sku_clean}"
         name      = (p.get("name") or pn)[:255]

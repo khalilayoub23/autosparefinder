@@ -121,13 +121,7 @@ async def ensure_car_brand(conn, make):
     row = await conn.fetchrow("SELECT id FROM car_brands WHERE LOWER(name)=$1", make.lower())
     if row:
         return str(row["id"])
-    # Try partial match (e.g. 'M-HERO' → 'M-HERO')
-    row = await conn.fetchrow(
-        "SELECT id FROM car_brands WHERE LOWER(name) LIKE $1 LIMIT 1",
-        f"%{make.lower().split()[0]}%"
-    )
-    if row:
-        return str(row["id"])
+    # No partial match: LIKE '%first-word%' LIMIT 1 mis-assigned brands (FIXES_TRACKER #150); exact name or a new brand only
     # Create new car_brand entry if not found
     new_id = str(uuid.uuid4())
     await conn.execute(

@@ -288,14 +288,19 @@ async def run(brands=None, dry_run=False):
             if not lookup:
                 stats["not_found"] += 1
                 continue
-            part_id, base_price_db = lookup
+            part_id, _base_price_unused = lookup
             stats["matched"] += 1
             if dry_run:
                 stats["sp_ins"] += 1
                 continue
 
-            # Use normalized workbook price; fallback to catalog base_price; last resort 100.
-            price = rec["price"] or base_price_db or 100.0
+            # Only a price the source row actually carries becomes an offer. The old fallback (catalog base_price, then a literal
+            # 100.0) fabricated 70,200 AutoParts Pro IL offers at exactly 100.00 (FIXES_TRACKER #149): a row without a price is
+            # counted and skipped, never invented.
+            price = rec["price"]
+            if not price or price <= 0:
+                stats["no_source_price"] = stats.get("no_source_price", 0) + 1
+                continue
             price_usd = round(price * ILS_TO_USD, 2)
             is_av = rec["is_available"] if rec["is_available"] is not None else False
             av_code = rec["availability"] or "on_order"

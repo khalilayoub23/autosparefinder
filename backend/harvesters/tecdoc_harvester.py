@@ -272,7 +272,7 @@ async def upsert_parts(conn: asyncpg.Connection, parts: list[dict], brand_id: st
 
         price_eur = p.get("price_eur")
         price_ils = round(price_eur * EUR_TO_ILS, 2) if price_eur else 0.0
-        price_ex  = round(price_ils / 1.17, 2) if price_ils > 0 else 0.0
+        price_ex  = price_ils if price_ils > 0 else 0.0   # foreign source: the displayed price carries NO Israeli VAT, so the cost is the converted price itself (was /1.17 - a VAT strip that never applied; FIXES_TRACKER #151)
 
         sku = f"{brand_name[:3].upper()}-TD-{re.sub(r'[^A-Z0-9]','-',pn.upper())}"
         category = map_tecdoc_category(p.get("category_name") or name)

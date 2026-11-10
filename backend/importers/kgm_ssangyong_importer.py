@@ -17,6 +17,8 @@ import re
 import httpx
 import asyncpg
 
+import price_policy as _pp
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -159,11 +161,11 @@ async def upsert_parts(
             f"Source: kgm.co.il."
         )[:500]
 
-        # Pricing policy: cost stored excl. VAT; max_price normalized to current 18% IL VAT
-        # base_price = max_price × 1.45 (45% margin, hidden from customers)
-        price_ex_vat        = round(price_ils / 1.18, 2)         # excl. VAT (our cost)
-        max_price_normalized = round(price_ex_vat * 1.18, 2)     # consumer price incl. 18% VAT
-        base_price_computed  = round(price_ex_vat * 1.45, 2)     # our selling price = cost × 1.45
+        # kgm.co.il states "המחירים ללא מע\"מ" (verified 2026-11-10, FIXES_TRACKER #151): the listed price IS the ex-VAT cost.
+        # Cost = the listed price (never divided), consumer reference = cost + 18% VAT once, base = cost x 1.45 once.
+        price_ex_vat         = round(price_ils, 2)                          # excl. VAT (our cost)
+        max_price_normalized = round(price_ex_vat * (1 + _pp.VAT_RATE), 2)   # consumer price incl. 18% IL VAT
+        base_price_computed  = round(price_ex_vat * _pp.MARGIN, 2)             # our selling price = cost x 1.45
 
         try:
             async with conn.transaction():
