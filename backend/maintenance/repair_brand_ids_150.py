@@ -15,6 +15,13 @@ Process:
      FOR UPDATE SKIP LOCKED (harvesters write the same tables), updated_at is NOT touched (no Meilisearch churn: the index
      holds the brand TEXT, not the id).
   5. pvf rows of repaired parts: manufacturer_id = previous id AND the row's own manufacturer text names the new brand -> new id.
+  6. --restore-text (second defect, same incident): db_update_agent.normalize_imported_manufacturers used to REWRITE parts_catalog.manufacturer
+     from the first two letters of oem_number (HO->Honda, CH->Chery, PO->Polaris, RE->Renault, MB/MD/MN/MR->Mitsubishi, NF/NV/NI->Nissan,
+     JM->JAC, XP, YQ, FQ, IL->Hyundai) for every active part, so ~24,900 parts of other brands carry a wrong TEXT while their id (set by the
+     importer) is right. A part is restored (manufacturer text := the stored id's brand name) only when the current text IS exactly what that
+     prefix rule produces AND the stored id's brand is supported by an independent signal (SKU prefix, specifications.importer, or
+     compatible_vehicles manufacturer). Its part_vehicle_fitment rows carrying the old wrong text with the stored id get the brand name too
+     (skipped when that would collide with an existing fitment key). updated_at is bumped (Meilisearch indexes the text).
   Dry run by default. --apply to write. --rollback RUN_ID restores previous ids from the log (only where the id still equals the new one).
 Data Imported/Modified: parts_catalog.manufacturer_id, part_vehicle_fitment.manufacturer_id, brand_id_repair_log (new table).
 Data Sources: parts_catalog, part_vehicle_fitment, car_brands.   Missing Data Delegation: unresolved rows are only counted.
@@ -63,15 +70,79 @@ SELECT id, m, cur, tgt, tgtname, curname,
 FROM sig"""
 
 
+PREFIX_RULE = {"NI": "Nissan", "NF": "Nissan", "NV": "Nissan", "CH": "Chery", "XP": "Xpeng", "HO": "Honda", "JM": "JAC", "PO": "Polaris",
+               "MR": "Mitsubishi", "MN": "Mitsubishi", "MD": "Mitsubishi", "MB": "Mitsubishi", "RE": "Renault", "YQ": "Citroen",
+               "FQ": "Jaecoo", "IL": "Hyundai"}      # the REMOVED db_update_agent rule, kept here only to recognise its damage
+
+TEXT_CANDIDATES = """
+WITH cbk AS (SELECT id, name, regexp_replace(lower(name),'[^a-z0-9]','','g') k FROM car_brands),
+pm AS (SELECT * FROM unnest($1::text[], $2::text[]) AS t(op, br)),
+c AS (
+  SELECT pc.id, pc.manufacturer old_text, cur.id cur_id, cur.name cur_name, cur.k ck, lower(split_part(pc.sku,'-',1)) pref,
+         pc.specifications->>'importer' imp, pc.compatible_vehicles cvj
+  FROM parts_catalog pc JOIN pm ON pm.op = upper(left(pc.oem_number,2)) AND pm.br = pc.manufacturer
+  JOIN cbk cur ON cur.id = pc.manufacturer_id
+  WHERE pc.manufacturer_id IS NOT NULL AND cur.k <> regexp_replace(lower(pc.manufacturer),'[^a-z0-9]','','g')
+    AND pc.manufacturer <> ALL($3::text[]))
+SELECT id, old_text, cur_id, cur_name FROM c
+WHERE (length(pref)>=3 AND (left(ck,length(pref))=pref OR left(pref,length(ck))=ck))
+   OR (imp IS NOT NULL AND imp ILIKE '%'||cur_name||'%')
+   OR EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(cvj)='array' THEN cvj ELSE '[]'::jsonb END) cv
+              WHERE regexp_replace(lower(cv->>'manufacturer'),'[^a-z0-9]','','g') = ck)"""
+
+
+async def restore_text(c, apply):
+    ops = list(PREFIX_RULE); brs = [PREFIX_RULE[o] for o in ops]
+    rows = await c.fetch(TEXT_CANDIDATES, ops, brs, list(ALIAS_TEXTS))
+    print(("APPLY" if apply else "DRY RUN"), f"- restore-text: {len(rows)} parts whose text was rewritten by the OEM-prefix rule and whose stored brand is independently supported")
+    grp = {}
+    for r in rows:
+        grp[(r["old_text"], r["cur_name"])] = grp.get((r["old_text"], r["cur_name"]), 0) + 1
+    for (o, n), k in sorted(grp.items(), key=lambda kv: -kv[1])[:15]:
+        print(f"  {o!r:12} -> {n!r:14} {k}")
+    if not apply:
+        return
+    run_id = f"brand150t-{uuid.uuid4().hex[:8]}"
+    await c.execute(LOG_DDL)
+    done = pvf = 0
+    for i in range(0, len(rows), BATCH):
+        chunk = rows[i:i + BATCH]
+        async with c.transaction():
+            ids = [r["id"] for r in chunk]; olds = [r["old_text"] for r in chunk]; news = [r["cur_name"] for r in chunk]; curs = [r["cur_id"] for r in chunk]
+            locked = {r["id"] for r in await c.fetch("SELECT id FROM parts_catalog WHERE id = ANY($1::uuid[]) FOR UPDATE SKIP LOCKED", ids)}
+            sel = [k for k, pid in enumerate(ids) if pid in locked]
+            ids = [ids[k] for k in sel]; olds = [olds[k] for k in sel]; news = [news[k] for k in sel]; curs = [curs[k] for k in sel]
+            await c.execute("""INSERT INTO brand_id_repair_log (run_id, table_name, row_id, prev_manufacturer_id, new_manufacturer_id, manufacturer_text, evidence)
+                               SELECT $1,'parts_catalog.manufacturer',x.id,x.cur,x.cur,x.old,'text rewritten by OEM-prefix rule; stored brand supported -> '||x.new
+                               FROM unnest($2::uuid[],$3::uuid[],$4::text[],$5::text[]) AS x(id,cur,old,new) ON CONFLICT DO NOTHING""", run_id, ids, curs, olds, news)
+            res = await c.execute("""UPDATE parts_catalog pc SET manufacturer = x.new, updated_at = NOW()
+                                     FROM unnest($1::uuid[],$2::text[],$3::text[]) AS x(id,old,new) WHERE pc.id = x.id AND pc.manufacturer = x.old""", ids, olds, news)
+            done += int(res.split()[-1])
+            r2 = await c.execute("""UPDATE part_vehicle_fitment f SET manufacturer = x.new
+                                    FROM unnest($1::uuid[],$2::text[],$3::text[],$4::uuid[]) AS x(id,old,new,cur)
+                                    WHERE f.part_id = x.id AND f.manufacturer = x.old AND f.manufacturer_id = x.cur
+                                      AND NOT EXISTS (SELECT 1 FROM part_vehicle_fitment g WHERE g.part_id = f.part_id AND g.manufacturer = x.new
+                                                      AND g.model IS NOT DISTINCT FROM f.model AND g.year_from IS NOT DISTINCT FROM f.year_from)""", ids, olds, news, curs)
+            pvf += int(r2.split()[-1])
+        if (i // BATCH) % 5 == 0:
+            print(f"  batch {i // BATCH + 1}: parts={done} fitment={pvf}", flush=True)
+        await asyncio.sleep(0.2)
+    print(f"DONE run_id={run_id} parts_catalog.manufacturer={done} part_vehicle_fitment.manufacturer={pvf}")
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--rollback", metavar="RUN_ID")
+    ap.add_argument("--restore-text", action="store_true")
     a = ap.parse_args()
     c = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
     await c.execute("SET lock_timeout = '3s'")
     if a.rollback:
         await c.execute(LOG_DDL)
+        r = await c.execute("""UPDATE parts_catalog pc SET manufacturer = l.manufacturer_text, updated_at = NOW() FROM brand_id_repair_log l
+                               WHERE l.run_id=$1 AND l.table_name='parts_catalog.manufacturer' AND l.row_id=pc.id""", a.rollback)
+        print("rollback text", r)
         for table in ("parts_catalog", "part_vehicle_fitment"):
             r = await c.execute(f"""UPDATE {table} t SET manufacturer_id = l.prev_manufacturer_id FROM brand_id_repair_log l
                                     WHERE l.run_id=$1 AND l.table_name='{table}' AND l.row_id=t.id AND t.manufacturer_id=l.new_manufacturer_id""",
@@ -79,6 +150,9 @@ async def main():
             print("rollback", table, r)
         return
 
+    if a.restore_text:
+        await restore_text(c, a.apply)
+        return
     rows = await c.fetch(CANDIDATES, list(ALIAS_TEXTS))
     by = {}
     for r in rows:

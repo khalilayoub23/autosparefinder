@@ -627,7 +627,7 @@ def _parse_text_fallback(pdf_path, manufacturer):
 PRICES_INCL_VAT = {
     "PORSCHE":    0.18,   # Official IL price list incl. 18% VAT
     # KGM / SSANGYONG removed: kgm.co.il states "המחירים ללא מע\"מ" (verified 2026-11-10, #151) -> ex-VAT (default for a brand not in this map)
-    "CADILLAC":   0.17,   # IL importer (GM Israel) uses 17% VAT
+    "CADILLAC":   0.18,   # GM Israel (UMI) consumer price list, current: Israeli VAT is 18% since 2025-01-01 (#151)
 }
 
 # International (eBay/online) brands — these get 0% IL VAT (no VAT added to max_price)

@@ -241,8 +241,8 @@ async def import_products(conn: asyncpg.Connection, products: list[dict]) -> dic
         eng_name = translate_name(name_heb)
         category = categorize(name_heb)
 
-        # Price is Israeli consumer price incl. 17% VAT → normalize to 18% IL VAT (no markup — IL retailer ref)
-        il_retail = round(price / 1.17 * 1.18, 2)
+        # Israeli consumer price incl. VAT, kept as quoted (no 17%->18% re-grossing: Israeli VAT is 18% since 2025-01-01; FIXES_TRACKER #151)
+        il_retail = round(price, 2)
 
         desc = (
             f"{eng_name}. Hebrew: {name_heb}. "

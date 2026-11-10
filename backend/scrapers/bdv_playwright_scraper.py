@@ -10,6 +10,7 @@ Each brand search returns that brand's parts with prices.
 import asyncio
 import json
 import re
+import price_policy as _pp
 import os
 import logging
 import urllib.parse
@@ -223,8 +224,8 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
         if not price or price <= 0:
             continue
 
-        # BDV states prices are excl. VAT — add 17%
-        price_with_vat = round(price * 1.17, 2)
+        # Prices are treated as excl. VAT (scraper author's observation; the site page shows no VAT statement): add Israeli VAT ONCE at the current rate
+        price_with_vat = round(price * (1 + _pp.VAT_RATE), 2)
         in_stock = part.get("stock", "").strip() not in ["אזל", "אין מלאי", "0", ""]
 
         # Match by SKU/OEM

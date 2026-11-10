@@ -11,6 +11,8 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 import asyncio, logging, re
 import asyncpg
 
+import price_policy as _pp
+
 # Category rules DELEGATED to category_map — the single source of truth.
 from category_map import CATCH_ALL, categorize_on_ingest
 import openpyxl
@@ -147,10 +149,10 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
         desc = (f"{eng_name}. Hebrew: {heb_str}. "
                 f"Model: {model_str}. Israeli retail price (incl. VAT): {price:.2f} ILS.")[:500]
 
-        # Consumer retail incl. 17% VAT → cost excl. VAT → normalize to 18% VAT
-        cost      = round(price / 1.17, 2)           # excl. VAT (our cost reference)
-        il_retail = round(cost * 1.18, 2)            # consumer price at 18% VAT
-        selling   = round(cost * 1.45, 2)            # our selling price (45% margin)
+        # Consumer retail price incl. VAT: the list is a consumer price ("מחיר לצרכן") fetched 2026-06-11 from the importer's up-to-date price list; Israeli VAT has been 18% since 2025-01-01, so the quoted price carries 18% (FIXES_TRACKER #151)
+        cost      = round(price / (1 + _pp.VAT_RATE), 2)   # excl. VAT (our cost reference)
+        il_retail = round(price, 2)                         # the quoted consumer price itself (not re-grossed)
+        selling   = round(cost * _pp.MARGIN, 2)             # our selling price (45% margin)
 
         try:
             async with conn.transaction():

@@ -40,6 +40,7 @@ POLICY_BOUND_ACTORS = (
     "maintenance/bmw_oem_dedup.py",
     "maintenance/quarantine_motorstore_offers_129.py",
     "maintenance/restore_merged_offers_133.py",
+    "maintenance/remove_placeholder_offers_149.py",   # owner-authorised removal of provably fabricated sentinel offers (archived)
 )
 
 

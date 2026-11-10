@@ -48,7 +48,7 @@ MARGIN = 1.45
 PRICES_INCL_VAT = {
     "Porsche":   0.18,   # Official IL price list incl. 18% VAT
     # KGM / SsangYong removed: kgm.co.il states "המחירים ללא מע\"מ" (verified 2026-11-10, #151) -> ex-VAT, the default for a brand not in this map
-    "Cadillac":  0.17,   # GM Israel uses 17% VAT
+    "Cadillac":  0.18,   # GM Israel (UMI) consumer price list, current: Israeli VAT is 18% since 2025-01-01 (#151)
 }
 
 INTERNATIONAL_BRANDS = {

@@ -28,4 +28,4 @@ def test_repair_script_rules():
     for needle in ("MIN_GROUP = 100", "brand_id_repair_log", "FOR UPDATE", "SKIP LOCKED", "pc.manufacturer_id = x.prev",
                    "f.manufacturer_id = x.prev", "--rollback", "ALIAS_TEXTS"):
         assert needle in src, needle
-    assert "updated_at" not in src.split("UPDATE parts_catalog pc SET")[1].split("\n")[0]   # no Meilisearch churn
+    assert "updated_at" not in src.split("UPDATE parts_catalog pc SET manufacturer_id")[1].split("\n")[0]   # id repair: no Meilisearch churn (the text repair bumps it on purpose)

@@ -198,8 +198,8 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
             f"Model: {model}. Israeli retail price (incl. VAT): {price:.2f} ILS."
         )[:500]
 
-        # IL retail incl. 17% VAT → normalize to 18% IL VAT (no markup — IL official ref)
-        il_retail = round(price / 1.17 * 1.18, 2)
+        # IL retail price incl. VAT: the list is a consumer price ("מחיר לצרכן") fetched 2026-06-11 from the importer's up-to-date price list; Israeli VAT has been 18% since 2025-01-01, so the quoted price carries 18% (FIXES_TRACKER #151)
+        il_retail = round(price, 2)
 
         try:
             async with conn.transaction():

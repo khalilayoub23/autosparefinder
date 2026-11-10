@@ -144,7 +144,8 @@ def test_gate_or_exit_fail_closed(monkeypatch, tmp_path):
 # ---------------------------------------------------------------- static guards (legacy routines cannot bypass)
 @pytest.mark.parametrize("script", ["maintenance/merge_master_parts.py", "maintenance/bmw_oem_dedup.py",
                                     "maintenance/quarantine_motorstore_offers_129.py", "maintenance/offer_policy_repair.py",
-                                    "maintenance/restore_merged_offers_133.py"])
+                                    "maintenance/restore_merged_offers_133.py",
+                                    "maintenance/remove_placeholder_offers_149.py"])
 def test_16_destructive_scripts_call_the_policy_gate(script):
     src = (ROOT / script).read_text()
     assert "offer_policy" in src and ("gate_or_exit" in src or "require_policy" in src)
