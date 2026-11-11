@@ -1,9 +1,9 @@
 """
 meili_sync.py - Bulk-load parts_catalog rows into Meilisearch index 'parts'.
 
-Default behavior is a deterministic full rebuild to prevent stale documents from
-surviving after DB-side deletions/merges. Use --no-rebuild to keep incremental
-upsert behavior when needed.
+Default behavior is INCREMENTAL upsert (MEILI_REBUILD=0); --rebuild forces a full rebuild. Documents of parts that were
+deleted, merged away or deactivated are removed by the deletion queue drained at the start of every run
+(maintenance/meili_reconcile.py: drain_tombstones) and, as a safety net, by the daily id reconciliation.
 
 Use --manufacturer to scope refresh to one manufacturer without deleting the
 entire index. In scoped mode, existing docs for that manufacturer are deleted
@@ -159,6 +159,25 @@ SELECT_SQL_MANUFACTURER = """
 """
 
 
+SELECT_SQL_BY_IDS = """
+    SELECT id::text, sku, name, name_he, manufacturer, category,
+           part_type, part_condition, oem_number, is_active, is_safety_critical,
+           min_price_ils::float, base_price::float,
+           importer_price_ils::float,
+           (importer_price_ils IS NOT NULL AND importer_price_ils > 0) AS has_il_price
+    FROM parts_catalog
+    WHERE is_active = TRUE AND id = ANY($1::uuid[])
+"""
+
+
+def row_to_doc(row) -> dict:
+    """The ONE row -> Meilisearch document mapping (used by the sync and by maintenance/meili_reconcile.py)."""
+    d = dict(row)
+    d["is_active"] = bool(d["is_active"])
+    d["is_safety_critical"] = bool(d["is_safety_critical"])
+    return d
+
+
 def _normalize_manufacturer_filter(value: str | None) -> str | None:
     if value is None:
         return None
@@ -209,6 +228,22 @@ async def run(
         print("[meili_sync] --dry-run: no data uploaded.", flush=True)
         await conn.close()
         return
+
+    # Deletions/merges/deactivations since the last run (2026-11-11): the document of a part that was hard-deleted or
+    # deactivated is removed in THIS run (queued by the parts_catalog triggers); a failure is reported, never swallowed.
+    drain_failed = None
+    if not manufacturer_filter:
+        try:
+            import meili_reconcile as _mr
+            if await _mr.ensure_tombstones(conn):
+                print("[meili_sync] installed the deletion-queue triggers on parts_catalog", flush=True)
+            _drain = await _mr.drain_tombstones(conn, _mr.MeiliHttp(MEILI_URL, MEILI_MASTER_KEY, INDEX_NAME))
+            print(f"[meili_sync] deletion queue: {_drain}", flush=True)
+            if _drain["failed"] or _drain["errors"]:
+                drain_failed = f"{_drain['failed']} queued deletions not applied: {_drain['errors'][:3]}"
+        except Exception as _de:  # noqa: BLE001
+            drain_failed = f"{type(_de).__name__}: {str(_de)[:200]}"
+            print(f"[meili_sync] ERROR deletion queue not applied: {drain_failed}", flush=True)
 
     # Check for a resumable checkpoint (only for full-catalog runs, not manufacturer-scoped)
     checkpoint = None
@@ -337,10 +372,7 @@ async def run(
             if not rows:
                 break
 
-            docs = [dict(r) for r in rows]
-            for d in docs:
-                d["is_active"] = bool(d["is_active"])
-                d["is_safety_critical"] = bool(d["is_safety_critical"])
+            docs = [row_to_doc(r) for r in rows]
 
             # Fire upload without waiting — Meilisearch queues tasks internally.
             # We wait only once after all batches are sent (see below).
@@ -393,6 +425,10 @@ async def run(
         f"{total_sent} documents indexed for {manufacturer_filter or 'ALL'}.",
         flush=True,
     )
+    if drain_failed:
+        # upserts are done and checkpointed; a non-zero exit makes the supervising loop log the failure and the
+        # next cycle retries the (still queued) deletions - a failed deletion never looks like a successful sync
+        raise RuntimeError(f"Meilisearch deletion queue not fully applied: {drain_failed}")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

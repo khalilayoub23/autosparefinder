@@ -2864,6 +2864,28 @@ async def _meili_sync_loop() -> None:
             except Exception as pexc:
                 print(f"[meili_sync_loop] purge skipped: {pexc}", flush=True)
 
+            # DAILY ID RECONCILIATION (2026-11-11): the purge above only knows parts that still exist as inactive rows;
+            # documents of hard-deleted / merged-away parts, or rows that failed to index, are found by comparing the two id
+            # sets (maintenance/meili_reconcile.py). Due when the last success is older than MEILI_RECONCILE_INTERVAL_S.
+            try:
+                if os.getenv("MEILI_RECONCILE_ENABLED", "1").strip() == "1":
+                    import json as _json
+                    _rpy = os.path.join(os.path.dirname(os.path.abspath(__file__)), "maintenance", "meili_reconcile.py")
+                    _sf = os.path.join(os.getenv("MEILI_RECONCILE_DIR", "/app/state/meili_reconcile"), "status.json")
+                    try:
+                        _last = float((_json.load(open(_sf)).get("last_success_at")) or 0)
+                    except (OSError, ValueError):
+                        _last = 0.0
+                    if time.time() - _last >= float(os.getenv("MEILI_RECONCILE_INTERVAL_S", str(22 * 3600))):
+                        from purge_run_log import run_captured
+                        rrc, rrec = await run_captured([_sys.executable, _rpy], "meili_reconcile")
+                        _rs = rrec.get("summary") or {}
+                        print(f"[meili_sync_loop] reconcile rc={rrc} status={rrec['status']} duration={rrec['duration_s']}s "
+                              f"stale={_rs.get('stale_found')}/{_rs.get('stale_deleted')} "
+                              f"missing={_rs.get('missing_found')}/{_rs.get('missing_repaired')}", flush=True)
+            except Exception as rexc:
+                print(f"[meili_sync_loop] reconcile skipped: {rexc}", flush=True)
+
             await _meili_verify_parity()
         except Exception as exc:
             print(f"[meili_sync_loop] error: {exc}", flush=True)
@@ -7338,6 +7360,36 @@ async def thumbnail_import_status(
                           "distinct_images": row[3], "dedup_saved": (row[0] or 0) - (row[3] or 0)}
     except Exception:
         out["catalog"] = None
+    return out
+
+
+@app.get("/api/v1/system/meili-reconcile")
+async def meili_reconcile_status(
+    cat_db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_current_admin_user),
+):
+    """Observability for the Meilisearch <-> catalog reconciliation: last run (counts, duration, outcome, last success),
+    the live deletion queue, and the live active-parts vs indexed-documents gap."""
+    import httpx as _httpx
+    out: dict = {"last_run": None, "pending_deletes": None, "db_active": None, "index_docs": None, "gap": None}
+    try:
+        with open(os.path.join(os.getenv("MEILI_RECONCILE_DIR", "/app/state/meili_reconcile"), "status.json")) as f:
+            out["last_run"] = json.load(f)
+    except (OSError, ValueError):
+        pass
+    try:
+        out["pending_deletes"] = (await cat_db.execute(text("SELECT COUNT(*) FROM meili_pending_deletes"))).scalar()
+    except Exception:
+        out["pending_deletes"] = None
+    try:
+        out["db_active"] = (await cat_db.execute(text("SELECT COUNT(*) FROM parts_catalog WHERE is_active"))).scalar()
+        async with _httpx.AsyncClient(timeout=15) as hc:
+            r = await hc.get(f"{os.getenv('MEILI_URL', 'http://meilisearch:7700')}/indexes/parts/stats",
+                             headers={"Authorization": f"Bearer {os.getenv('MEILI_MASTER_KEY', '')}"})
+            out["index_docs"] = r.json().get("numberOfDocuments")
+        out["gap"] = None if out["index_docs"] is None else out["index_docs"] - out["db_active"]
+    except Exception:
+        pass
     return out
 
 

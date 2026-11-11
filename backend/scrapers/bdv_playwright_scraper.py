@@ -11,7 +11,7 @@ enumeration therefore always found 0 rows. This script now looks up the catalog'
 VAT: BDV states its prices are recommended consumer prices EXCLUDING VAT (see BDV_VAT_EVIDENCE) -> price = cost,
 VAT +18% once in the consumer reference, margin once downstream (price_policy).
 
-Usage: python3 /app/scrapers/bdv_playwright_scraper.py [--limit N] [--sku A --sku B ...]
+Usage: python3 /app/scrapers/bdv_playwright_scraper.py [--limit N] [--il-priced] [--sku A --sku B ...]
 """
 
 import asyncio
@@ -268,6 +268,8 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=int(os.getenv("BDV_LOOKUP_LIMIT", "500")))
     ap.add_argument("--sku", action="append", default=[])
+    ap.add_argument("--il-priced", action="store_true",
+                    help="look up catalog numbers that already carry an Israeli importer cost (likelier to be on an IL supplier's list)")
     args = ap.parse_args()
     log.info("=== BDV Scraper v4 (exact part-number lookup) ===")
 
@@ -283,8 +285,8 @@ async def main():
         # catalog numbers of BDV's brands that have no Israeli cost yet (BDV is an Israeli source), longest-unchecked first
         skus = [r[0] for r in await conn.fetch(
             "SELECT oem_number FROM parts_catalog WHERE is_active AND oem_number IS NOT NULL AND length(oem_number) >= 5 "
-            "AND manufacturer = ANY($1::text[]) AND COALESCE(importer_price_ils, 0) = 0 ORDER BY updated_at ASC LIMIT $2",
-            [b for b, _ in BRAND_SEARCHES], args.limit)]
+            "AND manufacturer = ANY($1::text[]) AND (COALESCE(importer_price_ils, 0) > 0) = $3 ORDER BY updated_at ASC LIMIT $2",
+            [b for b, _ in BRAND_SEARCHES], args.limit, bool(args.il_priced))]
         await conn.close()
     log.info(f"looking up {len(skus)} part numbers")
     all_parts = await lookup_skus(post_body, cookies, skus)
