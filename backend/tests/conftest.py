@@ -175,3 +175,25 @@ def _no_real_outbound_network(monkeypatch):
     if guard.blocked:
         pytest.fail(f"test tried to reach hosts outside the test environment (refused): {sorted(set(guard.blocked))}",
                     pytrace=False)
+
+
+# 2026-11-11 (expanded DB-mutation suite, FIXES_TRACKER closure): the application's two global SQLAlchemy engines
+# (BACKEND_DATABASE_MODELS.engine / pii_engine) pool asyncpg connections, and an asyncpg connection is bound to the event
+# loop that opened it. pytest-asyncio gives every test its OWN loop (and asyncio.run() tests create and close theirs), so a
+# connection pooled by an earlier test is dead for the next one: pool_pre_ping then raises "attached to a different loop" /
+# "Event loop is closed" (not a disconnect error, so SQLAlchemy cannot recover). It only shows when a database test runs
+# AFTER another test touched the engine, which is why test_normalize_part_types_qa and test_order_shipping_e2e passed alone
+# and failed in the full run. Fix at the lifecycle: forget connections from earlier loops before each test (close=False:
+# never touch a dead loop's sockets), and close this test's own connections in its own, still-live loop afterwards.
+def _shared_engines():
+    mod = sys.modules.get("BACKEND_DATABASE_MODELS")
+    return [e for e in (getattr(mod, "engine", None), getattr(mod, "pii_engine", None)) if e is not None]
+
+
+@pytest.fixture(autouse=True)
+async def _isolate_shared_db_pools():
+    for eng in _shared_engines():
+        await eng.dispose(close=False)
+    yield
+    for eng in _shared_engines():          # engines first imported during the test are included
+        await eng.dispose()

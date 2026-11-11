@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Universal Israeli importer price import for Hebrew-format xlsx files.
-Handles IL importer catalog exports with 'מחיר לצרכן' (consumer price incl. VAT).
+Script: il_consumer_price_import.py
+Purpose: Universal importer for Israeli importer price lists in the Hebrew xlsx format with a 'מחיר לצרכן' column.
+Process: parse xlsx -> price_policy-based cost/reference from the price AND an EXPLICIT VAT basis -> UPDATE/INSERT
+         parts_catalog with the source price + basis + evidence kept in specifications.
+Data Imported/Modified: parts_catalog (importer_price_ils, max_price_ils, base_price, specifications).
+Data Sources: the importer's price list (xlsx).
+Missing Data Delegation: none.
+Last Updated: 2026-11-11
 
-Column format (auto-detected by position or header):
-  Col 0: OEM number (מספר קטלוגי)
-  Col 1: Hebrew description (תאור)
-  Col 2: Part type (מקורי/aftermarket)
-  Col 3: Stock status
-  Col 4: Consumer price ILS incl. VAT (מחיר לצרכן)
-  Col 5: Warranty
-  Col 6: Vehicle model
+VAT BASIS IS NEVER ASSUMED (FIXES_TRACKER #151 / #130 / 2026-11-11 closure). The column header 'מחיר לצרכן' does not say
+whether VAT is included (BDV's 'recommended consumer price' EXCLUDES it; Champion/Colmobil include it). The caller must pass
+--vat-basis inclusive|exclusive AND --evidence "<where the source states it>"; without both the script refuses to run.
+  inclusive: cost = price / (1 + VAT_RATE); max_price_ils = price
+  exclusive: cost = price;                  max_price_ils = price * (1 + VAT_RATE)
+  base_price = cost * MARGIN in both cases (margin once). VAT_RATE / MARGIN come from price_policy.
 
-Pricing: consumer_price is incl. 17% VAT
-  importer_price_ils = consumer_price / 1.17
-  max_price_ils      = consumer_price
-  base_price         = (consumer_price / 1.17) * 1.45
+Columns: 0 OEM (מספר קטלוגי) | 1 description | 2 type | 3 stock | 4 consumer price ILS | 5 warranty | 6 vehicle model
 
 Usage:
-  python3 il_consumer_price_import.py --file /app/uploads/chevrolet.xlsx --brand Chevrolet
-  python3 il_consumer_price_import.py --file /app/uploads/citroen.xlsx --brand Citroen
+  python3 il_consumer_price_import.py --file /app/uploads/x.xlsx --brand X --vat-basis exclusive --evidence "<quote + url>"
 """
 import asyncio, os, sys, time, json, argparse
 import asyncpg
@@ -35,9 +35,20 @@ except ImportError:
     print("pip install openpyxl"); sys.exit(1)
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
-VAT = 0.18
+from price_policy import VAT_RATE as VAT, MARGIN
 
-def load_xlsx(path, brand):
+
+def price_fields(price, vat_basis):
+    """The ONLY rule of this importer (tested): returns (cost_ex_vat, consumer_reference, base_price)."""
+    if vat_basis == "inclusive":
+        cost, retail = round(price / (1 + VAT), 2), round(price, 2)
+    elif vat_basis == "exclusive":
+        cost, retail = round(price, 2), round(price * (1 + VAT), 2)
+    else:
+        raise ValueError("vat_basis must be 'inclusive' or 'exclusive' - it is never assumed")
+    return cost, retail, round(cost * MARGIN, 2)
+
+def load_xlsx(path, brand, vat_basis):
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
@@ -112,12 +123,10 @@ def load_xlsx(path, brand):
         if price is None or price <= 0:
             continue
 
-        # Consumer price is incl. VAT — extract importer cost
-        cost    = round(price / (1 + VAT), 2)
-        retail  = round(price, 2)          # consumer price = max_price_ils
-        selling = round(cost * 1.45, 2)
+        cost, retail, selling = price_fields(price, vat_basis)
 
         parts.append({
+            "source_price": round(price, 2),
             "oem": oem,
             "name": name,
             "cost": cost,
@@ -130,26 +139,25 @@ def load_xlsx(path, brand):
     return parts
 
 
-async def run(brand, xlsx_path):
-    parts = load_xlsx(xlsx_path, brand)
+async def run(brand, xlsx_path, vat_basis, evidence):
+    parts = load_xlsx(xlsx_path, brand, vat_basis)
     if not parts:
         print("No parts parsed"); return
 
     conn = await asyncpg.connect(DB)
     t0 = time.monotonic()
-    spec = json.dumps({
-        "importer": f"{brand} IL official (consumer price)",
-        "source": os.path.basename(xlsx_path),
-        "vat_rate": VAT, "vat_included": False,
-        "note": "price excl. VAT derived from consumer price"
-    }, ensure_ascii=False)
-
     updated = inserted = skipped = 0
     for p in parts:
         oem     = p["oem"]
         cost    = p["cost"]
         retail  = p["retail"]
         selling = p["selling"]
+        spec = json.dumps({
+            "importer": f"{brand} IL official (consumer price)",
+            "source": os.path.basename(xlsx_path),
+            "source_price_ils": p["source_price"], "vat_basis": vat_basis, "vat_basis_evidence": evidence,
+            "vat_rate": VAT, "vat_included": vat_basis == "inclusive",
+        }, ensure_ascii=False)
 
         res = await conn.execute("""
             UPDATE parts_catalog SET
@@ -205,5 +213,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", required=True)
     ap.add_argument("--brand", required=True)
+    ap.add_argument("--vat-basis", choices=("inclusive", "exclusive"), required=True)
+    ap.add_argument("--evidence", required=True, help="where the source states the VAT basis (quote + URL)")
     args = ap.parse_args()
-    asyncio.run(run(args.brand, args.file))
+    if len(args.evidence.strip()) < 10:
+        sys.exit("refusing to run: --evidence must name the source statement of the VAT basis")
+    asyncio.run(run(args.brand, args.file, args.vat_basis, args.evidence.strip()))

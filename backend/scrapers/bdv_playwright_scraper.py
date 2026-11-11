@@ -2,9 +2,16 @@
 """
 BDV (b-d-v.co.il) parts price list scraper.
 
-The wpDataTables table requires a search term to return data (data=[] on empty search).
-Strategy: search by each brand name to collect all 597 parts across 10 brands.
-Each brand search returns that brand's parts with prices.
+SOURCE FORMAT (re-verified 2026-11-11): the wpDataTables table (597 rows) answers ONLY an exact part-number lookup:
+the page's own filter sends column 0 search value "$<part number>^" (>= 5 characters) and returns the row(s) for that
+number; any global/brand search returns data=[] (recordsFiltered is a meaningless constant). The old brand-name
+enumeration therefore always found 0 rows. This script now looks up the catalog's own part numbers one by one
+(rate-limited) for the BDV brands, and imports only the numbers BDV actually lists.
+
+VAT: BDV states its prices are recommended consumer prices EXCLUDING VAT (see BDV_VAT_EVIDENCE) -> price = cost,
+VAT +18% once in the consumer reference, margin once downstream (price_policy).
+
+Usage: python3 /app/scrapers/bdv_playwright_scraper.py [--limit N] [--sku A --sku B ...]
 """
 
 import asyncio
@@ -13,6 +20,7 @@ import re
 import price_policy as _pp
 import os
 import logging
+import argparse
 import urllib.parse
 import httpx
 import asyncpg
@@ -30,8 +38,7 @@ BDV_URL = "https://b-d-v.co.il/%D7%9E%D7%97%D7%99%D7%A8%D7%95%D7%9F-%D7%97%D7%9C
 AJAX_URL = "https://b-d-v.co.il/wp-admin/admin-ajax.php?action=get_wdtable&table_id=1"
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 
-# Search terms that cover all 10 BDV brands.
-# These map to the "Group" (קבוצה) column or part name on the BDV site.
+# The 10 brands BDV lists: the catalog numbers of these brands are what gets looked up.
 BRAND_SEARCHES = [
     ("Land Rover", "land rover"),
     ("Chrysler", "chrysler"),
@@ -45,19 +52,23 @@ BRAND_SEARCHES = [
     ("Infiniti", "infiniti"),
 ]
 
-# Also try Hebrew brand names in case the group column is Hebrew
-HEBREW_SEARCHES = [
-    ("Land Rover", "לנד רובר"),
-    ("Chrysler", "קריייזלר"),
-    ("Jeep", "ג'יפ"),
-    ("Alfa Romeo", "אלפא רומיאו"),
-    ("Lexus", "לקסוס"),
-    ("Jaguar", "יגואר"),
-    ("Volvo", "וולוו"),
-    ("Porsche", "פורשה"),
-    ("Cadillac", "קאדילק"),
-    ("Infiniti", "אינפיניטי"),
-]
+# VAT basis of the BDV price list - authoritative source evidence (page text read 2026-11-11):
+# "המחירים המוצגים באתר הינם מחירי חברת בכל דרך ושטח (ש.מ) בע\"מ המומלצים לצרכן והם אינם כוללים מע\"מ"
+# = the prices are the company's recommended consumer prices and EXCLUDE VAT. Currency: ILS.
+BDV_VAT_BASIS = "exclusive"
+BDV_VAT_EVIDENCE = {
+    "by": "#151-bdv", "url": BDV_URL, "checked": "2026-11-11",
+    "quote_he": 'המחירים המוצגים באתר הינם מחירי חברת בכל דרך ושטח (ש.מ) בע"מ המומלצים לצרכן והם אינם כוללים מע"מ',
+    "meaning": "recommended consumer price, VAT excluded, ILS",
+}
+
+
+def bdv_price_fields(price: float) -> dict:
+    """The ONLY BDV pricing rule. The quoted price is EX-VAT, so it IS the supplier cost (supplier_parts.price_ils);
+    VAT and the 45% margin are applied once, later, by price_policy. The Israeli consumer reference
+    (parts_catalog.max_price_ils) is the quoted price + VAT once."""
+    cost = round(float(price), 2)
+    return {"cost_ex_vat": cost, "consumer_reference": round(cost * (1 + _pp.VAT_RATE), 2), "source_price": cost}
 
 
 def parse_price(raw: str) -> float | None:
@@ -100,73 +111,38 @@ def parse_row(row, brand: str = "") -> dict | None:
     }
 
 
-async def search_brand(client: httpx.AsyncClient, post_body: str, cookies_str: str, brand: str, search_term: str) -> list[dict]:
-    """Make an AJAX request with a search term to get brand parts."""
+def lookup_body(post_body: str, sku: str) -> str:
+    """The exact request the page's filter sends for one part number (verified against the live UI)."""
     params = urllib.parse.parse_qs(post_body, keep_blank_values=True)
-
-    # Set the global search value
-    params["search[value]"] = [search_term]
-    params["search[regex]"] = ["false"]
-    params["length"] = ["200"]   # get up to 200 results
+    params["columns[0][search][value]"] = ["$" + sku + "^"]
+    params["columns[0][search][regex]"] = ["false"]
+    params["search[value]"] = [""]
     params["start"] = ["0"]
-    params["draw"] = ["2"]
-
-    body = urllib.parse.urlencode(params, doseq=True)
-
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "X-Requested-With": "XMLHttpRequest",
-        "Referer": BDV_URL,
-        "Cookie": cookies_str,
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-    }
-
-    try:
-        r = await client.post(AJAX_URL, content=body, headers=headers, timeout=20)
-        resp = r.json()
-        total = int(resp.get("recordsTotal", 0))
-        filtered = int(resp.get("recordsFiltered", 0))
-        rows = resp.get("data", [])
-        log.info(f"  [{brand}] search='{search_term}': filtered={filtered}, rows={len(rows)}")
-
-        parts = []
-        for row in rows:
-            p = parse_row(row, brand)
-            if p:
-                parts.append(p)
-        return parts
-    except Exception as e:
-        log.error(f"  [{brand}] search error: {e}")
-        return []
+    params["length"] = ["-1"]
+    return urllib.parse.urlencode(params, doseq=True)
 
 
-async def scrape_all_brands(post_body: str, cookies: list[dict]) -> list[dict]:
-    """Search for each brand and collect all parts."""
+async def lookup_skus(post_body: str, cookies: list[dict], skus: list[str], delay: float = 0.5) -> list[dict]:
+    """Exact part-number lookups. Numbers shorter than 5 chars are refused by the site's own form and skipped."""
     cookies_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
-    all_parts = {}  # sku -> part (deduplicate)
-
+    headers = {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "X-Requested-With": "XMLHttpRequest",
+               "Referer": BDV_URL, "Cookie": cookies_str, "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
+    found: dict[str, dict] = {}
     async with httpx.AsyncClient() as client:
-        for brand, en_term in BRAND_SEARCHES:
-            parts = await search_brand(client, post_body, cookies_str, brand, en_term)
-            for p in parts:
-                all_parts[p["sku"]] = p
-            await asyncio.sleep(0.5)
-
-        # If any brand got 0 results, try Hebrew
-        brand_counts = {}
-        for p in all_parts.values():
-            b = p.get("manufacturer", "")
-            brand_counts[b] = brand_counts.get(b, 0) + 1
-
-        for brand, heb_term in HEBREW_SEARCHES:
-            if brand_counts.get(brand, 0) == 0:
-                log.info(f"  [{brand}] trying Hebrew search: '{heb_term}'")
-                parts = await search_brand(client, post_body, cookies_str, brand, heb_term)
-                for p in parts:
-                    all_parts[p["sku"]] = p
-                await asyncio.sleep(0.5)
-
-    return list(all_parts.values())
+        for sku in skus:
+            sku = (sku or "").strip()
+            if len(sku) < 5:
+                continue
+            try:
+                r = await client.post(AJAX_URL, content=lookup_body(post_body, sku), headers=headers, timeout=20)
+                for row in r.json().get("data", []):
+                    part = parse_row(row, "")
+                    if part:
+                        found[part["sku"]] = part
+            except Exception as e:
+                log.error(f"lookup {sku}: {e}")
+            await asyncio.sleep(delay)
+    return list(found.values())
 
 
 async def capture_ajax_setup() -> tuple[str, list[dict]]:
@@ -202,14 +178,20 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
     )
     if not supplier:
         supplier_id = await conn.fetchval("""
-            INSERT INTO suppliers (id, name, country, currency, url, is_active, created_at)
-            VALUES (gen_random_uuid(), 'BDV - בכל דרך ושטח', 'IL', 'ILS', $1, TRUE, NOW())
+            INSERT INTO suppliers (id, name, country, website, is_active, vat_price_basis, vat_basis_evidence, created_at)
+            VALUES (gen_random_uuid(), 'BDV - בכל דרך ושטח', 'IL', $1, TRUE, $2, $3::jsonb, NOW())
             RETURNING id
-        """, BDV_URL)
+        """, BDV_URL, BDV_VAT_BASIS, json.dumps(BDV_VAT_EVIDENCE))
         log.info(f"Created BDV supplier: {supplier_id}")
     else:
         supplier_id = supplier["id"]
         log.info(f"Using existing BDV supplier: {supplier_id}")
+    # Record the verified basis + evidence on the supplier (price_policy reads suppliers.vat_price_basis).
+    try:
+        await conn.execute("UPDATE suppliers SET vat_price_basis=$2, vat_basis_evidence=$3::jsonb WHERE id=$1 "
+                           "AND (vat_price_basis IS DISTINCT FROM $2)", supplier_id, BDV_VAT_BASIS, json.dumps(BDV_VAT_EVIDENCE))
+    except Exception as e:  # column missing in an out-of-band schema: policy then reads the legacy exclusive default
+        log.warning(f"could not store vat_price_basis: {e}")
 
     _ph = PriceHistoryTracker(conn, "bdv_playwright_scraper"); await _ph.snapshot(supplier_id)
     updated_catalog = 0
@@ -224,8 +206,10 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
         if not price or price <= 0:
             continue
 
-        # Prices are treated as excl. VAT (scraper author's observation; the site page shows no VAT statement): add Israeli VAT ONCE at the current rate
-        price_with_vat = round(price * (1 + _pp.VAT_RATE), 2)
+        # The site states its prices EXCLUDE VAT (BDV_VAT_EVIDENCE): the quoted price is the cost; the reference adds VAT once.
+        _f = bdv_price_fields(price)
+        price_cost = _f["cost_ex_vat"]
+        price_with_vat = _f["consumer_reference"]
         in_stock = part.get("stock", "").strip() not in ["אזל", "אין מלאי", "0", ""]
 
         # Match by SKU/OEM
@@ -270,8 +254,8 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
                 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
                 ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE
                 SET price_ils = EXCLUDED.price_ils, price_usd = EXCLUDED.price_usd, is_available = EXCLUDED.is_available, updated_at = NOW()
-            """, str(m["id"]), str(supplier_id), sku, price_with_vat,
-                round(price_with_vat / _USD_TO_ILS, 2),  # price_usd is NOT NULL: the insert never worked without it
+            """, str(m["id"]), str(supplier_id), sku, price_cost,
+                round(price_cost / _USD_TO_ILS, 2),  # price_usd is NOT NULL: the insert never worked without it
                 in_stock, *_warranty_resolve(None))
             supplier_rows += 1
 
@@ -281,41 +265,42 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
 
 
 async def main():
-    log.info("=== BDV Scraper v3 (search-by-brand) ===")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--limit", type=int, default=int(os.getenv("BDV_LOOKUP_LIMIT", "500")))
+    ap.add_argument("--sku", action="append", default=[])
+    args = ap.parse_args()
+    log.info("=== BDV Scraper v4 (exact part-number lookup) ===")
 
     post_body, cookies = await capture_ajax_setup()
     if not post_body:
         log.error("Failed to capture POST body")
         return
-
     log.info(f"POST body ({len(post_body)} chars), cookies: {len(cookies)}")
 
-    all_parts = await scrape_all_brands(post_body, cookies)
+    skus = list(args.sku)
+    if not skus:
+        conn = await asyncpg.connect(DB_URL)
+        # catalog numbers of BDV's brands that have no Israeli cost yet (BDV is an Israeli source), longest-unchecked first
+        skus = [r[0] for r in await conn.fetch(
+            "SELECT oem_number FROM parts_catalog WHERE is_active AND oem_number IS NOT NULL AND length(oem_number) >= 5 "
+            "AND manufacturer = ANY($1::text[]) AND COALESCE(importer_price_ils, 0) = 0 ORDER BY updated_at ASC LIMIT $2",
+            [b for b, _ in BRAND_SEARCHES], args.limit)]
+        await conn.close()
+    log.info(f"looking up {len(skus)} part numbers")
+    all_parts = await lookup_skus(post_body, cookies, skus)
 
-    log.info(f"\n=== Results ===")
-    log.info(f"Total unique parts: {len(all_parts)}")
-    with_price = sum(1 for p in all_parts if p.get("price_ils"))
-    log.info(f"Parts with price: {with_price}")
-
-    from collections import Counter
-    for mfr, cnt in Counter(p.get("manufacturer", "?") for p in all_parts).most_common():
-        priced = sum(1 for p in all_parts if p.get("manufacturer") == mfr and p.get("price_ils"))
-        log.info(f"  {mfr}: {cnt} parts ({priced} with price)")
-
+    log.info(f"=== Results === BDV lists {len(all_parts)} of {len(skus)} looked-up numbers")
     with open("/tmp/bdv_parts.json", "w", encoding="utf-8") as f:
         json.dump(all_parts, f, ensure_ascii=False, indent=2)
-    log.info("Saved /tmp/bdv_parts.json")
-
-    # Show sample
     for p in all_parts[:5]:
         log.info(f"  Sample: {p}")
 
-    if with_price > 0:
+    if any(p.get("price_ils") for p in all_parts):
         conn = await asyncpg.connect(DB_URL)
         await import_to_db(conn, all_parts)
         await conn.close()
     else:
-        log.warning("No parts with prices — check search terms")
+        log.warning("BDV listed none of the looked-up numbers (no rows to import)")
 
 
 if __name__ == "__main__":

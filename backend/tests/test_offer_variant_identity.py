@@ -102,7 +102,7 @@ def test_null_offer_variant_inherits_catalog_class():
 
 
 def test_write_gate_matrix():
-    info = op.load_policy(POLICY)
+    info = op.load_policy(POLICY if POLICY.exists() else None)   # container layout: the loader's own candidates (/policies)
     ok = dict(policy=info, dry_run_done=True, has_other_orderable_offer=True)
     for cls in (C.COMPETING_OFFERS, C.DISTINCT_VARIANTS, C.PRICE_UPDATE, C.UNRESOLVED, C.MISATTRIBUTED):
         for action in ("deactivate", "retire", "hide", "merge", "delete"):
