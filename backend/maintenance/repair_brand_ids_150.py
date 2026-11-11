@@ -55,7 +55,7 @@ mm AS (
   FROM parts_catalog pc
   JOIN cbk tgt ON tgt.k = regexp_replace(lower(pc.manufacturer),'[^a-z0-9]','','g') AND tgt.is_active
   LEFT JOIN cbk cur ON cur.id = pc.manufacturer_id
-  WHERE pc.manufacturer_id IS NOT NULL AND pc.manufacturer_id <> tgt.id AND pc.manufacturer <> ALL($1::text[])),
+  WHERE pc.is_active AND pc.manufacturer_id IS NOT NULL AND pc.manufacturer_id <> tgt.id AND pc.manufacturer <> ALL($1::text[])),
 sig AS (
   SELECT mm.*,
    (length(pref)>=3 AND (left(tk,length(pref))=pref OR left(pref,length(tk))=tk)) pref_tgt,
@@ -130,11 +130,106 @@ async def restore_text(c, apply):
     print(f"DONE run_id={run_id} parts_catalog.manufacturer={done} part_vehicle_fitment.manufacturer={pvf}")
 
 
+async def resolve_rest(c, apply):
+    """Third pass (owner: "why left, we are in debug mode"). For the parts whose text and id still disagree, find the TRUE brand from signals
+    that do not depend on the (corrupted) text or the (possibly wrong) id:
+      * compatible_vehicles manufacturer (written by the car-parts.ie importer from the vehicle page) resolved through car_brand_resolver
+        (vw -> Volkswagen ...), and the SKU prefix token resolved the same way;
+      * 'fix'    both agree (or the SKU prefix alone, >= 4 letters, which the importer built from the brand text AT IMPORT) -> id AND text := that brand;
+      * 'polaris' PO-prefix family: text Polaris in the 2026-05-31 dump and in 25 other PO parts that carry the Polaris id, nothing for Renault;
+      * 'isolate' nothing independent: is_active = FALSE (hidden from search/compatibility, nothing deleted), specifications.brand_unresolved keeps the
+        original text and id. --rollback restores all three kinds.
+    Fitment rows of fixed parts that carry the old wrong id and whose own text names the new brand get the new id."""
+    import json
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import car_brand_resolver as cbr
+    brands, aliases = await cbr._load_maps(c)
+    polaris = await c.fetchrow("SELECT id::text id, name FROM car_brands WHERE name = 'Polaris' AND is_active")
+    rows = await c.fetch("""WITH cbk AS (SELECT id, regexp_replace(lower(name),'[^a-z0-9]','','g') k FROM car_brands WHERE is_active)
+        SELECT pc.id, pc.sku, pc.manufacturer m, pc.manufacturer_id::text cur, cur.name curname, pc.compatible_vehicles cv, upper(left(pc.oem_number,2)) op
+        FROM parts_catalog pc JOIN cbk tgt ON tgt.k = regexp_replace(lower(pc.manufacturer),'[^a-z0-9]','','g')
+        LEFT JOIN car_brands cur ON cur.id = pc.manufacturer_id
+        WHERE pc.is_active AND pc.manufacturer_id IS NOT NULL AND pc.manufacturer_id <> tgt.id AND pc.manufacturer <> ALL($1::text[])""", list(ALIAS_TEXTS))
+    fix, isolate = [], []
+    def pick(key):
+        pl = cbr.plan_resolution(key, brands, aliases, False)
+        return (pl["id"], pl["name"]) if pl["action"] in ("existing", "alias") else None
+    for r in rows:
+        cv = r["cv"]; cv = json.loads(cv) if isinstance(cv, str) else cv
+        cvb = None
+        if isinstance(cv, list) and cv:
+            names = {cbr.brand_key(x.get("manufacturer")) for x in cv if isinstance(x, dict) and x.get("manufacturer")}
+            if len(names) == 1:
+                cvb = pick(next(iter(names)))
+        pref = (r["sku"] or "").split("-")[0]
+        skub = pick(cbr.brand_key(pref)) if len(pref) >= 4 else None
+        tgt, ev = None, None
+        if cvb and skub and cvb[0] == skub[0]:
+            tgt, ev = cvb, "compatible_vehicles + sku prefix agree"
+        elif cvb and cvb[0] == r["cur"]:
+            tgt, ev = cvb, "compatible_vehicles names the stored brand (text was overwritten)"
+        elif skub and not cvb:
+            tgt, ev = skub, "sku prefix (built from the brand at import)"
+        elif r["m"] == "Polaris" and r["op"] == "PO" and polaris and not cvb and not skub:
+            tgt, ev = (polaris["id"], polaris["name"]), "PO-prefix Polaris family (text in 2026-05-31 dump, 25 PO parts on the Polaris id)"
+        if tgt:
+            fix.append((r, tgt, ev))
+        else:
+            isolate.append(r)
+    print(("APPLY" if apply else "DRY RUN"), f"- resolve-rest: fix {len(fix)} (id+text), isolate {len(isolate)} (is_active=false)")
+    grp = {}
+    for r, t, ev in fix:
+        grp[(r["m"], r["curname"], t[1], ev)] = grp.get((r["m"], r["curname"], t[1], ev), 0) + 1
+    for k, v in sorted(grp.items(), key=lambda kv: -kv[1])[:12]:
+        print("  fix", v, k)
+    if not apply:
+        return
+    run_id = f"brand150r-{uuid.uuid4().hex[:8]}"
+    await c.execute(LOG_DDL)
+    async with c.transaction():
+        for r, t, ev in fix:
+            await c.execute("""INSERT INTO brand_id_repair_log (run_id, table_name, row_id, prev_manufacturer_id, new_manufacturer_id, manufacturer_text, evidence)
+                               VALUES ($1,'parts_catalog.brand',$2,$3::uuid,$4::uuid,$5,$6) ON CONFLICT DO NOTHING""", run_id, r["id"], r["cur"], t[0], r["m"], ev)
+            await c.execute("UPDATE parts_catalog SET manufacturer_id = $2::uuid, manufacturer = $3, updated_at = NOW() WHERE id = $1 AND manufacturer_id = $4::uuid",
+                            r["id"], t[0], t[1], r["cur"])
+            await c.execute("""UPDATE part_vehicle_fitment f SET manufacturer_id = $2::uuid WHERE f.part_id = $1 AND f.manufacturer_id = $3::uuid
+                               AND regexp_replace(lower(f.manufacturer),'[^a-z0-9]','','g') = regexp_replace(lower($4),'[^a-z0-9]','','g')""", r["id"], t[0], r["cur"], t[1])
+        for r in isolate:
+            await c.execute("""INSERT INTO brand_id_repair_log (run_id, table_name, row_id, prev_manufacturer_id, new_manufacturer_id, manufacturer_text, evidence)
+                               VALUES ($1,'parts_catalog.isolate',$2,$3::uuid,$3::uuid,$4,'no independent evidence of the brand: text and id disagree; hidden, not deleted') ON CONFLICT DO NOTHING""", run_id, r["id"], r["cur"], r["m"])
+            await c.execute("""UPDATE parts_catalog SET is_active = FALSE, updated_at = NOW(),
+                               specifications = COALESCE(specifications,'{}'::jsonb) || jsonb_build_object('brand_unresolved', jsonb_build_object('run', $2::text, 'text', $3::text, 'id', $4::text))
+                               WHERE id = $1""", r["id"], run_id, r["m"], r["cur"])
+    print("DONE", run_id)
+
+
+async def prune_fitment(c, apply):
+    """Fitment rows that name MAZDA (stored with Jaguar's id) on parts that are provably JAGUAR parts (text, id and SKU prefix all Jaguar):
+    a Jaguar oil/lock-nut/windscreen part 'fitting a Mazda 6 / BT-50 / MX-6' is a false compatibility claim left by the old
+    mazda->Jaguar id dictionary. Archived in pvf_removed_150 (full row as jsonb, run id) and removed; --rollback re-inserts them."""
+    await c.execute("""CREATE TABLE IF NOT EXISTS pvf_removed_150 (run_id text NOT NULL, row_id uuid NOT NULL, row_json jsonb NOT NULL,
+                       removed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (run_id, row_id))""")
+    where = """f.manufacturer = 'Mazda' AND f.manufacturer_id = (SELECT id FROM car_brands WHERE name = 'Jaguar')
+               AND EXISTS (SELECT 1 FROM parts_catalog pc WHERE pc.id = f.part_id AND pc.manufacturer = 'Jaguar'
+                           AND pc.manufacturer_id = f.manufacturer_id AND upper(pc.sku) ~ '^(JAG|JAGUA)')"""
+    n = await c.fetchval(f"SELECT count(*) FROM part_vehicle_fitment f WHERE {where}")
+    print(("APPLY" if apply else "DRY RUN"), f"- prune-fitment: {n} Mazda-fitment rows on provably Jaguar parts")
+    if not apply:
+        return
+    run_id = f"brand150f-{uuid.uuid4().hex[:8]}"
+    async with c.transaction():
+        await c.execute(f"INSERT INTO pvf_removed_150 (run_id, row_id, row_json) SELECT $1, f.id, to_jsonb(f.*) FROM part_vehicle_fitment f WHERE {where}", run_id)
+        r = await c.execute("DELETE FROM part_vehicle_fitment WHERE id IN (SELECT row_id FROM pvf_removed_150 WHERE run_id = $1)", run_id)
+    print("DONE", run_id, r, "rollback: INSERT INTO part_vehicle_fitment SELECT (jsonb_populate_record(NULL::part_vehicle_fitment, row_json)).* FROM pvf_removed_150 WHERE run_id = '%s'" % run_id)
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--rollback", metavar="RUN_ID")
     ap.add_argument("--restore-text", action="store_true")
+    ap.add_argument("--resolve-rest", action="store_true")
+    ap.add_argument("--prune-fitment", action="store_true")
     a = ap.parse_args()
     c = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
     await c.execute("SET lock_timeout = '3s'")
@@ -143,6 +238,12 @@ async def main():
         r = await c.execute("""UPDATE parts_catalog pc SET manufacturer = l.manufacturer_text, updated_at = NOW() FROM brand_id_repair_log l
                                WHERE l.run_id=$1 AND l.table_name='parts_catalog.manufacturer' AND l.row_id=pc.id""", a.rollback)
         print("rollback text", r)
+        r = await c.execute("""UPDATE parts_catalog pc SET manufacturer_id = l.prev_manufacturer_id, manufacturer = l.manufacturer_text, updated_at = NOW() FROM brand_id_repair_log l
+                               WHERE l.run_id=$1 AND l.table_name='parts_catalog.brand' AND l.row_id=pc.id""", a.rollback)
+        print("rollback brand", r)
+        r = await c.execute("""UPDATE parts_catalog pc SET is_active = TRUE, specifications = pc.specifications - 'brand_unresolved', updated_at = NOW() FROM brand_id_repair_log l
+                               WHERE l.run_id=$1 AND l.table_name='parts_catalog.isolate' AND l.row_id=pc.id""", a.rollback)
+        print("rollback isolate", r)
         for table in ("parts_catalog", "part_vehicle_fitment"):
             r = await c.execute(f"""UPDATE {table} t SET manufacturer_id = l.prev_manufacturer_id FROM brand_id_repair_log l
                                     WHERE l.run_id=$1 AND l.table_name='{table}' AND l.row_id=t.id AND t.manufacturer_id=l.new_manufacturer_id""",
@@ -152,6 +253,12 @@ async def main():
 
     if a.restore_text:
         await restore_text(c, a.apply)
+        return
+    if a.resolve_rest:
+        await resolve_rest(c, a.apply)
+        return
+    if a.prune_fitment:
+        await prune_fitment(c, a.apply)
         return
     rows = await c.fetch(CANDIDATES, list(ALIAS_TEXTS))
     by = {}

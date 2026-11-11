@@ -42,7 +42,12 @@ def _order_line_pricing(sp, supplier_rec, usd_to_ils_rate: float):
     charged twice on every offer that carries supplier shipping (~60% of offers)."""
     import price_policy as _pp                     # 2026-10-29: the one policy (no inline ×1.45 / VAT here)
     cost_ils = _pp.offer_cost_ils(sp.price_ils, sp.price_usd, usd_to_ils_rate)
-    u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country) or _pp.UnitPrice(0.0, 0.0, 0.0, 0.0)
+    u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country)
+    if u is None:
+        # A LOCAL supplier whose VAT basis is unknown (or a cost <= 0) has no customer price: refuse the line. It used to become a
+        # 0.00 line (FIXES_TRACKER #149: an AutoParts Pro IL offer id could be ordered for nothing).
+        raise HTTPException(status_code=409, detail={"detail": "part_unavailable",
+                            "message": "החלק אינו זמין כרגע. אנא צור קשר עם שירות הלקוחות."})
     delivery_fee = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, usd_to_ils_rate,
                                     supplier_rec.name, supplier_rec.country)
     return u.net, u.vat, delivery_fee

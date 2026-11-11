@@ -16,6 +16,28 @@ from category_map import CATCH_ALL, categorize_on_ingest
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+import price_policy as _pp
+
+# 'inclusive' | 'exclusive' | None - set ONLY from a source-file statement about VAT, never from a label or a date.
+GM_PRICE_BASIS = None
+
+
+def _gm_reference(price):
+    """Consumer reference incl. VAT (also stored as base/min, as this importer always did), or None while the basis is unverified."""
+    if GM_PRICE_BASIS == "inclusive":
+        return round(price, 2)
+    if GM_PRICE_BASIS == "exclusive":
+        return round(price * (1 + _pp.VAT_RATE), 2)
+    return None
+
+
+def _gm_importer_cost(price):
+    if GM_PRICE_BASIS == "inclusive":
+        return round(price / (1 + _pp.VAT_RATE), 2)
+    if GM_PRICE_BASIS == "exclusive":
+        return round(price, 2)
+    return None
+
 DB_DSN = (
     f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
@@ -195,11 +217,12 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
 
         desc = (
             f"{eng_name}. Hebrew: {heb_desc}. "
-            f"Model: {model}. Israeli retail price (incl. VAT): {price:.2f} ILS."
+            f"Model: {model}. (Price not shown: VAT basis of the source list is unverified.)"
         )[:500]
 
-        # IL retail price incl. VAT: the list is a consumer price ("מחיר לצרכן") fetched 2026-06-11 from the importer's up-to-date price list; Israeli VAT has been 18% since 2025-01-01, so the quoted price carries 18% (FIXES_TRACKER #151)
-        il_retail = round(price, 2)
+        # The VAT basis of the UMI PDF price list is NOT established (the PDF text was not retained; no VAT wording found): the quoted price is
+        # provenance only - reference / cost / base stay NULL until GM_PRICE_BASIS is set from a source statement (FIXES_TRACKER #151 / #130).
+        il_retail = _gm_reference(price)
 
         try:
             async with conn.transaction():
@@ -212,8 +235,9 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
                         master_enriched, is_active, created_at, updated_at
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
-                        $6, $7, '{}'::jsonb,
-                        $8, 0, $8, $8,
+                        $6, $7, jsonb_build_object('price_basis', COALESCE($10::text, 'unverified'), 'source_price_ils', $11::numeric,
+                                                   'source', 'UMI GM Israel consumer price list (file not retained; VAT wording unverified)'),
+                        $8, $9::numeric, $8, $8,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
@@ -226,7 +250,7 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
                         updated_at = NOW()
                     RETURNING xmax
                 """, sku, part_num, eng_name[:255], brand, brand_id,
-                     category, desc, il_retail)
+                     category, desc, il_retail, _gm_importer_cost(price), GM_PRICE_BASIS, price)
                 if result:
                     # xmax=0 means inserted, >0 means updated
                     if result['xmax'] == 0:

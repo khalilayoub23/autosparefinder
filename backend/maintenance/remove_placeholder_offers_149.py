@@ -52,12 +52,40 @@ async def protected_ids() -> list:
         await pii.close()
 
 
+async def finish(c, sid, apply):
+    """Final disposition (2026-11-10/11) of the offers the main run protected, from individual inspection:
+      * offer with a supplier_url whose page is the French smart.com car-marketing home (302 from the search URL; no spare parts, no prices, no
+        'Remise 5 000EUR' banner), price 0.00, is_available false, part name = a scraped car-promo banner -> NOT a spare-part offer: archived + removed.
+      * offers referenced by (cancelled) orders/carts: kept for history but retired (is_available = FALSE) so they can never be sold again.
+    Rows are archived first; policy-gated like the main run."""
+    prot = await protected_ids()
+    rows = await c.fetch("SELECT id, supplier_url, price_ils, is_available FROM supplier_parts WHERE supplier_id = $1", sid)
+    to_remove = [r["id"] for r in rows if r["id"] not in prot and (r["supplier_url"] or "").startswith("https://www.smart.com/search")]
+    to_retire = [r["id"] for r in rows if r["id"] in prot and r["is_available"]]
+    print(("APPLY" if apply else "DRY RUN"), f"- finish: remove {len(to_remove)} (scraped smart.com banner), retire {len(to_retire)} (order-referenced)")
+    if not apply:
+        return
+    run_id = f"offers149f-{uuid.uuid4().hex[:8]}"
+    await c.execute(ARCHIVE_DDL)
+    async with c.transaction():
+        for ids, reason in ((to_remove, "scraped_banner_not_a_part"), (to_retire, "retired_order_dependency")):
+            if ids:
+                await c.execute("""INSERT INTO supplier_parts_removed_149 (run_id, reason, supplier_part_id, row_json)
+                                   SELECT $1, $2, id, to_jsonb(sp.*) FROM supplier_parts sp WHERE id = ANY($3::uuid[]) ON CONFLICT DO NOTHING""", run_id, reason, ids)
+        if to_remove:
+            await c.execute("DELETE FROM supplier_parts WHERE id = ANY($1::uuid[])", to_remove)
+        if to_retire:
+            await c.execute("UPDATE supplier_parts SET is_available = FALSE, updated_at = NOW() WHERE id = ANY($1::uuid[])", to_retire)
+    print("DONE", run_id, "remaining:", await c.fetchval("SELECT count(*) FROM supplier_parts WHERE supplier_id = $1", sid))
+
+
 async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--restore", metavar="RUN_ID")
+    ap.add_argument("--finish", action="store_true", help="final disposition of the offers the main run protected (with --apply)")
     a = ap.parse_args()
-    offer_policy.gate_or_exit("maintenance/remove_placeholder_offers_149.py", not a.apply and not a.restore)
+    offer_policy.gate_or_exit("maintenance/remove_placeholder_offers_149.py", not a.apply and not a.restore)   # --finish is gated the same way
     c = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
     await c.execute("SET lock_timeout = '3s'")
     if a.restore:
@@ -67,6 +95,9 @@ async def main():
         print("restore:", r)
         return
     sid = await c.fetchval("SELECT id FROM suppliers WHERE name = $1", SUPPLIER)
+    if a.finish:
+        await finish(c, sid, a.apply)
+        return
     prot = await protected_ids()
     where = ("sp.supplier_id = $1 AND NULLIF(BTRIM(sp.supplier_url),'') IS NULL AND NOT (sp.id = ANY($2::uuid[]))")
     rows = await c.fetch(f"SELECT {REASON_SQL} reason, count(*) n, count(*) FILTER (WHERE sp.is_available) avail "

@@ -638,6 +638,10 @@ async def _live_reprice_order(cat, order, order_items, rate) -> bool:
                 "detail": "part_unavailable",
                 "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות."})
         u = _pp.unit_price(_pp.offer_cost_ils(row[1], row[2], rate), row[5], row[6])
+        if u is None:        # unpriceable offer (unknown VAT basis of a local supplier): never charge it
+            raise HTTPException(status_code=409, detail={
+                "detail": "part_unavailable",
+                "message": "אחד או יותר מהחלקים אינם זמינים כרגע. אנא צור קשר עם שירות הלקוחות."})
         fee = _pp.delivery_fee(row[3], row[4], rate, row[5], row[6])
         net, vat, line_total = u.line(int(it.quantity or 0))
         if abs(float(it.unit_price or 0) - u.net) > 0.005 or abs(float(it.vat_amount or 0) - u.vat) > 0.005:
@@ -2121,6 +2125,8 @@ async def create_whatsapp_checkout(
 
     import price_policy as _pp                     # 2026-10-29: the one policy (same lines as create_order)
     _u = _pp.unit_price(cost_ils, supplier_rec.name, supplier_rec.country)
+    if _u is None:
+        return {"ok": False, "error": "Part has no valid price"}
     supplier_vat_rate = _u.vat_rate
     shipping = _pp.delivery_fee(sp.shipping_cost_ils, sp.shipping_cost_usd, rate, supplier_rec.name,
                                 supplier_rec.country)

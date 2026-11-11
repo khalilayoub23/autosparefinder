@@ -20,6 +20,20 @@ import openpyxl
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+# 'inclusive' | 'exclusive' | None. Set ONLY from a source-file statement ("המחירים כוללים/אינם כוללים מע\"מ"), never from a label or a date.
+GM_PRICE_BASIS = None
+
+
+def price_columns(price):
+    """(cost ex-VAT, consumer reference incl. VAT, base) for a quoted price, or (None, None, None) while the basis is unverified."""
+    if GM_PRICE_BASIS == "inclusive":
+        cost = round(price / (1 + _pp.VAT_RATE), 2)
+        return cost, round(price, 2), round(cost * _pp.MARGIN, 2)
+    if GM_PRICE_BASIS == "exclusive":
+        cost = round(price, 2)
+        return cost, round(price * (1 + _pp.VAT_RATE), 2), round(cost * _pp.MARGIN, 2)
+    return None, None, None
+
 DB_DSN = (
     f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
@@ -147,12 +161,12 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
         model_str = re.sub(r'^(IL\s+)?CADILL?AC\s*', '', model_str, flags=re.I).strip() or model_str
 
         desc = (f"{eng_name}. Hebrew: {heb_str}. "
-                f"Model: {model_str}. Israeli retail price (incl. VAT): {price:.2f} ILS.")[:500]
+                f"Model: {model_str}. (Price not shown: VAT basis of the source list is unverified.)")[:500]
 
-        # Consumer retail price incl. VAT: the list is a consumer price ("מחיר לצרכן") fetched 2026-06-11 from the importer's up-to-date price list; Israeli VAT has been 18% since 2025-01-01, so the quoted price carries 18% (FIXES_TRACKER #151)
-        cost      = round(price / (1 + _pp.VAT_RATE), 2)   # excl. VAT (our cost reference)
-        il_retail = round(price, 2)                         # the quoted consumer price itself (not re-grossed)
-        selling   = round(cost * _pp.MARGIN, 2)             # our selling price (45% margin)
+        # The price basis of this list is NOT established: the original file (cadillacFile.xlsx) was not retained and the sibling UMI file
+        # (chevrolet.xlsx) has a "מחיר לצרכן" column but no VAT wording. So nothing is derived from it (FIXES_TRACKER #151 / #130): the quoted
+        # price is stored as provenance only; cost / reference / base stay NULL until GM_PRICE_BASIS is set from a source statement.
+        cost, il_retail, selling = price_columns(price)
 
         try:
             async with conn.transaction():
@@ -165,7 +179,8 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
                         master_enriched, is_active, created_at, updated_at
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, 'Cadillac', $4::uuid,
-                        $5, $6, '{}'::jsonb,
+                        $5, $6, jsonb_build_object('price_basis', COALESCE($10::text, 'unverified'), 'source_price_ils', $11::numeric,
+                                                   'source', 'UMI GM Israel consumer price list (file not retained; VAT wording unverified)'),
                         $8, $7, $7, $9,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
@@ -179,7 +194,7 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
                         updated_at = NOW()
                     RETURNING id
                 """, sku, part_num, eng_name[:255], CADILLAC_BRAND_ID,
-                     category, desc, cost, selling, il_retail)
+                     category, desc, cost, selling, il_retail, GM_PRICE_BASIS, price)
                 if pid:
                     inserted += 1
         except Exception as e:

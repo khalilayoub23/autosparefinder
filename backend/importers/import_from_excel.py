@@ -190,6 +190,22 @@ def build_supplier_insert_payload(column_names, supplier_id, part_id, rec, now, 
     return [values[column_name] for column_name in column_names]
 
 
+def source_price(raw):
+    """(price, None) for a real positive source price, else (None, reason). Nothing is ever substituted: a missing price is
+    'no_source_price', an explicit 0 / negative / non-numeric one is 'zero_price' / 'invalid_price' (a free or unquoted part is not an offer)."""
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None, "no_source_price"
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None, "invalid_price"
+    if v != v or v in (float("inf"), float("-inf")):
+        return None, "invalid_price"
+    if v <= 0:
+        return None, "zero_price"
+    return v, None
+
+
 async def run(brands=None, dry_run=False):
     print(f"{'[DRY RUN] ' if dry_run else ''}Connecting to DB...")
     conn = await asyncpg.connect(DB_URL)
@@ -297,9 +313,9 @@ async def run(brands=None, dry_run=False):
             # Only a price the source row actually carries becomes an offer. The old fallback (catalog base_price, then a literal
             # 100.0) fabricated 70,200 AutoParts Pro IL offers at exactly 100.00 (FIXES_TRACKER #149): a row without a price is
             # counted and skipped, never invented.
-            price = rec["price"]
-            if not price or price <= 0:
-                stats["no_source_price"] = stats.get("no_source_price", 0) + 1
+            price, why = source_price(rec.get("price"))
+            if why:
+                stats[why] = stats.get(why, 0) + 1
                 continue
             price_usd = round(price * ILS_TO_USD, 2)
             is_av = rec["is_available"] if rec["is_available"] is not None else False
