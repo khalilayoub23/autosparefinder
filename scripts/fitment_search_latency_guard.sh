@@ -36,7 +36,9 @@ PER_TYPE="${PER_TYPE:-3}"
 
 if [[ "$RESTART_BACKEND" == "1" ]]; then
   echo "[guard] restarting backend to force cold cache"
-  docker compose restart backend >/dev/null
+  # Guarded (2026-11-12): only when a fresh preflight says SAFE; otherwise this script stops here (set -e).
+  "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/backend/scripts/guarded_restart.sh" \
+    fitment_latency_guard -- docker compose restart backend >/dev/null
 fi
 
 echo "[guard] waiting for backend health"

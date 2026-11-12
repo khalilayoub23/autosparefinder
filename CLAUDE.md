@@ -352,8 +352,18 @@ Rules:
   (2026-10-10).** `scripts/restart_preflight.py` also sees work INSIDE uvicorn that has no job row and no
   subprocess: the daily Facebook group scan (10:00 IL, ~3 h, **no catch-up** - a recreation at 10:06 IL
   lost that day's drafts), the night-pipeline job, job locks, heavy subprocesses, Gmail writes in flight.
-  Never restart 10:00-14:00 IL unless the preflight says SAFE. Override = explicit owner decision
-  (`PRE_RESTART_FORCE=1`). A code-only deploy needs `--force-recreate` (compose sees no config change).
+  Never restart 10:00-14:00 IL unless the preflight says SAFE. **There is NO override** (the old
+  `PRE_RESTART_FORCE` was removed 2026-11-12). A code-only deploy needs `--force-recreate` (compose sees no config change).
+- **Every restart / stop / recreate goes through ONE fail-closed guard (2026-11-12).** Incident: `bash pre_restart.sh ;
+  docker restart autospare_backend` restarted production although the preflight said BLOCKED (`;` ignores the status,
+  and a script cannot stop a command that is not inside it). Now: `backend/scripts/guarded_restart.sh <op> -- docker ...`
+  (`restart_guard.py`) runs a FRESH nonce-bound preflight and executes the command only on an explicit, parsed, fresh `SAFE`;
+  BLOCKED / UNSAFE / non-zero / timeout / empty / malformed / missing / stale = exit 4, command never started. The host
+  `docker` shim (`/usr/local/bin/docker` = `backend/scripts/docker_shim.py`, installer `install_docker_shim.sh`) refuses a RAW
+  `docker restart|stop|kill|rm` of a protected container or `docker compose up|down|restart|stop|...` without the guard's one-time,
+  command-bound token; the project Claude hook (`.claude/hooks/restart_guard_hook.py`) blocks the same in agent sessions.
+  Run `pre_restart.sh` first, then the guarded command (chaining with `;` is now harmless). Never type a raw restart, never
+  call `/usr/bin/docker` by path to get around it, never reintroduce an override. Guarded by `tests/test_restart_guard.py`.
 - **An interval loop must measure its interval from the last COMPLETED run, not from process start
   (2026-10-10).** `sleep(N)` at loop start re-anchors on every restart: two restarts 28 min apart ran
   `run_all_tasks` three times in two hours and `meili_sync` twice. Use `local_schedule.delay_after_restart`

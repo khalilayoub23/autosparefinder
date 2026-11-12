@@ -169,7 +169,24 @@ def _alive(pid: int) -> bool:
         return False
 
 
+def _preflight_safe() -> Optional[str]:
+    """None when a fresh in-container preflight says SAFE, else the reason `stop` must not signal anything.
+    `stop` SIGTERMs running work; run on its own (not behind pre_restart.sh) it used to do so unchecked."""
+    try:
+        from restart_preflight import evaluate, gather
+        result = evaluate(gather())
+    except Exception as exc:  # noqa: BLE001 - cannot tell -> do not signal anything
+        return f"preflight could not run ({type(exc).__name__})"
+    if result.get("safe") is True and not result.get("blockers"):
+        return None
+    return "preflight BLOCKED: " + "; ".join(str(b) for b in (result.get("blockers") or ["no detail"])[:3])
+
+
 def cmd_stop() -> int:
+    reason = _preflight_safe()
+    if reason:
+        print(f"[restart_workers] stop REFUSED, nothing was signalled: {reason}", file=sys.stderr)
+        return 4
     targets = scan()
     if not targets:
         print("[restart_workers] stop: no managed importer/scraper process is running")

@@ -17,18 +17,23 @@ Process:
               slot (then it never began today's scan), night-pipeline job running, job_registry running rows, job
               locks, heavy subprocesses, a Gmail write in flight, or a source that could not
               be read (fail closed). Notes: inside the night window, harvester state.
-  Exit code:  0 safe, 4 blocked. `--json` prints the full result.
-  Override:   PRE_RESTART_FORCE=1 on pre_restart.sh (an explicit owner decision).
+  Exit code:  0 safe, 4 blocked. `--json` prints the full result, which also carries
+              `verdict` (SAFE|BLOCKED), `checked_at` (epoch) and the caller's `--nonce`, so
+              scripts/restart_guard.py can prove the answer is FRESH and was produced for THIS
+              request (a stored SAFE can never authorize a later restart).
+  Override:   NONE. The old PRE_RESTART_FORCE=1 override was removed (2026-11-12): a BLOCKED
+              preflight must make every restart impossible (FIXES_TRACKER, restart-guard entry).
 Data Imported/Modified: none (read-only).
 Data Sources: /proc, /app/state, Redis, catalog DB (SELECT).
 Missing Data Delegation: n/a.
-Last Updated: 2026-10-10
+Last Updated: 2026-11-12
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+import time as _time
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -228,9 +233,21 @@ def gather() -> Dict[str, Any]:
     return facts
 
 
+def _arg_value(argv: List[str], flag: str) -> str:
+    """Value of `--flag VALUE` / `--flag=VALUE`, or ''."""
+    for i, a in enumerate(argv):
+        if a == flag and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith(flag + "="):
+            return a.split("=", 1)[1]
+    return ""
+
+
 def main(argv: List[str]) -> int:
     result = evaluate(gather())
     if "--json" in argv:
+        result = dict(result, verdict="SAFE" if result["safe"] else "BLOCKED",
+                      checked_at=_time.time(), nonce=_arg_value(argv, "--nonce"))
         print(json.dumps(result, indent=2))
     else:
         print("RESTART PREFLIGHT:", "SAFE" if result["safe"] else "BLOCKED")

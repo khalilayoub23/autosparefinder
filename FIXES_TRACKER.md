@@ -9943,3 +9943,58 @@ Earlier sections unchanged. The Chevrolet work was not touched (VAT basis still 
 
 ### Remaining external dependency
 BDV's own price list (sales@b-d-v.co.il / 076-5445061) - the only route to real BDV products; UMI's VAT statement for Chevrolet (unchanged, handled separately).
+
+## 2026-11-12 — Fail-closed restart guard (a BLOCKED preflight now makes every restart impossible)
+
+### Root cause
+`bash pre_restart.sh ; docker restart autospare_backend` restarted production although the preflight said BLOCKED. Two layers failed: (1) the caller chained with `;`, which discards the previous exit status; (2) `pre_restart.sh` could only stop ITSELF - a raw `docker restart` typed after it never consults any guard, so no change inside the script (nor `;` -> `&&`) could have prevented it. Also `pre_restart.sh` carried an override (`PRE_RESTART_FORCE=1`) and `restart_workers.py stop` SIGTERMed work with no preflight at all.
+
+### Design (one authorization point, enforced where the restart is typed)
+- `backend/scripts/restart_guard.py` (+ `guarded_restart.sh`): runs a FRESH preflight (`restart_preflight.py --json --nonce N`, hard timeout 90 s) and authorizes ONLY when: process ran, exit 0, stdout is exactly one JSON object, `verdict == "SAFE"`, `safe is True`, `blockers == []`, the echoed nonce equals N, `checked_at` is numeric, <= 30 s old and not in the future. BLOCKED / UNSAFE / non-zero / timeout / empty / malformed / not-an-object / missing executable / inconsistent / stale / replayed / any exception = exit 4, reason printed, command never started. Nothing is cached, so an old SAFE can never authorize a later restart. No override: the old force variable is ignored (and said so); the only tunable (`RESTART_GUARD_TIMEOUT_S`) is clamped to <= the default (stricter only).
+- On SAFE with a docker command the guard writes a ONE-TIME token (`/run/restart_guard/tokens/<id>`, TTL 120 s) bound to the exact docker argv.
+- `backend/scripts/docker_shim.py` installed as `/usr/local/bin/docker` (`install_docker_shim.sh`, `--verify`, `--remove`): passes every docker call through to the real binary EXCEPT restart/stop/kill/rm/rename/pause on `autospare_*`, `flaresolverr*`, `whatsapp_bridge` (names or ids resolved via inspect) and `compose up|down|restart|stop|kill|rm|start|pause|create` (not `--dry-run`); those need a valid single-use token for that exact argv. So `pre_restart.sh ; docker restart ...`, nested scripts, subshells, `&&`/`||` and cron are all denied unless inside the guard.
+- `.claude/hooks/restart_guard_hook.py` (wired in `.claude/settings.json`, PreToolUse/Bash): same classification (imports the shim's) for agent sessions; also blocks `systemctl restart|stop docker`, reboot/shutdown and any assignment of the removed force variable. It blocked my own inline raw-restart demo during this work (as designed).
+- `restart_preflight.py`: `--json` now carries `verdict`, `checked_at`, `nonce`. `restart_workers.py stop` refuses (exit 4, signals nothing) unless a preflight says SAFE.
+
+### Every restart entry point found, and its state
+| Entry point | Before | Now |
+|---|---|---|
+| `backend/scripts/pre_restart.sh` | preflight with an override variable | `restart_guard.py --op pre_restart`, no override |
+| `backend/scripts/restart_workers.py stop` | no check | preflight required |
+| `deploy/deploy.sh` (`compose up --force-recreate backend frontend nginx`) | raw | `guarded_restart.sh deploy_recreate` |
+| `.github/workflows/ci.yml` deploy (`compose up -d --build frontend backend`) | raw, continued after failure | `guarded_restart.sh ci_deploy` + `script_stop: true` |
+| `scripts/fitment_search_latency_guard.sh` (`compose restart backend`) | raw | `guarded_restart.sh fitment_latency_guard` |
+| `deploy/flaresolverr_reaper.sh` (`docker restart flaresolverr*`; cron template, NOT installed in any crontab) | raw | `guarded_restart.sh flaresolverr_reaper` (denial = skip, retry next run) |
+| any hand-typed / cron / nested raw `docker restart\|stop\|kill\|rm`, `docker compose up\|down\|...` | unguarded | denied by the shim without a token |
+| agent sessions (Claude Code Bash) | unguarded | hook |
+| `whatsapp-bridge/show_qr.sh` | only prints a hint | executes no restart (no change) |
+| in-app `os.kill` watchdogs (`BACKEND_API_ROUTES.py`) | kill stuck child processes, not service restarts | out of scope, unchanged |
+| compose `restart: unless-stopped` | Docker crash recovery | not a caller path, unchanged |
+
+### Files changed
+New: `backend/scripts/restart_guard.py`, `guarded_restart.sh`, `docker_shim.py`, `install_docker_shim.sh`, `.claude/hooks/restart_guard_hook.py`, `backend/tests/test_restart_guard.py`. Modified: `backend/scripts/pre_restart.sh`, `restart_preflight.py`, `restart_workers.py`, `deploy/deploy.sh`, `deploy/flaresolverr_reaper.sh`, `scripts/fitment_search_latency_guard.sh`, `.github/workflows/ci.yml`, `.claude/settings.json`, `backend/tests/test_restart_scheduling.py` (its old assertion encoded the removed override; it now asserts the guard gate and the ABSENCE of any override), `CLAUDE.md`, `docs/DEPLOY_69_SEARCH.md`.
+
+### Tests (`tests/test_restart_guard.py`, 35) - each records whether the restart executable was invoked
+SAFE proceeds; BLOCKED, UNSAFE, non-zero, timeout (does not hang), empty, malformed, not-an-object, executable missing, SAFE-with-exit-1, old result, replayed nonce, missing nonce, inconsistent blockers: restart never invoked; **the exact incident (BLOCKED preflight, `pre_restart.sh ; docker restart autospare_backend`): restart never invoked**; raw restart denied even when SAFE; `;` around the guarded call; nested script (guarded and raw); env bypasses and forged/expired/reused/wrong-command tokens; timeout env can only lower; each attempt uses a new nonce; restart failure status propagated (7); invalid invocations; shim pass-through of non-protected calls; every entry-point file routes through the guard; `restart_workers stop` refuses when BLOCKED or when the preflight errors. **Mutation check:** with the shim off PATH the same BLOCKED + `;` chain DOES execute `restart autospare_backend` (the incident reproduced); with the shim, `executed=[]`.
+
+### Test results (sandbox container `sandbox_backend`, final tree, each run alone)
+- New + related restart tests (`test_restart_guard`, `test_restart_workers`, `test_restart_scheduling`, `test_supervised_restart`): **95 passed, 0 failed, 0 skipped**.
+- **Default suite: 2928 passed, 0 failed, 509 skipped** (previous closure 2893 + the 35 new tests; skips unchanged).
+- **Expanded suite** (`RUN_DB_MUTATION_TESTS=1 OFFER_POLICY_PATH=/policies/... AG4_PG_DSN=.../sandbox_ag4 VI_PG_DSN=.../sandbox_vi`): **3329 passed, 0 failed, 108 skipped** (previous 3294 + 35; the same individually accounted 108 skips). A first expanded run without the two disposable-DB DSNs gave 3260 passed / 177 skipped - the extra 69 skips were exactly the DSN-gated tests, not failures; rerun with the DSNs shown above.
+- The test that encoded the old override (`test_restart_scheduling::test_pre_restart_runs_the_preflight_before_any_side_effect`) was changed to assert the guard gate and the absence of any override - strengthened, not weakened.
+
+### Production verification (2026-11-12, NO restart, nothing interrupted)
+- Installed `/usr/local/bin/docker` shim: `install_docker_shim.sh --verify` = byte-identical to the repo. Host scripts vs the bind-mounted container copies: `restart_preflight.py`, `restart_workers.py`, `restart_guard.py`, `docker_shim.py`, `guarded_restart.sh`, `pre_restart.sh` all sha256-identical.
+- Harness `prod_verify.sh` (REAL deployed scripts + installed shim + a FAKE "real docker" with a recording marker): A. simulated BLOCKED + the old `pre_restart.sh ; docker restart` chain -> pre_restart aborted (4), raw restart denied by the shim, **executed=[]**; B. BLOCKED, guarded form -> exit 4, **executed=[]**; C. SAFE simulated, guarded form -> authorized, fake docker saw the restart (no real service touched); D. SAFE simulated but raw restart -> denied, executed=[]; E. REAL preflight + harmless marker command -> authorized, marker created; F. the removed force variable is ignored; G. `docker ps` / `docker exec` pass through.
+- **Live BLOCKED, real preflight (not simulated):** later the same morning a genuine `run_all_tasks` run + the `db_update_agent` Redis lock made the real preflight BLOCKED; `guarded_restart.sh live_blocked_check -- touch <marker>` -> `DENIED ... preflight verdict 'BLOCKED'`, exit 4, marker NOT created.
+- Workloads before/after (snapshots 05:44 and 06:19 Israel): every container's `StartedAt`, `RestartCount` and `OOMKilled` identical (backend up since 2026-11-11 21:40 UTC, uvicorn pid 1 uptime continuous, harvester pid 100 continuous); no running job was interrupted (the 07:15 `run_all_tasks` started by itself later and was untouched); 0 tracebacks in the backend log (2 h); kernel OOM count unchanged (2, historic); load ~4 on 6 vCPUs; policy pin `041c62d1f0b3a42e` matches the policy hash.
+- The ONLY production-host change: the shim file `/usr/local/bin/docker` (plus code on the bind mount, loaded by `docker exec` per call - no restart needed). The only docker calls made against the real shim for a protected name used a non-existent probe container.
+
+### Rollback
+`backend/scripts/install_docker_shim.sh --remove` (restores plain docker immediately); `git revert` of the commit restores the old scripts; remove the `hooks` block from `.claude/settings.json` to drop the agent hook. Tokens live only in `/run/restart_guard/tokens` (tmpfs, cleared on reboot).
+
+### Remaining unprotected paths (exact location, remediation)
+1. `/usr/bin/docker ...` or `/usr/libexec/docker/cli-plugins/docker-compose ...` called by absolute path, and `docker-compose` (v1) if ever installed: bypass the PATH shim. Remediation: the hook blocks names, not paths in other tools; if the owner wants it airtight, restrict the real binaries via an AppArmor/sudo wrapper - not done (root can always do anything).
+2. `systemctl restart|stop docker`, `reboot`, `shutdown`: stop every container; blocked only in agent sessions (hook), not for a human shell. Remediation: a systemd drop-in `ExecStop`/inhibitor calling `restart_guard.py --op host_stop` - not built (host-level change needing an owner window).
+3. The guard cannot see work it does not know about: it is exactly as good as `restart_preflight.py`'s blockers (its known limits are in its docstring). A SAFE verdict was never a guarantee of no running work, only of none that the preflight can detect.
+4. Historic runbooks under `candidates/` and `docs/` still show a raw `docker restart`; they are records, not entry points - on the host the shim now refuses them. Use `guarded_restart.sh <op> -- docker restart autospare_backend`.

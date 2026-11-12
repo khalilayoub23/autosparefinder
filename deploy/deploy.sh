@@ -14,7 +14,9 @@ echo "Building backend/frontend images (with latest base layers)..."
 docker compose build --pull backend frontend
 
 echo "Recreating backend/frontend/nginx containers from rebuilt images..."
-docker compose up -d --no-deps --force-recreate backend frontend nginx
+# Guarded (2026-11-12): recreates only when a FRESH preflight says SAFE; BLOCKED = exit 4, set -e stops the deploy.
+"$ROOT_DIR/backend/scripts/guarded_restart.sh" deploy_recreate -- \
+  docker compose up -d --no-deps --force-recreate backend frontend nginx
 
 echo "Waiting for backend health..."
 for i in {1..30}; do

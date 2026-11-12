@@ -71,7 +71,7 @@ bash /opt/autosparefinder/backend/scripts/pre_restart.sh      # exit 4 = preflig
 docker restart autospare_backend
 bash /opt/autosparefinder/backend/scripts/post_restart.sh     # exit 3 = a worker not resumed -> report
 ```
-Never `PRE_RESTART_FORCE=1` without a separate owner decision. Do not restart `whatsapp_bridge`, nginx or
+There is no restart-preflight override (removed 2026-11-12); restart only via `backend/scripts/guarded_restart.sh`. Do not restart `whatsapp_bridge`, nginx or
 Postgres (not part of this change).
 
 ## 4. Post-deploy checks (STOP conditions in bold)

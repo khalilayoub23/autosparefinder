@@ -24,6 +24,12 @@ for c in flaresolverr flaresolverr2; do
     [ -z "$n" ] && n=0
     if [ "$n" -gt "$THRESH" ]; then
         echo "$(date '+%F %T') reaping $c — $n chrome procs > $THRESH"
-        docker restart "$c" >/dev/null 2>&1 && echo "$(date '+%F %T') $c restarted"
+        # Guarded (2026-11-12): the restart happens only when a fresh preflight says SAFE; on a
+        # denial it is skipped and retried by the next cron run.
+        if /opt/autosparefinder/backend/scripts/guarded_restart.sh flaresolverr_reaper -- docker restart "$c" >/dev/null 2>&1; then
+            echo "$(date '+%F %T') $c restarted"
+        else
+            echo "$(date '+%F %T') $c restart DENIED by the restart guard (will retry next run)"
+        fi
     fi
 done

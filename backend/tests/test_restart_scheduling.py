@@ -212,12 +212,14 @@ def test_heavy_subprocess_detection_reports_each_script_once():
 
 
 def test_pre_restart_runs_the_preflight_before_any_side_effect():
+    """The gate is the fail-closed restart guard (2026-11-12); there is no override any more."""
     sh = (BACKEND / "scripts" / "pre_restart.sh").read_text(encoding="utf-8")
-    gate = sh.index("restart_preflight.py")
+    gate = sh.index("restart_guard.py")
     assert gate < sh.index("restart_workers.py capture") < sh.index("UPDATE job_registry SET status='superseded'")
     assert gate < sh.index("restart_workers.py stop")
     assert "exit 4" in sh[gate:sh.index("=== PRE-RESTART CAPTURE ===\" >&2", gate)]
-    assert 'PRE_RESTART_FORCE:-0' in sh
+    code = "\n".join(line.split("#", 1)[0] for line in sh.splitlines())
+    assert "PRE_RESTART" + "_FORCE" not in code
 
 
 # ── 4. thumbnail supervisor: the idle back-off survives a restart ───────────────────
