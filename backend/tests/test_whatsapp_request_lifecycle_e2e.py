@@ -26,8 +26,16 @@ def _one(res):
 
 
 def _pick(res, tag):
-    rid = [r for r in res["recs"] if tag in r][0]
+    # Match the tag as its own id SEGMENT ("e2elc-<tag>-<hex>"): a plain substring test also matched the random 8-hex suffix
+    # of ANOTHER request (e.g. tag "f8" inside "e2elc-m-f80a375e", ~1 run in 10), which made test_F8 pick the wrong request.
+    rid = [r for r in res["recs"] if f"-{tag}-" in r][0]
     return rid, res["recs"][rid]
+
+
+def test_pick_matches_the_tag_segment_not_a_random_hex_collision():
+    res = {"recs": {"wa:e2elc-m-f80a375e": "main", "wa:e2elc-f8-e1f295c6": "f8"}}      # the exact ids of the failing run
+    assert _pick(res, "f8") == ("wa:e2elc-f8-e1f295c6", "f8")
+    assert _pick(res, "m")[1] == "main"
 
 
 async def _inject(x, tag, body="q", **fields):
