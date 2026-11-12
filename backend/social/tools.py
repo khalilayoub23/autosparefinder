@@ -530,11 +530,14 @@ async def whatsapp_send_message(
     """
     tracking = _tracking_id()
     try:
-        from social.whatsapp_provider import send_message as _wa
-        raw = await _wa(to, message)
+        # The quiet-hours gate, as the docstring promises (it called the provider directly, so a
+        # campaign message approved at night went out at night).
+        from BACKEND_API_ROUTES import _wa_send_quiet
+        raw = await _wa_send_quiet(to=to, text=message)
         ok = bool(raw and (raw.get("ok") or raw.get("status") == "sent"))
         res = (
-            ToolResult(status="success", analytics_tracking_id=tracking)
+            ToolResult(status="success", analytics_tracking_id=tracking,
+                       data={"queued_until_window": bool(raw.get("queued"))})
             if ok
             else ToolResult(status="error", analytics_tracking_id=tracking,
                             error=str(raw.get("error") or raw)[:200])

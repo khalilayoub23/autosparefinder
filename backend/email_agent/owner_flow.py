@@ -161,7 +161,10 @@ def format_alert(row: Dict[str, Any], task_agent: Optional[str]) -> tuple:
 
 
 def format_digest(rows: List[Dict[str, Any]], open_rows: List[Dict[str, Any]]) -> Optional[tuple]:
-    if not rows and not open_rows:
+    """Daily digest = what CHANGED since the previous digest. Nothing received -> no digest (the
+    backlog alone used to be re-sent every morning with the same eight oldest items). Open items
+    are listed only when new; the unchanged backlog is one count line."""
+    if not rows:
         return None
     by_cat: Dict[str, int] = {}
     for r in rows:
@@ -178,11 +181,17 @@ def format_digest(rows: List[Dict[str, Any]], open_rows: List[Dict[str, Any]]) -
             lines.append(f"• {_sender_domain(r)} — {str(r.get('subject') or '')[:60]}")
     lines.append("")
     if open_rows:
-        lines.append(f"ממתינים לך: {len(open_rows)}")
-        for r in open_rows[:8]:
-            lines.append(f"• {ref(r)} · {CATEGORY_HE.get(r.get('classification') or 'unknown', '?')} · "
-                         f"{_sender_domain(r)} · {_draft_state(r)}")
-        lines.append("כתוב *מיילים* לרשימה המלאה")
+        new_ids = {str(r.get("id")) for r in rows}
+        fresh = [r for r in open_rows if str(r.get("id")) in new_ids]
+        older = len(open_rows) - len(fresh)
+        if fresh:
+            lines.append(f"🆕 חדשים שממתינים לך: {len(fresh)}")
+            for r in fresh[:8]:
+                lines.append(f"• {ref(r)} · {CATEGORY_HE.get(r.get('classification') or 'unknown', '?')} · "
+                             f"{_sender_domain(r)} · {_draft_state(r)}")
+        if older:
+            lines.append(f"ממתינים מקודם (ללא שינוי): {older}")
+        lines.append(f"סה\"כ ממתינים: {len(open_rows)} — כתוב *מיילים* לרשימה המלאה")
     else:
         lines.append("אין מיילים שממתינים לך ✅")
     return "סיכום מיילים יומי", "\n".join(lines)

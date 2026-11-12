@@ -271,6 +271,8 @@ class FacebookSession:
         auth_state = await self._health_check()
         self._valid = (auth_state == _AuthState.AUTHENTICATED)
 
+        if self._valid:
+            await self._notify_owner_session_restored()
         if not self._valid:
             log.warning("fb_browser: health-check → %s — attempting auto-relogin", auth_state.value)
             if auth_state == _AuthState.ACCOUNT_PICKER and await self._login_via_picker():
@@ -278,6 +280,7 @@ class FacebookSession:
                 self._valid = (post_state == _AuthState.AUTHENTICATED)
                 if self._valid:
                     log.info("fb_browser: picker login succeeded - session authenticated")
+                    await self._notify_owner_session_restored()
                     return
                 log.error("fb_browser: picker login completed but re-check shows %s", post_state.value)
                 await self._notify_owner_reauth_required("picker login ran but session still invalid")
@@ -300,6 +303,7 @@ class FacebookSession:
                 self._valid = (post_state == _AuthState.AUTHENTICATED)
                 if self._valid:
                     log.info("fb_browser: auto-relogin succeeded — session now authenticated")
+                    await self._notify_owner_session_restored()
                 else:
                     log.error("fb_browser: auto-relogin completed but re-check shows %s", post_state.value)
                     await self._notify_owner_reauth_required("auto-relogin ran but session still invalid")
@@ -549,51 +553,50 @@ class FacebookSession:
         return False
 
     async def _notify_owner_reauth_required(self, reason: str) -> None:
-        """WhatsApp the owner that manual intervention is needed for Facebook auth.
+        """Tell the owner that Facebook needs a manual re-login.
 
-        Called only when auto-relogin fails — not on every session expiry,
-        because the auto-relogin path handles most expirations silently.
-        Rate-limited by Redis with a 6-hour cooldown to avoid alert storms.
+        Called only when auto-relogin fails. Goes through notify_owner (central routing,
+        quiet hours, Redis cooldown) with the stable key `fb_session_expired`: reported once
+        when it starts, again only if the failure reason changes, a reminder every 3 days while
+        it stays open, and closed by _notify_owner_session_restored(). It used to send the raw
+        text straight through the quiet-hours gate with a 6 h file cooldown: the same message
+        reached the owner 13 times in 14 days (3 times on 2026-11-12).
         """
         try:
-            import os as _os
-            from BACKEND_API_ROUTES import _wa_send_quiet  # type: ignore[import]
+            from BACKEND_API_ROUTES import notify_owner  # type: ignore[import]
 
-            owner_phone = _os.environ.get("OWNER_WHATSAPP_PHONE", "")
-            if not owner_phone:
-                log.warning("fb_browser: OWNER_WHATSAPP_PHONE not set — cannot send reauth alert")
-                return
-
-            # Deduplicate via simple file-based cooldown (6 h)
-            _cooldown_file = _STATE_DIR / "reauth_alert_sent_at"
-            _cooldown_s = 6 * 3600
-            now = time.time()
-            if _cooldown_file.exists():
-                try:
-                    sent_at = float(_cooldown_file.read_text())
-                    if now - sent_at < _cooldown_s:
-                        log.info(
-                            "fb_browser: reauth alert suppressed (cooldown %dh, sent %.0fs ago)",
-                            _cooldown_s // 3600, now - sent_at,
-                        )
-                        return
-                except Exception:
-                    pass
-
-            msg = (
-                "⚠️ *NOA — Facebook session expired*\n\n"
-                f"Auto-relogin attempt failed ({reason}).\n"
-                "נדרשת פעולה ידנית להחזרת session פייסבוק:\n"
-                "```docker exec autospare_backend python3 "
+            result = await notify_owner(
+                "social",
+                "NOA — נדרש חידוש חיבור לפייסבוק",
+                f"החיבור לפייסבוק פג וההתחברות האוטומטית נכשלה ({reason}).\n"
+                "עד לחידוש: סריקת הקבוצות ופרסום התגובות אינם פועלים.\n"
+                "לחידוש: ```docker exec autospare_backend python3 "
                 "/app/social/facebook_browser/fb_browser_login.py```\n"
-                "או: ייבוא עוגיות ידני דרך `maintenance/fb_cookie_import.py`."
+                "או ייבוא עוגיות: `maintenance/fb_cookie_import.py`.",
+                severity="warning",
+                alert_key="fb_session_expired",
+                cooldown_s=6 * 3600,
+                state="action",
+                fingerprint=str(reason),
+                remind_s=3 * 86400,
             )
-            await _wa_send_quiet(owner_phone, msg, critical=False)
-            _STATE_DIR.mkdir(parents=True, exist_ok=True)
-            _cooldown_file.write_text(str(now))
-            log.info("fb_browser: owner reauth alert sent (reason: %s)", reason)
+            log.info("fb_browser: owner reauth alert -> %s (reason: %s)",
+                     "sent" if result.get("ok") else result.get("error"), reason)
         except Exception as exc:
             log.warning("fb_browser: failed to send reauth alert: %s", exc)
+
+    async def _notify_owner_session_restored(self) -> None:
+        """One "resolved" message when the session is authenticated again after the owner was
+        told it had expired. A no-op when no such alert is open."""
+        try:
+            from BACKEND_API_ROUTES import resolve_owner_alert  # type: ignore[import]
+
+            await resolve_owner_alert(
+                "social", "NOA — החיבור לפייסבוק חודש",
+                "הסשן מאומת שוב; סריקת הקבוצות והפרסום חוזרים לפעול.",
+                alert_key="fb_session_expired")
+        except Exception as exc:
+            log.debug("fb_browser: session-restored notice skipped: %s", exc)
 
     @property
     def is_valid(self) -> bool:

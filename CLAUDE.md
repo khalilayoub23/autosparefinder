@@ -293,6 +293,12 @@ Rules:
 - **All outbound owner/customer WhatsApp goes through `_wa_send_quiet`** (09:00–21:00 IL).
   A new send site that calls `_wa_send` directly reintroduces 03:00 messages.
 - **Reminder caps are LIFETIME per entity, never a rolling window.** A rolling window is not a cap.
+- **A cooldown is not change detection (2026-11-13).** A persistent condition with a cooldown re-sends the same text
+  forever (the Facebook-session alert: 13 times in 14 days; catalog stagnation: hourly). A recurring owner alert passes
+  `fingerprint=` (what the report SAYS, not its counters) and `remind_s=` to `notify_owner`, and closes with
+  `resolve_owner_alert`. Never send an owner alert through `_wa_send_quiet` / the provider directly; one event gets ONE
+  alert (check `owner_alert_active` before a second source reports the same cause). Map + source inventory:
+  `docs/WHATSAPP_NOTIFICATIONS.md` §8; guarded by `tests/test_owner_notification_changes.py`.
 - **Arabic chars (؀-ۿ) must be in `_NOA_HASHTAG_RE`.** Underscore must be preserved inside
   hashtags (`#قطع_غيار` must not become `#قطعغيار`).
 - **Detecting an owner directive must change what the system DOES**, not just what it records.

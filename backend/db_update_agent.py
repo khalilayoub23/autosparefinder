@@ -4172,6 +4172,10 @@ async def _sync_transport_market_priority_task(db: AsyncSession) -> Dict[str, An
     }
 
 
+# More than this many watchdog kills in one validation cycle is reported as a burst.
+WATCHDOG_KILL_BURST_THRESHOLD = 5
+
+
 async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
     """
     Reads the watchdog's event log, confirms every action was correct, and alerts
@@ -4183,7 +4187,8 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
       kill_stuck_importer → must have dur_s > 0 (sanity; code guarantees > STUCK_IMPORT_S)
       warn_live_long     → informational only, marked ok
       Anomaly trigger    → any kill action where details suggest it might be a live
-                           connection, or an unexpected burst (>10 kills in one cycle)
+                           connection (alert key watchdog_anomaly)
+      Kill burst         → more than 5 kills in one cycle (alert key watchdog_kill_burst)
     """
     try:
         import watchdog_state as _wds
@@ -4227,29 +4232,43 @@ async def validate_watchdog_actions(db: AsyncSession) -> Dict[str, Any]:
         evt.validated = True
         validated += 1
 
-    # Burst check: >5 kills in one validation cycle is unusual
+    # Burst check: >5 kills in one validation cycle is unusual. It is its own alert
+    # (stable key watchdog_kill_burst, notify_owner's standard routing and cooldown) so a
+    # burst is never swallowed by, and never swallows, the per-kill validation alert below.
     total_kills = (summary.get("kill_orphan", 0) + summary.get("kill_zombie", 0)
                    + summary.get("kill_stuck_importer", 0))
-    if total_kills > 5:
-        anomalies.append(
+    burst = None
+    if total_kills > WATCHDOG_KILL_BURST_THRESHOLD:
+        burst = (
             f"Unusual kill burst: {total_kills} kills in one cycle "
             f"(orphans={summary['kill_orphan']} zombies={summary['kill_zombie']} "
             f"importers={summary['kill_stuck_importer']})"
         )
 
-    if anomalies:
+    if anomalies or burst:
         try:
             from BACKEND_API_ROUTES import notify_owner as _notify
-            await _notify(
-                "health",
-                "watchdog anomaly",
-                "\n".join(f"• {a}" for a in anomalies),
-                severity="warning",
-                alert_key="watchdog_anomaly",
-                cooldown_s=1800,
-            )
+            if burst:
+                await _notify(
+                    "health",
+                    "watchdog kill burst",
+                    f"• {burst}",
+                    severity="warning",
+                    alert_key="watchdog_kill_burst",
+                )
+            if anomalies:
+                await _notify(
+                    "health",
+                    "watchdog anomaly",
+                    "\n".join(f"• {a}" for a in anomalies),
+                    severity="warning",
+                    alert_key="watchdog_anomaly",
+                    cooldown_s=1800,
+                )
         except Exception as _ne:
             logger.warning("validate_watchdog_actions notify_owner failed: %s", _ne)
+        if burst:
+            anomalies.append(burst)   # the result still counts and lists the burst, as before
         logger.warning("validate_watchdog_actions anomalies: %s", anomalies)
 
     stats = _wds.stats()
@@ -4747,12 +4766,12 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                     if _owner:
                         try:
                             from BACKEND_API_ROUTES import notify_owner as _notify
-                            _delta_label = "חדש" if _new_tasks else "מתמשך"
                             await _notify(
                                 "health",
-                                f"db_update_agent — {err_count} משימות נכשלו ({_delta_label})",
+                                f"db_update_agent — {err_count} משימות נכשלו",
                                 "\n".join(_lines),
                                 severity="error" if _new_tasks else "warning",
+                                state="new" if _new_tasks else "changed",
                             )
                         except Exception as _ne:
                             logger.warning("run_all_tasks error-alert notify_owner failed: %s", _ne)
@@ -4774,9 +4793,10 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                         from BACKEND_API_ROUTES import notify_owner as _notify_res
                         await _notify_res(
                             "health",
-                            "db_update_agent — ✅ כל המשימות שוחזרו",
+                            "db_update_agent — כל המשימות שוחזרו",
                             f"שוקמו: {_resolved_names}\n({ok_count} הצליחו · {total_elapsed:.0f}s)",
-                            severity="info",
+                            severity="success",
+                            state="resolved",
                         )
                     except Exception as _ne2:
                         logger.warning("run_all_tasks resolved-alert notify_owner failed: %s", _ne2)

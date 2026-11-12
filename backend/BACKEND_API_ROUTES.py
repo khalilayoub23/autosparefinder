@@ -995,11 +995,17 @@ async def _status_update_loop() -> None:
             if is_digest_time and _night_rows is not None:
                 lines.extend(_night_runs_lines(f"D:{_today}", _night_rows))
 
-            lines.append("\n*משימות REX לקטלוג:*")
-            lines.extend(_rex_todo_lines([(r.status, r.cnt, r.last_updated) for r in todos], _now))
+            # Unchanged data is left out (2026-11-13): the REX line said "27 completed, unchanged
+            # since 15/06" every morning, the catalogue and harvest lines "+0".
+            _rex_lines = [l for l in _rex_todo_lines([(r.status, r.cnt, r.last_updated) for r in todos], _now)
+                          if "ללא שינוי מאז" not in l]
+            if _rex_lines:
+                lines.append("\n*משימות REX לקטלוג:*")
+                lines.extend(_rex_lines)
 
             lines.append(f"\n*קטלוג:* {total_parts:,} חלקים פעילים")
-            lines.append(f"  +{new_parts} נוספו ב-30 דקות האחרונות")
+            if new_parts:
+                lines.append(f"  +{new_parts} נוספו ב-30 דקות האחרונות")
 
             # Harvest coverage — the moving number that shows daily progress.
             if _hq and _hq[1]:
@@ -1008,7 +1014,8 @@ async def _status_update_loop() -> None:
                 lines.append(
                     f"\n*שאיבה (שוק ישראל):* {_hq_done:,}/{_hq_total:,} דגמים ({_hq_pct}%)"
                 )
-                lines.append(f"  {_hq_brands} מותגים · {_hq_parts:,} חלקים · +{_hq_24h} דגמים ב-24 שעות")
+                lines.append(f"  {_hq_brands} מותגים · {_hq_parts:,} חלקים"
+                             + (f" · +{_hq_24h} דגמים ב-24 שעות" if _hq_24h else ""))
 
             # Decide whether to actually send: problems, or the daily digest.
             # A dead/failed job only counts if NOT superseded by a newer
@@ -3490,15 +3497,28 @@ async def _group_scan_loop():
                 # already distinguishes this via status="error" + session_failed
                 # — this loop simply never checked it.
                 logger.error("[group_scan] Facebook session not authenticated — scan did not run")
-                await notify_owner(
-                    "social",
-                    "סריקת קבוצות פייסבוק — נכשלה",
-                    "החיבור לפייסבוק לא מאומת — הסריקה לא בוצעה. נדרש חידוש session.",
-                    severity="error",
-                    alert_key="group_scan_auth_failed",
-                    cooldown_s=21600,  # 6h — an ongoing outage shouldn't spam, but shouldn't hide for a full day either
-                )
+                # ONE event, ONE report: an expired session is announced by the session itself
+                # (alert fb_session_expired, with the re-login steps). While that alert is open the
+                # scan failure adds nothing - both used to arrive every day, a minute apart. If the
+                # session alert was not raised (e.g. a failure it does not detect) this one still is.
+                if await owner_alert_active("fb_session_expired"):
+                    logger.info("[group_scan] owner already told (fb_session_expired open) — no second alert")
+                else:
+                    await notify_owner(
+                        "social",
+                        "סריקת קבוצות פייסבוק — לא בוצעה",
+                        "החיבור לפייסבוק לא מאומת — הסריקה לא בוצעה. נדרש חידוש session.",
+                        severity="warning",
+                        alert_key="group_scan_auth_failed",
+                        cooldown_s=21600,
+                        state="action",
+                        fingerprint="auth",
+                        remind_s=3 * 86400,
+                    )
             elif not discoveries:
+                await resolve_owner_alert("social", "סריקת קבוצות פייסבוק — חזרה לפעול",
+                                          f"הסריקה רצה שוב ({groups_scanned} קבוצות נסרקו).",
+                                          alert_key="group_scan_auth_failed")
                 logger.info("[group_scan] no relevant group discussions found (%d groups scanned)", groups_scanned)
                 # Always notify owner so they know the scan ran — cooldown prevents
                 # daily spam when nothing is found (fixed: owner was getting silence
@@ -3512,6 +3532,9 @@ async def _group_scan_loop():
                     cooldown_s=86400,  # max once/day for empty-scan summaries
                 )
             else:
+                await resolve_owner_alert("social", "סריקת קבוצות פייסבוק — חזרה לפעול",
+                                          f"הסריקה רצה שוב ({groups_scanned} קבוצות נסרקו).",
+                                          alert_key="group_scan_auth_failed")
                 # Counts/IDs come from PERSISTED group_comment_drafts, never len(discoveries):
                 # 490 relevant posts previously read as "490 pending replies" when only 18
                 # drafts existed. Dedup key/cooldown are unchanged (one summary per cycle).
@@ -3839,6 +3862,35 @@ async def _wa_send_update(text: str, critical: bool = False, alert_key: str = ""
 _WA_QUIET_MAX_ATTEMPTS = 5
 
 
+# Head operations of the flush, each ONE atomic step keyed on the exact payload that was read
+# (2026-11-13). The flush used LINDEX 0 -> send -> LPOP / LSET 0: correct only while nothing else
+# moves the head. Two things can: a night enqueue arriving while a flush pass is still sending
+# (the 21:00 boundary, or a critical pass) can LTRIM the head away as overflow, and a same-key
+# enqueue LREMs it. The following LPOP then removed a DIFFERENT, undelivered message and LSET
+# overwrote one. Removing / replacing "this payload" instead of "whatever is first" cannot.
+# KEYS[1] = queue; ARGV[1] = payload as read. Returns 1 when it was removed, 0 when already gone.
+_WA_QUIET_REMOVE_LUA = """
+if redis.call('LINDEX', KEYS[1], 0) == ARGV[1] then
+    redis.call('LPOP', KEYS[1])
+    return 1
+end
+return redis.call('LREM', KEYS[1], 1, ARGV[1])
+"""
+# ARGV[2] = replacement (same item, attempts+1). Replaces in place only while the payload is still
+# at the head; 0 = the head changed (the item was superseded or trimmed) and nothing is written.
+_WA_QUIET_REPLACE_HEAD_LUA = """
+if redis.call('LINDEX', KEYS[1], 0) == ARGV[1] then
+    redis.call('LSET', KEYS[1], 0, ARGV[2])
+    return 1
+end
+return 0
+"""
+
+
+async def _wa_queue_remove(_r, raw) -> int:
+    return int(await _r.eval(_WA_QUIET_REMOVE_LUA, 1, _WA_QUIET_QUEUE_KEY, raw) or 0)
+
+
 async def _flush_wa_quiet_queue() -> int:
     """Send everything queued during quiet hours, in FIFO order, without losing a
     message on a failed delivery. Called by the health monitor each pass while
@@ -3871,10 +3923,10 @@ async def _flush_wa_quiet_queue() -> int:
     Concurrency note: this function has exactly one caller (`_health_monitor_loop`,
     one supervised task, one `await`-sequential `while True` body) — concurrent
     flush calls racing each other are not a scenario this needs to defend
-    against. Concurrent ENQUEUES (`_wa_send_quiet`'s Lua script, always RPUSH at
-    the tail) cannot race with this function's reads/removals at the head:
-    nothing else in this codebase ever pops from the head of this list, so the
-    element `LINDEX key 0` returns cannot change before the matching `LPOP`.
+    against. A concurrent ENQUEUE (`_wa_send_quiet`'s Lua script) CAN change the
+    head while a send is in flight (overflow LTRIM, same-alert_key LREM), so the
+    removal and the attempts update are keyed on the payload that was read
+    (`_WA_QUIET_REMOVE_LUA`, `_WA_QUIET_REPLACE_HEAD_LUA`), never on position.
 
     Delivery model — stated honestly, per the safety audit's requirement: this
     is AT-LEAST-ONCE, not exactly-once. If the process dies after `_wa_send()`
@@ -3897,14 +3949,14 @@ async def _flush_wa_quiet_queue() -> int:
             except Exception as exc:
                 print(f"[QuietHours] dropping malformed queue entry (undeliverable): {exc}")
                 await _wa_dead_letter(_r, {}, "malformed", str(exc))
-                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                await _wa_queue_remove(_r, raw)
                 continue
             if not isinstance(item, dict) or not _wa_text_usable(item.get("text")) or not str(item.get("to") or "").strip():
                 # Permanently invalid (#70): never send the night banner with nothing under it,
                 # never let it block the items behind it.
                 print("[QuietHours] dropping invalid queue entry (empty text or no recipient)")
                 await _wa_dead_letter(_r, item if isinstance(item, dict) else {}, "invalid_payload")
-                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                await _wa_queue_remove(_r, raw)
                 continue
             try:
                 result = await _wa_send(
@@ -3914,7 +3966,7 @@ async def _flush_wa_quiet_queue() -> int:
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
             if result.get("ok"):
-                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                await _wa_queue_remove(_r, raw)
                 sent += 1
                 continue
             # Failure — exception or explicit ok=False. The item is NOT removed.
@@ -3923,17 +3975,18 @@ async def _flush_wa_quiet_queue() -> int:
                 # _WA_QUIET_MAX_ATTEMPTS passes (~25 min), holding every message behind it.
                 print(f"[QuietHours] dropping queue entry — permanent error: {result.get('error')}")
                 await _wa_dead_letter(_r, item, "permanent_error", result.get("error"))
-                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                await _wa_queue_remove(_r, raw)
                 continue
             attempts = int(item.get("attempts", 0)) + 1
             if attempts >= _WA_QUIET_MAX_ATTEMPTS:
                 print(f"[QuietHours] dropping queue entry after {attempts} failed "
                       f"delivery attempts (last error: {result.get('error')})")
                 await _wa_dead_letter(_r, dict(item, attempts=attempts), "retry_exhausted", result.get("error"))
-                await _r.lpop(_WA_QUIET_QUEUE_KEY)
+                await _wa_queue_remove(_r, raw)
                 continue
             item["attempts"] = attempts
-            await _r.lset(_WA_QUIET_QUEUE_KEY, 0, json.dumps(item, ensure_ascii=False))
+            await _r.eval(_WA_QUIET_REPLACE_HEAD_LUA, 1, _WA_QUIET_QUEUE_KEY, raw,
+                          json.dumps(item, ensure_ascii=False))
             print(f"[QuietHours] flush item failed, attempt {attempts}/{_WA_QUIET_MAX_ATTEMPTS} "
                   f"(will retry next pass): {result.get('error')}")
             break  # stop this pass — preserves FIFO order, avoids a tight retry loop
@@ -4003,13 +4056,44 @@ _NOTIFY_CATEGORIES = {
     "social":   "📣 סושיאל",
     "supplier": "🔌 ספקים",
     "email":    "📧 מיילים",
+    "system":   "🏥 בריאות המערכת",   # alias used by email_agent.loop: was rendered as the raw word "system"
 }
 _NOTIFY_SEVERITY_ICON = {
     "critical": "🔴",
+    "error":    "🟠",   # a failure that is not an outage: was rendered with the info icon (unknown severity)
     "warning":  "🟡",
     "info":     "ℹ️",
     "success":  "✅",
 }
+# What a recurring alert tells the owner about the condition (one vocabulary for every source):
+# new = first report, changed = the condition is different from the last report, action = the owner
+# must do something, reminder = unchanged and still open (sent only after remind_s), resolved = over.
+_NOTIFY_STATE_LABEL = {
+    "new":      "🆕 חדש",
+    "changed":  "🔄 שינוי",
+    "action":   "👉 נדרשת פעולה",
+    "reminder": "⏰ תזכורת (ללא שינוי)",
+    "resolved": "✅ נפתר",
+}
+_ALERT_STATE_TTL_S = 30 * 86400
+
+
+def _alert_state_key(alert_key: str) -> str:
+    return f"autospare:alert_state:{alert_key}"
+
+
+def _notify_decide_state(prev: "dict | None", fingerprint: str, state: str, remind_s: int, now_ts: float) -> "str | None":
+    """State of a fingerprinted alert against the last DELIVERED report of the same alert_key.
+    None = unchanged and no reminder due -> do not send. Pure function (tested directly)."""
+    if state == "resolved":
+        return "resolved"
+    if not prev or not prev.get("fp"):
+        return state or "new"
+    if prev["fp"] != fingerprint:
+        return "changed"
+    if remind_s > 0 and now_ts - float(prev.get("ts") or 0) >= remind_s:
+        return "reminder"
+    return None
 
 
 def _admin_gets_wa(admin) -> bool:
@@ -4038,6 +4122,9 @@ async def notify_owner(
     severity: str = "info",
     alert_key: str = "",
     cooldown_s: int = 3600,
+    state: str = "",
+    fingerprint: str = "",
+    remind_s: int = 0,
 ) -> dict:
     """The one function every proactive owner alert must call — health, harvest,
     orders, social, supplier. Gives every message a consistent
@@ -4046,7 +4133,18 @@ async def notify_owner(
     always routes through _wa_send_update() — never a raw send to the 1:1 number
     — so every alert respects BOTH quiet hours and the dedicated updates-group
     setting the moment one is configured. Never raises; a failed alert is logged,
-    never fatal to the calling loop."""
+    never fatal to the calling loop.
+
+    Change reporting (2026-11-13). A cooldown only spaces repeats; it still re-sends an
+    identical report forever (live: the same Facebook-session alert 13 times in 14 days, the
+    same catalog alert hourly). With `fingerprint` (a stable digest of what the report SAYS,
+    never of volatile counters) and an alert_key:
+      - first report                     -> sent, header tagged `state` (default "new")
+      - fingerprint differs from the last DELIVERED report -> sent, tagged "changed"
+      - same fingerprint                 -> suppressed ({"suppressed": True, "error": "unchanged"}),
+                                            or sent tagged "reminder" once remind_s has passed
+    `state` alone (no fingerprint) only tags the header. resolve_owner_alert() closes the
+    condition with one "resolved" message. Callers that pass neither behave exactly as before."""
     if alert_key:
         try:
             _r = await get_redis()
@@ -4055,9 +4153,20 @@ async def notify_owner(
                 return {"ok": False, "suppressed": True, "error": "cooldown"}
         except Exception:
             pass  # Redis unavailable — allow the alert through rather than lose it
+    if alert_key and fingerprint and state != "resolved":
+        try:
+            _r = await get_redis()
+            _raw = await _r.get(_alert_state_key(alert_key))
+            _prev = json.loads(_raw) if _raw else None
+        except Exception:
+            _prev = None  # Redis unavailable / unreadable — send rather than lose the alert
+        state = _notify_decide_state(_prev, fingerprint, state, remind_s, time.time())
+        if state is None:
+            return {"ok": False, "suppressed": True, "error": "unchanged"}
     cat_label = _NOTIFY_CATEGORIES.get(category, category)
     sev_icon = _NOTIFY_SEVERITY_ICON.get(severity, "ℹ️")
-    header = f"{sev_icon} [{cat_label}] {title}"
+    _state_label = _NOTIFY_STATE_LABEL.get(state, "")
+    header = f"{sev_icon} [{cat_label}] {_state_label + ' · ' if _state_label else ''}{title}"
     text = f"{header}\n\n{body}" if body else header
     # Root-fix 2026-09-01: severity="critical" must bypass quiet hours.
     # Before this, notify_owner() always called _wa_send_update(text, critical=False),
@@ -4078,6 +4187,12 @@ async def notify_owner(
                 _r = await get_redis()
                 _rk = f"autospare:alert_cooldown:{alert_key}"
                 await _r.set(_rk, "1", ex=cooldown_s)
+                if state == "resolved":
+                    await _r.delete(_alert_state_key(alert_key))
+                elif fingerprint or state:
+                    # the last DELIVERED report of this condition (never set on a failed send)
+                    await _r.set(_alert_state_key(alert_key), json.dumps(
+                        {"fp": fingerprint, "state": state, "ts": int(time.time())}), ex=_ALERT_STATE_TTL_S)
             except Exception:
                 pass
         elif not result.get("ok"):
@@ -4098,6 +4213,31 @@ async def notify_owner(
     except Exception as exc:
         print(f"[notify_owner] error ({alert_key or category}): {exc}")
         return {"ok": False, "error": str(exc)}
+
+async def owner_alert_active(alert_key: str) -> bool:
+    """True while a state/fingerprint alert with this key was delivered and not resolved."""
+    try:
+        _r = await get_redis()
+        return bool(await _r.exists(_alert_state_key(alert_key)))
+    except Exception:
+        return False
+
+
+async def resolve_owner_alert(category: str, title: str, body: str = "", *, alert_key: str) -> dict:
+    """Tell the owner ONCE that a condition he was alerted about is over ("✅ נפתר"), then forget
+    it so the next occurrence is reported as new. A no-op when no alert for this key was delivered
+    (nothing to resolve) or when Redis cannot say - a recovery notice is never invented."""
+    try:
+        _r = await get_redis()
+        if not await _r.exists(_alert_state_key(alert_key)):
+            return {"ok": False, "suppressed": True, "error": "not_active"}
+        await _r.delete(f"autospare:alert_cooldown:{alert_key}")
+    except Exception as exc:
+        return {"ok": False, "error": f"state unavailable: {exc}"}
+    result = await notify_owner(category, title, body, severity="success", alert_key=alert_key,
+                                cooldown_s=60, state="resolved")
+    return result
+
 
 # How often the pending-payment reminder runs (default: every 30 min)
 PAYMENT_REMINDER_INTERVAL_S = int(os.getenv("PAYMENT_REMINDER_INTERVAL_S", "1800"))
@@ -5324,12 +5464,34 @@ async def _noa_eod_report_loop():
             )
 
             today_key = datetime.now(APP_LOCAL_TZ).date().isoformat()
-            await notify_owner(
-                "social", "NOA — Daily Facebook Activity", report,
-                severity="info",
-                alert_key=f"noa_eod_report_{today_key}",
-                cooldown_s=23 * 3600,  # at most once per day
-            )
+            # A day on which nothing was identified, drafted, approved or published is not a
+            # report: it is one short line, sent when that state starts, again only if the stated
+            # reason changes, and as a weekly reminder (the full all-zero table was sent daily).
+            _eod_active = any((g.identified, g.approved, g.published, p.identified, p.drafted,
+                               p.published, page_posts, overall.published))
+            if _eod_active:
+                await resolve_owner_alert("social", "NOA — הפעילות בפייסבוק חזרה",
+                                          "יש שוב פעילות לדווח; הדוח היומי המלא מצורף בהודעה הבאה.",
+                                          alert_key="noa_eod_no_activity")
+                await notify_owner(
+                    "social", "NOA — Daily Facebook Activity", report,
+                    severity="info",
+                    alert_key=f"noa_eod_report_{today_key}",
+                    cooldown_s=23 * 3600,  # at most once per day
+                )
+            else:
+                import hashlib as _eod_hl
+                _eod_why = "\n".join(f"- {n}" for n in notable) if notable else "- (no reason recorded)"
+                await notify_owner(
+                    "social", "NOA — אין פעילות פייסבוק ב-24 השעות האחרונות",
+                    f"לא זוהו פוסטים, לא נוסחו ולא פורסמו תגובות.\n{_eod_why}\n"
+                    f"ממתינים לאישור (כל הפלטפורמות): {overall.pending}",
+                    severity="info",
+                    alert_key="noa_eod_no_activity",
+                    cooldown_s=23 * 3600,
+                    fingerprint=_eod_hl.md5(_eod_why.encode()).hexdigest()[:10],
+                    remind_s=7 * 86400,
+                )
         except Exception as exc:
             logger.error("noa_eod_report_loop error: %s", exc)
 
@@ -5790,12 +5952,14 @@ async def _health_monitor_loop():
     _OWNER_PHONE = os.getenv("OWNER_WHATSAPP_PHONE", "")
 
     async def _alert_owner(title: str, msg: str, alert_key: str = "", cooldown_s: int = 3600,
-                            severity: str = "warning") -> None:
+                            severity: str = "warning", **change) -> "dict | None":
         """Thin wrapper over notify_owner (category="health") — kept so the ~8 call
-        sites below don't all need touching; only the severity varies per alert."""
+        sites below don't all need touching; only the severity varies per alert.
+        `change` = notify_owner's state / fingerprint / remind_s. Returns its result."""
         if not _OWNER_PHONE:
-            return
-        await notify_owner("health", title, msg, severity=severity, alert_key=alert_key, cooldown_s=cooldown_s)
+            return None
+        return await notify_owner("health", title, msg, severity=severity, alert_key=alert_key,
+                                  cooldown_s=cooldown_s, **change)
 
     _prev_states: dict = {}  # service_name → "ok" | "error"
 
@@ -5951,7 +6115,8 @@ async def _health_monitor_loop():
                                 # pass critical=True so they bypass quiet hours for admins
                                 # the same way they now do for the owner via notify_owner().
                                 _admin_critical = (state == "error")
-                                wa_result = await _wa_send_quiet(to=admin.phone, text=f"{_title}\n{_msg}", critical=_admin_critical)
+                                wa_result = await _wa_send_quiet(to=admin.phone, text=f"{_title}\n{_msg}", critical=_admin_critical,
+                                                                 alert_key=f"admin_copy:service:{svc}:{state}:{admin.id}")
                                 if not wa_result.get("ok"):
                                     print(f"[HealthMonitor] WhatsApp failed for admin {admin.id}: {wa_result.get('error')}")
                         await db.commit()
@@ -5985,11 +6150,19 @@ async def _health_monitor_loop():
                             f"רק {parts_updated_6h} חלקים עודכנו ב-6 השעות האחרונות (יעד: 50+). "
                             f"הסקרייפר אולי תקוע."
                         )
-                        print(f"[HealthMonitor] ALERT: parts_updated={parts_updated_6h} < 100 in 6h")
-                        await _alert_owner(_alert_title, _alert_msg, alert_key="catalog_stagnation", severity="warning")
+                        print(f"[HealthMonitor] ALERT: parts_updated={parts_updated_6h} < 50 in 6h")
+                        # One report when the catalog goes quiet, a reminder once a day while it stays
+                        # quiet, one "resolved" when updates return. The count is not part of the
+                        # fingerprint: "0 parts" then "8 parts" is the same condition (it was re-sent
+                        # hourly: 12 near-identical messages 2026-11-07..10).
+                        _cs_res = await _alert_owner(_alert_title, _alert_msg, alert_key="catalog_stagnation",
+                                                     severity="warning", fingerprint="stagnant", remind_s=86400)
+                        # The in-app rows / admin copies follow the owner alert: nothing new to say = no
+                        # new row (this block wrote a Notification per admin every 5 minutes).
+                        _cs_reported = _cs_res is None or bool(_cs_res.get("ok"))
                         async with pii_session_factory() as _pii_db:
                             admins_res = await _pii_db.execute(select(User).where(User.is_admin == True))
-                            admins = admins_res.scalars().all()
+                            admins = admins_res.scalars().all() if _cs_reported else []
                             _send_admin_wa_cs = True
                             try:
                                 _r2 = await get_redis()
@@ -6015,8 +6188,14 @@ async def _health_monitor_loop():
                                     "message": _alert_msg,
                                 })))
                                 if _send_admin_wa_cs and _admin_gets_wa(admin):
-                                    await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                    await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}",
+                                                         alert_key=f"admin_copy:catalog_stagnation:{admin.id}")
                             await _pii_db.commit()
+                    elif _OWNER_PHONE:
+                        await resolve_owner_alert(
+                            "health", "קטלוג: העדכונים חזרו לקצב תקין",
+                            f"{parts_updated_6h:,} חלקים עודכנו ב-6 השעות האחרונות.",
+                            alert_key="catalog_stagnation")
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 1 error: {_e}")
 
@@ -6274,7 +6453,8 @@ async def _health_monitor_loop():
                                         "message": _alert_msg,
                                     })))
                                     if _admin_gets_wa(admin):
-                                        await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                        await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}",
+                                                             alert_key=f"admin_copy:worker_silence:{admin.id}")
                                 await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 3 error: {_e}")
@@ -6347,7 +6527,8 @@ async def _health_monitor_loop():
                                 "message": _alert_msg,
                             })))
                             if _admin_gets_wa(admin):
-                                await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}")
+                                await _wa_send_quiet(to=admin.phone, text=f"{_alert_title}\n{_alert_msg}",
+                                                     alert_key=f"admin_copy:job_failures_dlq:{admin.id}")
                         await _pii_db.commit()
             except Exception as _e:
                 print(f"[HealthMonitor] Threshold check 4 (job_failures) error: {_e}")

@@ -26,6 +26,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
+import variant_identity as _vi
 from offer_classification import normalize_type
 
 POLICY_ID = "offer-deduplication"
@@ -143,6 +144,18 @@ def _variant(o: Mapping[str, Any]) -> Optional[str]:
     return _clean_type(o.get("part_type")) or _clean_type(o.get("catalog_part_type"))
 
 
+def _label_unrecognised(o: Mapping[str, Any]) -> bool:
+    """Policy 1a: the offer's effective label (its own, else the catalog part's) is present but is not a known
+    variant ('compatible', 'replacement', a multi-variant label, an unseen spelling). Such an offer is neither the
+    same as nor different from any variant."""
+    for k in ("part_type", "catalog_part_type"):
+        r = _vi.resolve(o.get(k))
+        if r.kind == "missing":
+            continue
+        return r.kind != "ok"
+    return False
+
+
 def _same(a: Any, b: Any) -> bool:
     return a is not None and b is not None and str(a).strip().lower() == str(b).strip().lower()
 
@@ -163,6 +176,10 @@ def classify_pair(a: Mapping[str, Any], b: Mapping[str, Any], *, evidence: Optio
         return Classification.MISATTRIBUTED
     if str(a.get("supplier_id")) != str(b.get("supplier_id")):
         return Classification.COMPETING_OFFERS
+    if _label_unrecognised(a) or _label_unrecognised(b):
+        # Decision order 2 / section 1a. The folded raw label used to be compared like a class, so
+        # 'compatible' vs 'oem' came out as B (a verified distinct variant) instead of F.
+        return Classification.UNRESOLVED
     va, vb = _variant(a), _variant(b)
     if va is None or vb is None:
         # variant unknown on a side: only the same commercial offer can be reasoned about; otherwise unresolved

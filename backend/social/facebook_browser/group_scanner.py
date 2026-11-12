@@ -133,14 +133,13 @@ async def _save_draft(db, group_id: str, post_url: str, post_text: str,
 
 # ── WhatsApp notification ──────────────────────────────────────────────────────
 
-async def _wa_notify(msg: str) -> None:
+async def _wa_notify(title: str, body: str) -> None:
+    """Owner summary of a console-requested scan, through the central owner-alert path
+    (notify_owner: updates-group routing, quiet hours, standard header). It used to call the
+    quiet-hours gate directly with the owner's number."""
     try:
-        from BACKEND_API_ROUTES import _wa_send_quiet
-        await _wa_send_quiet(
-            os.environ.get("OWNER_WHATSAPP_PHONE", ""),
-            msg,
-            critical=False,
-        )
+        from BACKEND_API_ROUTES import notify_owner
+        await notify_owner("social", title, body, severity="info")
     except Exception as exc:
         log.warning("group_scanner: WhatsApp notify failed: %s", exc)
 
@@ -264,8 +263,7 @@ async def run_group_scanner(*, scan_limit: int | None = None) -> dict:
         await db.close()
 
     # ── Notify owner ──────────────────────────────────────────────────────────
-    lines = ["🔍 *סריקת קבוצות פייסבוק — סיכום:*", ""]
-
+    lines = []
     lines.append(f"📋 גילאתי *{summary['discovered']}* קבוצות מהחשבון שלך")
     if summary["new_groups"]:
         lines.append(f"➕ *{summary['new_groups']}* קבוצות חדשות נרשמו במערכת")
@@ -281,7 +279,7 @@ async def run_group_scanner(*, scan_limit: int | None = None) -> dict:
     if summary["errors"]:
         lines.append(f"\n⚠️ שגיאות ({len(summary['errors'])}): {'; '.join(summary['errors'][:2])}")
 
-    await _wa_notify("\n".join(lines))
+    await _wa_notify("סריקת קבוצות פייסבוק — סיכום", "\n".join(lines))
     log.info("group_scanner: done — %s", summary)
     return summary
 

@@ -101,3 +101,48 @@ async def test_import_stores_exclusive_cost_reference_with_vat_once_and_is_idemp
         if sup_before == 0:
             await c.execute("DELETE FROM suppliers WHERE name ILIKE '%bdv%' AND id NOT IN (SELECT supplier_id FROM supplier_parts)")
         await c.close()
+
+
+@pytest.mark.skipif(_REFUSAL is not None, reason=f"isolated DB only: {_REFUSAL}")
+async def test_only_an_exact_unambiguous_number_is_written():
+    """2026-11-13: no prefix/substring fallback, and a number carried by several catalog parts is written only
+    when the BDV row's brand selects exactly one of them; otherwise nothing is written (unresolved)."""
+    import asyncpg
+    dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    c = await asyncpg.connect(dsn)
+    tag = uuid.uuid4().hex[:8].upper()
+    brand = await c.fetchval("SELECT id FROM car_brands LIMIT 1")
+
+    async def mk(sku, oem, manufacturer):
+        return await c.fetchval(
+            "INSERT INTO parts_catalog(id,sku,oem_number,name,manufacturer,manufacturer_id,part_type,is_active) "
+            "VALUES(gen_random_uuid(),$1,$2,'bdv test',$3,$4,'oem',true) RETURNING id", sku, oem, manufacturer, brand)
+    near = await mk(f"N{tag}", f"BDVX{tag}99", "Volvo")                 # contains the looked-up number's first 8 chars
+    twin_a = await mk(f"A{tag}", f"TW{tag}", "Volvo")
+    twin_b = await mk(f"B{tag}", f"TW{tag}", "Jaguar")
+    ids = [near, twin_a, twin_b]
+    sup_before = await c.fetchval("SELECT count(*) FROM suppliers WHERE name ILIKE '%bdv%'")
+    try:
+        async def offers():
+            return [r["part_id"] for r in await c.fetch("SELECT part_id FROM supplier_parts WHERE part_id = ANY($1::uuid[])", ids)]
+
+        async def refs():
+            return [float(r[0] or 0) for r in await c.fetch(
+                "SELECT max_price_ils FROM parts_catalog WHERE id = ANY($1::uuid[]) ORDER BY sku", ids)]
+        # (1) a different number that only shares a prefix: nothing written
+        await bdv.import_to_db(c, [{"sku": f"BDVX{tag}", "stock": "במלאי", "price_ils": 500.0, "manufacturer": "Volvo"}])
+        assert await offers() == [] and await refs() == [0.0, 0.0, 0.0]
+        # (2) the number exists on two parts and the row names no brand: unresolved, nothing written
+        await bdv.import_to_db(c, [{"sku": f"TW{tag}", "stock": "במלאי", "price_ils": 500.0, "manufacturer": ""}])
+        assert await offers() == [] and await refs() == [0.0, 0.0, 0.0]
+        # (3) the row's brand selects exactly one: that part only, the twin is untouched
+        await bdv.import_to_db(c, [{"sku": f"TW{tag}", "stock": "במלאי", "price_ils": 500.0, "manufacturer": "Jaguar"}])
+        assert await offers() == [twin_b]
+        assert float(await c.fetchval("SELECT max_price_ils FROM parts_catalog WHERE id=$1", twin_b)) == 590.0
+        assert float(await c.fetchval("SELECT COALESCE(max_price_ils,0) FROM parts_catalog WHERE id=$1", twin_a)) == 0.0
+    finally:
+        await c.execute("DELETE FROM supplier_parts WHERE part_id = ANY($1::uuid[])", ids)
+        await c.execute("DELETE FROM parts_catalog WHERE id = ANY($1::uuid[])", ids)
+        if sup_before == 0:
+            await c.execute("DELETE FROM suppliers WHERE name ILIKE '%bdv%' AND id NOT IN (SELECT supplier_id FROM supplier_parts)")
+        await c.close()

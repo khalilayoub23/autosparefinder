@@ -197,6 +197,7 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
     updated_catalog = 0
     supplier_rows = 0
     not_matched = 0
+    skip_reasons: dict = {}
 
     for part in parts:
         sku = part["sku"]
@@ -204,6 +205,7 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
         brand = part.get("manufacturer", "")
 
         if not price or price <= 0:
+            skip_reasons["no_price"] = skip_reasons.get("no_price", 0) + 1
             continue
 
         # The site states its prices EXCLUDE VAT (BDV_VAT_EVIDENCE): the quoted price is the cost; the reference adds VAT once.
@@ -212,7 +214,11 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
         price_with_vat = _f["consumer_reference"]
         in_stock = part.get("stock", "").strip() not in ["אזל", "אין מלאי", "0", ""]
 
-        # Match by SKU/OEM
+        # EXACT part-number identity only (owner policy: a SKU match must be established, never guessed).
+        # The normalized number must equal the catalog OEM number or SKU; a row that names a brand must match
+        # that brand when more than one catalog part carries the number. No prefix / substring fallback: the old
+        # "first 8 characters, same brand" branch could attach a BDV price to a different part, and LIMIT 3 wrote
+        # the Israeli reference price onto every part that happened to share the number.
         matches = await conn.fetch("""
             SELECT id, manufacturer, name
             FROM parts_catalog
@@ -220,22 +226,22 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
                    UPPER(REPLACE(REPLACE($1, ' ', ''), '-', ''))
                    OR UPPER(sku) = UPPER($1))
               AND is_active = TRUE
-            LIMIT 3
+            LIMIT 10
         """, sku)
-
-        if not matches and brand:
-            matches = await conn.fetch("""
-                SELECT id, manufacturer, name
-                FROM parts_catalog
-                WHERE manufacturer = $1
-                  AND is_active = TRUE
-                  AND (UPPER(REPLACE(REPLACE(oem_number, ' ', ''), '-', '')) LIKE '%' || UPPER($2) || '%'
-                       OR UPPER(sku) LIKE '%' || UPPER($2) || '%')
-                LIMIT 1
-            """, brand, sku[:8])
+        if len(matches) > 1 and brand:
+            same_brand = [m for m in matches if (m["manufacturer"] or "").strip().lower() == brand.strip().lower()]
+            matches = same_brand or matches
 
         if not matches:
             not_matched += 1
+            skip_reasons["no_exact_catalog_match"] = skip_reasons.get("no_exact_catalog_match", 0) + 1
+            continue
+        if len(matches) > 1:
+            # several catalog parts carry this number and the row does not say which: unresolved, nothing written
+            not_matched += 1
+            skip_reasons["ambiguous_catalog_match"] = skip_reasons.get("ambiguous_catalog_match", 0) + 1
+            log.warning(f"BDV {sku}: {len(matches)} catalog parts share this number "
+                        f"({sorted({m['manufacturer'] for m in matches})}) - not written")
             continue
 
         for m in matches:
@@ -260,7 +266,8 @@ async def import_to_db(conn: asyncpg.Connection, parts: list[dict]):
             supplier_rows += 1
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
-    log.info(f"DB import: catalog_updated={updated_catalog}, supplier_rows={supplier_rows}, not_matched={not_matched}")
+    log.info(f"DB import: catalog_updated={updated_catalog}, supplier_rows={supplier_rows}, not_matched={not_matched}, "
+             f"skip_reasons={skip_reasons}")
     return updated_catalog, supplier_rows
 
 

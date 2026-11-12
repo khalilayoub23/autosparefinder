@@ -93,3 +93,68 @@ asyncio.run(m())"` (tested 2026-10-20: 5 queued, all with content)
   (`maskNumbers`, #72) — in the repository, live after the next bridge restart. Older docker-log lines still contain full numbers.
 - Delayed chat answers: E2E through the real webhook route (`tests/test_whatsapp_late_reply_e2e.py`, 7 scenarios); live customer
   path not yet exercised (#72).
+
+## 8. Change reporting, source inventory and bypass guard (2026-11-13)
+
+**One alert API.** Every proactive owner alert calls `notify_owner` (or `resolve_owner_alert`). Guarded by
+`tests/test_owner_notification_changes.py`: an AST scan fails on any direct provider send outside a reviewed allowlist
+(chat replies, 2FA, post-payment notice, the two customer reminder loops, admin console reply, the gate and the flush) and on
+any `_wa_send_quiet` / `_wa_send_update` call outside the router, the digests with their own once-per-period marker, the
+crashed-task callback and the opt-in admin copies.
+
+**States (one vocabulary).** `notify_owner(..., state=, fingerprint=, remind_s=)`:
+
+| Tag in the header | When |
+|---|---|
+| `🆕 חדש` | first report of a condition (`alert_key`) |
+| `🔄 שינוי` | the fingerprint differs from the last DELIVERED report |
+| `👉 נדרשת פעולה` | first report, caller says the owner must act |
+| `⏰ תזכורת (ללא שינוי)` | same fingerprint, `remind_s` elapsed |
+| `✅ נפתר` | `resolve_owner_alert` — sent once, only if an alert was delivered; the next occurrence is new again |
+
+Same fingerprint and no reminder due = not sent (`{"suppressed": True, "error": "unchanged"}`). The fingerprint is a digest of
+what the report SAYS (a reason, a state), never of volatile counters. State is stored in Redis `autospare:alert_state:<key>`
+(30 d) only after a confirmed send or queue. Redis down: the alert is sent (never lost); a "resolved" is not sent (never invented).
+Severities: `critical` (immediate, bypasses quiet hours) · `error` 🟠 · `warning` 🟡 · `info` · `success`.
+
+**Sources (reconciled against the code 2026-11-13; the earlier audit listed 23).** 57 owner-alert call sites (`notify_owner` and its thin wrappers) in 26 sources, plus the `resolve_owner_alert` closers:
+
+| # | Source (function) | Key / dedup | Class |
+|---|---|---|---|
+| 1 | service down / restored (`_health_monitor_loop`) | state change per service | critical / success |
+| 2 | catalog stagnation | `catalog_stagnation`, fingerprint, 24 h reminder, resolved | warning |
+| 3 | high error rate | `high_error_rate` | critical |
+| 4 | LLM provider blocked (HF / Cerebras) | `llm_*` | warning |
+| 5 | worker silence / recovered | `worker_silence*` | warning / info |
+| 6 | job failures DLQ, zombie job, task timeout | `job_failures_dlq`, per event | critical / success |
+| 7 | disk level, disk monitor error | `disk_<level>:…` | by level |
+| 8 | OOM watchdog | `oom_watchdog_*` | critical |
+| 9 | undelivered-notification summary | `wa_dead_letter_<date>` | warning |
+| 10 | Chrome watchdog | `chrome_watchdog` | warning |
+| 11 | weekly maintenance | weekly | warning |
+| 12 | harvest stall / idle / recovered, FlareSolverr failures | `_alert_key` per state | warning / critical |
+| 13 | Meilisearch parity drift | `meili_parity_drift` | warning |
+| 14 | Amayama harvester down | `amayama_harvester_down` | warning |
+| 15 | watchdog kill burst (`db_update_agent.validate_watchdog_actions`) | **`watchdog_kill_burst`**, default cooldown | warning |
+| 16 | watchdog anomaly (bad kill) | `watchdog_anomaly`, 30 min | warning |
+| 17 | db_update_agent task failures / recovered | task-set delta; `new` / `changed` / `resolved` | error / warning / success |
+| 18 | supplier country problem | `supplier_country_problem` | warning |
+| 19 | learned keywords (`db_cleanup_agent`) | `notify_backlog` | info |
+| 20 | NOA: post ready, pending posts, weekly brief, plan failed, coherence streak, campaign ready / publish failed, autonomous gate | per post / week / campaign | info / warning |
+| 21 | NOA engagement drafts | `noa_engagement_pending_reply`, 1 h (unchanged) | info |
+| 22 | NOA daily Facebook report | per day; quiet day = `noa_eod_no_activity` (fingerprint, weekly reminder) | info |
+| 23 | Facebook session expired / restored | **`fb_session_expired`**, fingerprint = reason, 3 d reminder, resolved | warning |
+| 24 | group scan: discoveries, empty, not run, group comment result | `group_scan_*`; "not run" is skipped while #23 is open | info / warning |
+| 25 | supplier candidates (NIR), BOAZ decision, procurement approval | per set / task / order | info / warning |
+| 26 | orders: stuck / manual / non-live | signature per order set | warning |
+| – | Email Agent: important mail, daily digest, Gmail connection | `email_<id>`, `email_digest_<date>` | info / warning |
+
+Digests that call `_wa_send_update` directly with their own once-per-period marker: daily status digest, night-pipeline
+report, weekly harvest digest. Crashed-task alert: sync callback, `critical=True`, bounded by the restart backoff.
+
+**Removed bypasses (2026-11-13):** Facebook re-login alert (`session.py`, raw text + 6 h file cooldown), console group-scan
+summary (`group_scanner.py`), campaign WhatsApp tool (`social/tools.py`, called the provider directly, no quiet hours).
+
+**Queue.** Enqueue = one Lua script (dedup by `alert_key` + append + overflow to dead letters). Flush = peek, send, then
+remove **that payload** (`_WA_QUIET_REMOVE_LUA`) or update its attempts only while it is still the head
+(`_WA_QUIET_REPLACE_HEAD_LUA`); a failed send (exception or `ok:false`) keeps the item. At-least-once.
