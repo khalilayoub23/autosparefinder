@@ -261,6 +261,13 @@ async def open_tasks_text(repo) -> str:
     return "\n".join(lines)
 
 
+# credentials.boaz.<key> = value. jsonb_set(.., '{boaz,key}') is a silent no-op while credentials.boaz does not exist
+# (it creates only the LAST path element), so merge the object instead.
+MERGE_SQL = ("UPDATE suppliers SET credentials = coalesce(credentials,'{}'::jsonb) || jsonb_build_object('boaz', "
+             "coalesce(credentials->'boaz','{}'::jsonb) || jsonb_build_object(CAST(:k AS text), CAST(:v AS jsonb))), "
+             "updated_at = NOW() WHERE id = CAST(:i AS uuid)")
+
+
 # ── production dependencies ───────────────────────────────────────────────────────────────────────────
 def pg_deps(agent=None) -> Dict[str, Any]:
     from sqlalchemy import text
@@ -269,10 +276,7 @@ def pg_deps(agent=None) -> Dict[str, Any]:
 
     async def _merge(sid: str, key: str, value: Dict[str, Any]) -> None:
         async with async_session_factory() as db:
-            await db.execute(text(
-                "UPDATE suppliers SET credentials = jsonb_set(coalesce(credentials,'{}'::jsonb), "
-                "CAST(:path AS text[]), CAST(:v AS jsonb), true), updated_at = NOW() WHERE id = CAST(:i AS uuid)"),
-                {"path": "{boaz," + key + "}", "v": json.dumps(value, default=str), "i": sid})
+            await db.execute(text(MERGE_SQL), {"k": key, "v": json.dumps(value, default=str), "i": sid})
             await db.commit()
 
     async def link_supplier_mail(sid, entry):
