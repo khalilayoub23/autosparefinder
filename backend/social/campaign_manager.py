@@ -402,12 +402,39 @@ async def reject_post_content(
     return (result.rowcount or 0) > 0
 
 
+async def ensure_revision_table(db: Any) -> None:
+    """Persistent post revision history (2026-11-13). New table only - no lock on social_posts."""
+    await db.execute(sa.text("""
+        CREATE TABLE IF NOT EXISTS social_post_revisions (
+            id          BIGSERIAL PRIMARY KEY,
+            post_id     UUID        NOT NULL,
+            version     INTEGER     NOT NULL,
+            content     TEXT        NOT NULL,
+            source      VARCHAR(32) NOT NULL,
+            actor       VARCHAR(64) NOT NULL DEFAULT '',
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE (post_id, version)
+        )"""))
+    await db.commit()
+
+
+async def get_revisions(db: Any, post_id: str) -> list[dict]:
+    """Original draft + every edit, oldest first (post_id: full uuid or 8-char prefix)."""
+    rows = (await db.execute(sa.text(
+        "SELECT post_id::text AS post_id, version, content, source, actor, created_at "
+        "FROM social_post_revisions WHERE post_id::text LIKE :p ORDER BY post_id, version"),
+        {"p": f"{post_id}%"})).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
 async def update_post_content(
     db: Any,
     *,
     post_id: str,
     new_content: str,
     scheduled_at: datetime | None = None,
+    source: str = "web",
+    actor: str = "owner",
 ) -> dict | None:
     """Edit post content and bump content_version.
 
@@ -424,6 +451,15 @@ async def update_post_content(
         sched_clause = ", scheduled_at=:sched"
         params["sched"] = scheduled_at
 
+    await ensure_revision_table(db)
+    cur = (await db.execute(sa.text(
+        "SELECT content, content_version FROM social_posts WHERE id = CAST(:id AS uuid) AND status NOT IN ('published')"),
+        {"id": post_id})).fetchone()
+    if cur:        # keep the text being replaced: the original draft is revision 1 (idempotent)
+        await db.execute(sa.text(
+            "INSERT INTO social_post_revisions (post_id, version, content, source, actor) "
+            "VALUES (CAST(:id AS uuid), :v, :c, :s, :a) ON CONFLICT (post_id, version) DO NOTHING"),
+            {"id": post_id, "v": cur.content_version, "c": cur.content or "", "s": "noa_draft" if cur.content_version == 1 else "previous", "a": "noa"})
     result = await db.execute(
         sa.text(f"""
             UPDATE social_posts
@@ -440,8 +476,13 @@ async def update_post_content(
         """),
         params,
     )
-    await db.commit()
     row = result.fetchone()
+    if row:
+        await db.execute(sa.text(
+            "INSERT INTO social_post_revisions (post_id, version, content, source, actor) "
+            "VALUES (CAST(:id AS uuid), :v, :c, :s, :a) ON CONFLICT (post_id, version) DO NOTHING"),
+            {"id": post_id, "v": row.content_version, "c": new_content.strip(), "s": source, "a": actor})
+    await db.commit()
     if not row:
         return None
     return {"post_id": post_id, "content_version": row.content_version, "status": row.status}

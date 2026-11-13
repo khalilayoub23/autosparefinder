@@ -642,9 +642,22 @@ async function startBot() {
       const isLid = jid.endsWith('@lid')
       const e164 = isLid ? jid : (digits.startsWith('972') ? '+' + digits : '+972' + digits.slice(1))
 
+      // Quote-reply context (2026-11-13): the id + text of the message the owner replied to.
+      const ctxInfo = content.extendedTextMessage?.contextInfo
+        || content.imageMessage?.contextInfo || content.videoMessage?.contextInfo
+        || content.documentMessage?.contextInfo || content.audioMessage?.contextInfo || null
+      let quotedText = ''
+      if (ctxInfo?.quotedMessage) {
+        const qc = normalizeMessageContent(ctxInfo.quotedMessage) || ctxInfo.quotedMessage
+        quotedText = String(qc.conversation || qc.extendedTextMessage?.text || qc.imageMessage?.caption
+          || qc.videoMessage?.caption || qc.documentMessage?.caption || '').slice(0, 1500)
+      }
+
       const payload = {
         from: 'whatsapp:' + e164,
         body: text,
+        quoted_message_id: ctxInfo?.stanzaId || '',
+        quoted_text: quotedText,
         profile_name: msg.pushName || '',
         reply_jid: jid,
         message_id: msg.key.id || '',

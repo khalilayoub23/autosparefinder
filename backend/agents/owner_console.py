@@ -412,7 +412,19 @@ async def _reject_post(db, post: Dict[str, Any], reason: str = "") -> str:
     return f"🚫 הפוסט נדחה ({_short(post['id'])})."
 
 
-async def edit_post_text(db, post_id: str, new_text: str) -> str:
+async def post_history_text(db, post_id: str) -> str:
+    """Revision history of one post from social_post_revisions (original draft, every edit, source channel)."""
+    from social.campaign_manager import get_revisions
+    revs = await get_revisions(db, post_id)
+    if not revs:
+        return f"אין עדיין עריכות לפוסט {_short(post_id)} - זו הגרסה המקורית."
+    lines = [f"🕘 היסטוריית הפוסט {_short(post_id)}:"]
+    for r in revs:
+        lines.append(f"• גרסה {r['version']} · {r['source']} · {str(r['created_at'])[:16]}\n  {r['content'][:160]}")
+    return "\n".join(lines)
+
+
+async def edit_post_text(db, post_id: str, new_text: str, source: str = "whatsapp") -> str:
     """Owner edit of a NOA post — the ONE edit path for the WhatsApp `ערוך` command and the Telegram
     "✏️ ערוך" button. Delegates to campaign_manager.update_post_content, which bumps content_version and
     resets the post to pending_approval (a stale approval can never publish the edited text); nothing is
@@ -422,7 +434,7 @@ async def edit_post_text(db, post_id: str, new_text: str) -> str:
     if not new_text:
         return "הטקסט המתוקן ריק — לא שיניתי כלום."
     try:
-        res = await update_post_content(db, post_id=post_id, new_content=new_text)
+        res = await update_post_content(db, post_id=post_id, new_content=new_text, source=source, actor="owner")
     except Exception as exc:
         await db.rollback()
         return f"⚠️ העריכה נכשלה: {str(exc)[:120]}"
@@ -1892,18 +1904,19 @@ async def _fb_scan_groups_trigger() -> str:
     )
 
 
-async def process_owner_message(message: str, source: str = "whatsapp") -> str:
+async def process_owner_message(message: str, source: str = "whatsapp", quoted_text: str = "") -> str:
     """Entry point for owner WhatsApp messages. Returns the reply text.
 
     Opens its own CATALOG-DB session (harvest_queue / parts_catalog / job_registry /
     social_posts all live in the catalog DB — NOT the PII DB the webhook hands us)."""
     from BACKEND_DATABASE_MODELS import async_session_factory
     async with async_session_factory() as db:
-        return await _process_owner_message(message, db, source)
+        return await _process_owner_message(message, db, source, quoted_text)
 
 
-async def _process_owner_message(message: str, db, source: str = "whatsapp") -> str:
-    msg = (message or "").strip()
+async def _process_owner_message(message: str, db, source: str = "whatsapp", quoted_text: str = "") -> str:
+    from agents.quote_context import rewrite as _quote_rewrite
+    msg = _quote_rewrite(message, quoted_text)      # quote-reply -> a command on the quoted post (or context)
     low = msg.lower()
 
     # ── leave the current agent session → back to neutral console ─────────────
@@ -1969,6 +1982,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         if not post:
             return "לא מצאתי פוסט ממתין לאישור. כתוב *פוסטים* לרשימה."
         return await _approve_and_publish(db, post)
+    m_hist = re.match(r"^(history|היסטוריה|גרסאות)\b\s*(\S+)?\s*$", msg, re.I)
+    if m_hist:
+        post = await _resolve_post(db, m_hist.group(2) or "") if m_hist.group(2) else None
+        if not post:
+            return "פורמט: *היסטוריה <מזהה>* (המזהה מהרשימה: *פוסטים*)."
+        return await post_history_text(db, post["id"])
     m_ed = re.match(r"^(edit|ערוך)\b\s*(\S+)?\s*(.*)$", msg, re.I | re.S)
     if m_ed:
         post = await _resolve_post(db, m_ed.group(2) or "") if m_ed.group(2) else None

@@ -4830,6 +4830,9 @@ async def _noa_marketing_loop():
                 WHERE pc.is_active
                   AND {name_clause}
                   {mfr_clause}
+                  AND EXISTS (SELECT 1 FROM part_vehicle_fitment pvf
+                              WHERE pvf.part_id = pc.id AND pvf.manufacturer ILIKE :mfr
+                                AND pvf.model ILIKE :model)
                   AND mp.cost BETWEEN 15 AND 4000
                 ORDER BY random() LIMIT 1
             """
@@ -4840,9 +4843,11 @@ async def _noa_marketing_loop():
             params = {**_name_params, "usd_to_ils_rate": await _rate_fn(db)}
             _sql = (_sql.replace("{name_clause}", _name_clause).replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
                     .replace("__ORDER__", _pp.price_basis_order_sql("pc.part_type")))
-            # No cross-make fallback (2026-11-13): a Ford price inside a Dacia post is a wrong claim.
+            # No cross-make fallback (2026-11-13): a Ford price inside a Dacia post is a wrong claim. The part must also
+            # have a part_vehicle_fitment row for THIS make+model (vehicle-specific fitment, not just a category).
             row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
-                                    {**params, "mfr": f"%{car_make}%"})).fetchone()
+                                    {**params, "mfr": f"%{car_make}%",
+                                     "model": (car.split(None, 1)[1].strip().replace(" ", "%") + "%") if len(car.split()) > 1 else "%"})).fetchone()
             if row:
                 # ROOT FIX 2026-08-11 ("posts improved for a couple of days then went back
                 # to un-understood sentences"): `row[1] or row[0]` picks name_he whenever it's

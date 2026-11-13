@@ -5065,7 +5065,7 @@ class SocialMediaManagerAgent(BaseAgent):
     _NOA_TAG_POOL_HE = [
         "#\u05D7\u05DC\u05E7\u05D9\u05D7\u05D9\u05DC\u05D5\u05E3", "#\u05D7\u05DC\u05E4\u05D9\u05DD", "#\u05D7\u05DC\u05E7\u05D9\u05E8\u05DB\u05D1", "#\u05E8\u05DB\u05D1", "#\u05E8\u05DB\u05D1\u05D9\u05DD", "#\u05D0\u05D1\u05D9\u05D6\u05E8\u05D9\u05E8\u05DB\u05D1",
         "#\u05EA\u05D7\u05D6\u05D5\u05E7\u05EA\u05E8\u05DB\u05D1", "#\u05D8\u05D9\u05E4\u05D5\u05DC\u05E8\u05DB\u05D1", "#\u05DE\u05D5\u05E1\u05DA", "#\u05D8\u05E1\u05D8", "#\u05E0\u05D4\u05D2\u05D9\u05DD", "#\u05D7\u05D9\u05E1\u05DB\u05D5\u05DF\u05D1\u05E8\u05DB\u05D1",
-        "#\u05D4\u05E9\u05D5\u05D5\u05D0\u05EA\u05DE\u05D7\u05D9\u05E8\u05D9\u05DD", "#\u05E8\u05DB\u05D1\u05D9\u05D7\u05E9\u05DE\u05DC\u05D9", "#\u05D0\u05D5\u05D8\u05D5",
+        "#\u05D4\u05E9\u05D5\u05D5\u05D0\u05EA\u05DE\u05D7\u05D9\u05E8\u05D9\u05DD", "#\u05D0\u05D5\u05D8\u05D5",
     ]
     _NOA_TAG_POOL_AR = [
         "#\u0642\u0637\u0639_\u063A\u064A\u0627\u0631", "#\u0642\u0637\u0639_\u063A\u064A\u0627\u0631_\u0633\u064A\u0627\u0631\u0627\u062A", "#\u0633\u064A\u0627\u0631\u0627\u062A", "#\u0635\u064A\u0627\u0646\u0629_\u0633\u064A\u0627\u0631\u0627\u062A",
@@ -5227,6 +5227,21 @@ class SocialMediaManagerAgent(BaseAgent):
             out.append(ch)
         return "".join(out)
 
+    _NOA_EV_TAG_RE = re.compile(r"חשמל|electric|\bev\b|hybrid|היברידי|tesla|كهرب", re.I)
+
+    @classmethod
+    def _hashtag_relevant(cls, tag_body: str, text: str) -> bool:
+        """A tag must not contradict the post: a stale year (#חורף2024) or an EV tag on a post that never
+        mentions electric/hybrid cars (observed live 2026-11-12: #רכביחשמלי on a Renault exhaust post)."""
+        import datetime as _dt
+        for y in re.findall(r"(?<!\d)(20\d{2})(?!\d)", tag_body):
+            if int(y) != _dt.date.today().year:
+                return False
+        if cls._NOA_EV_TAG_RE.search(tag_body):
+            body = re.sub(r"#[^\s#]+", " ", text or "")
+            return bool(cls._NOA_EV_TAG_RE.search(body))
+        return True
+
     @classmethod
     def _filter_hashtags(cls, text: str) -> str:
         raw_tags = cls._NOA_HASHTAG_RE.findall(text or "")
@@ -5237,6 +5252,8 @@ class SocialMediaManagerAgent(BaseAgent):
             norm = tag.lower().lstrip("#")
             # Hebrew AND Arabic tags pass as-is; Latin tags only from the allowlist.
             is_rtl_tag = cls._NOA_RTL_TAG_RE.search(tag_body) is not None
+            if not cls._hashtag_relevant(tag_body, text):
+                continue
             if is_rtl_tag or norm in cls._NOA_ALLOWED_LATIN_HASHTAGS:
                 if norm not in seen:
                     keep.append(tag)

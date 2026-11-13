@@ -349,9 +349,21 @@ async def telegram_admin_webhook(request: Request):
                 async with async_session_factory() as _ndb:
                     _mem = AgentMemory(_ndb, agent_name="noa")
                     _pe = await _mem.get("pending_edit")
+                    _rq = ((_m.get("reply_to_message") or {}).get("text") or (_m.get("reply_to_message") or {}).get("caption") or "")
+                    if not (_pe and _pe.get("social_post_id")) and _rq:
+                        from agents.quote_context import rewrite as _qrw, quoted_ids as _qids
+                        _ids = _qids(_rq)
+                        _new = _qrw(_txt, _rq)
+                        if len(_ids) == 1 and _new.startswith(("ערוך ", "אשר ", "דחה ", "היסטוריה ")):
+                            from agents.owner_console import _process_owner_message as _pom
+                            _reply = await _pom(_txt, _ndb, "telegram", _rq)
+                            async with httpx.AsyncClient(timeout=10.0) as _c:
+                                await _c.post(f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/sendMessage",
+                                              json={"chat_id": _m["chat"]["id"], "text": _reply[:3900]})
+                            return {"ok": True, "handled": "reply_to_post"}
                     if _pe and _pe.get("social_post_id"):
                         await _mem.delete("pending_edit")
-                        _reply = await edit_post_text(_ndb, _pe["social_post_id"], _txt)
+                        _reply = await edit_post_text(_ndb, _pe["social_post_id"], _txt, source="telegram")
                         async with httpx.AsyncClient(timeout=10.0) as _c:
                             await _c.post(f"https://api.telegram.org/bot{TELEGRAM_ADMIN_TOKEN}/sendMessage",
                                           json={"chat_id": _m["chat"]["id"], "text": _reply[:3900]})
@@ -1283,6 +1295,7 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
             # otherwise block the webhook and time out the bridge.
             _dest = OWNER_PHONE or sender_phone
             _body = body
+            _quoted = str(raw_data.get("quoted_text") or "")[:1500]
 
             async def _owner_reply_bg():
                 try:
@@ -1292,7 +1305,7 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
                         # deadline the task waits forever and the owner simply never
                         # hears back — indistinguishable from "the agent ignored me".
                         r = await asyncio.wait_for(
-                            process_owner_message(_body, source="whatsapp"),
+                            process_owner_message(_body, source="whatsapp", quoted_text=_quoted),
                             timeout=_OWNER_REPLY_TIMEOUT_S,
                         )
                     except asyncio.TimeoutError:

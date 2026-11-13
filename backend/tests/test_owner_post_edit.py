@@ -43,7 +43,7 @@ def test_edit_without_text_or_unknown_id_changes_nothing(monkeypatch):
 def test_edit_post_text_uses_update_post_content(monkeypatch):
     seen = {}
 
-    async def fake_update(db, *, post_id, new_content, scheduled_at=None):
+    async def fake_update(db, *, post_id, new_content, scheduled_at=None, **_kw):
         seen.update(post_id=post_id, new_content=new_content)
         return {"post_id": post_id, "content_version": 2, "status": "pending_approval"}
 

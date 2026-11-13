@@ -23,3 +23,9 @@ def test_route_has_no_first_word_match_and_no_cross_make_fallback():
     assert "heb_part.split()[0]" not in src
     fn = src[src.index("async def _noa_real_catalog_fact"):src.index("def _noa_utm_link")]
     assert fn.count("_sql.format(") == 1          # only the make-constrained query remains
+
+
+def test_fact_requires_vehicle_specific_fitment():
+    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("BACKEND_API_ROUTES.py").read_text()
+    fn = src[src.index("async def _noa_real_catalog_fact"):src.index("def _noa_utm_link")]
+    assert "part_vehicle_fitment pvf" in fn and "pvf.model ILIKE :model" in fn and "pvf.manufacturer ILIKE :mfr" in fn
