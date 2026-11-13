@@ -4828,21 +4828,21 @@ async def _noa_marketing_loop():
                     ORDER BY __ORDER__ LIMIT 1
                 ) mp ON TRUE
                 WHERE pc.is_active
-                  AND (pc.name_he ILIKE :hq OR pc.name ILIKE :eq)
+                  AND {name_clause}
                   {mfr_clause}
                   AND mp.cost BETWEEN 15 AND 4000
                 ORDER BY random() LIMIT 1
             """
             import price_policy as _pp        # 2026-10-29: the SAME offer + price as the website (one policy)
             from currency_rate import get_usd_to_ils_rate as _rate_fn
-            params = {"hq": f"%{heb_part.split()[0]}%", "eq": f"%{eng_part.split()[0]}%",
-                      "usd_to_ils_rate": await _rate_fn(db)}
-            _sql = (_sql.replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
+            from social.noa_fact import name_conditions as _name_conditions
+            _name_clause, _name_params = _name_conditions(heb_part, eng_part)   # ALL words of the topic part
+            params = {**_name_params, "usd_to_ils_rate": await _rate_fn(db)}
+            _sql = (_sql.replace("{name_clause}", _name_clause).replace("__VISIBLE__", _pp.VISIBLE_OFFER_SQL).replace("__COST__", _pp.offer_cost_sql())
                     .replace("__ORDER__", _pp.price_basis_order_sql("pc.part_type")))
+            # No cross-make fallback (2026-11-13): a Ford price inside a Dacia post is a wrong claim.
             row = (await db.execute(text(_sql.format(mfr_clause="AND pc.manufacturer ILIKE :mfr")),
                                     {**params, "mfr": f"%{car_make}%"})).fetchone()
-            if not row:
-                row = (await db.execute(text(_sql.format(mfr_clause="")), params)).fetchone()
             if row:
                 # ROOT FIX 2026-08-11 ("posts improved for a couple of days then went back
                 # to un-understood sentences"): `row[1] or row[0]` picks name_he whenever it's

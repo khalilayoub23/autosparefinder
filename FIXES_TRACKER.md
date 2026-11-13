@@ -10110,3 +10110,27 @@ The bridge exposes send/health only; the owner's received chat and Telegram hist
 
 ### Deployment / rollback
 Not deployed (restarting production needs owner approval and the SAFE preflight). Files: `agents/returned_post.py`, `agents/owner_console.py`, `email_agent/owner_flow.py`, `services/supplier_sourcing.py`, 3 new test files. Deploy = guarded `--force-recreate` after preflight SAFE; rollback = `git revert` of the commit. Commit SHA below in git log.
+
+## 2026-11-13 - Mission (NIR / NOA / messaging / ASAP). **PARTIAL - NIR requalification APPLIED (live data); NOA fact fix in repo, NOT DEPLOYED; outreach, ASAP download, quote-reply, chat-history BLOCKED on stated dependencies**
+
+### NIR - requalification of the 73 older candidates. **APPLIED + VERIFIED (DB re-read)**
+- Tool: `backend/maintenance/nir_requalify.py` (dry-run default; `--apply`). Fetches each candidate's official site, records every requirement through `supplier_qualification.set_requirement` (the only writer). Report `/app/state/nir_requalify_report.json` (sha256 `ea11cdd0...8013`).
+- **Defect found in my own first draft (not applied):** rejecting on "unreachable" / "no automotive wording" would have rejected AutoZone, CarParts.com, Autodoc, 1A Auto, CARiD, Ortiz and the existing ASAP / Turn 14 / Keystone / Meyer relationships (bot walls, JS-rendered pages). Fixed: a blocked/thin page is `UNVERIFIED` ("needs manual check"), never a rejection; auto-reject ONLY on software-vendor signals; 5 more rejects came from reading the homepage text by hand (listed in `MANUAL_REJECT` with the reason); rows that are active or already in a relationship status are never relabelled.
+- **Result (live DB):** 73/73 now carry a `qualification` record. Statuses: `rejected` 7 (software/platform vendors, affiliate tool, unrelated page - evidence in each record), `needs_information` 25 (automotive seller per page; API/shipping/availability/business terms UNVERIFIED), `needs_manual_check` 35 (site not machine-readable), relationship rows unchanged (2 `pending_credentials`, ASAP, Keystone, Mann, RockAuto active).
+- **Activated: 0.** No candidate has all six requirements VERIFIED (availability, API access and commercial terms need supplier answers), so none may be activated; this is by design, not a gap to paper over.
+- **BLOCKED - outreach:** `NIR_OUTREACH_ENABLED` is not `1` in the running process (env change needs a guarded recreate = a specific approval + SAFE preflight) and the standing `supplier_message/routine_inquiry` authorization is recorded only by the owner console command `אשרפניותספקים`. Nothing was sent. 0 suppliers contacted, 0 replies.
+
+### NOA - root cause of inconsistent post quality. **Code + tests PASS (sandbox); NOT DEPLOYED**
+- Evidence: 12 live drafts. Mismatches: oxygen-sensor story priced a *speed-control sensor*; cabin-filter story quoted a *Ford fuel filter* in a Dacia post; rear-wiper story quoted *front brake pads ₪1,999.65*; clutch story ₪26.07.
+- **Root cause:** `_noa_real_catalog_fact` matched `name_he ILIKE '%<FIRST word of the topic part>%'` (so "חיישן", "מסנן", "רפידות" match any sensor/filter/pad) with `ORDER BY random()`, and a second query WITHOUT the manufacturer when the first returned nothing (cross-make price). The story and the quoted price came from unrelated parts.
+- **Fix:** `social/noa_fact.py::name_conditions` - every significant word of the topic part must occur in the catalog name; manufacturer must match the car; no cross-make fallback (no fact beats a wrong fact). Tests `tests/test_noa_fact_match.py` 3 passed (sandbox). Not full-suite-run this session.
+- **Not fixed / recorded:** hashtag pool emits irrelevant tags (`#רכביחשמלי` on non-EV posts, `#חורף2024`); fitment of the quoted part to the specific model is still not checked (make only).
+
+### BLOCKED / not done (exact dependencies)
+- **WhatsApp quote-reply:** bridge `whatsapp-bridge/index.js` drops `quotedMessage`; needs a bridge change + bridge restart (protected; approval + preflight). Not started.
+- **Telegram/WhatsApp history audit:** bridge exposes send/health only; no history read exists. Not inspected, not claimed.
+- **ASAP (3 BOAZ tasks f2d44133, 35c9e1c0, 786de4a6):** BOAZ claimed and escalated them at 08:37 IL; they stay `in_progress`, NOT completed. No downloaded files, no hashes, no import - the "View Approved Requests" download needs the owner's authenticated ASAP session; no ASAP credentials are in `.env` and I did not drive a login.
+- **Revision history of posts:** still only `content_version`; previous text is overwritten.
+
+### Deployment / rollback
+Files: `backend/maintenance/nir_requalify.py`, `backend/social/noa_fact.py`, `backend/BACKEND_API_ROUTES.py`, `backend/tests/test_noa_fact_match.py`. Deploy = SAFE preflight then guarded `--force-recreate`; rollback = `git revert` of the commit. Requalification data change rollback: remove `credentials.qualification` / restore `status='pending_review'` from the report ids.
