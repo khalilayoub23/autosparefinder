@@ -10134,3 +10134,26 @@ Not deployed (restarting production needs owner approval and the SAFE preflight)
 
 ### Deployment / rollback
 Files: `backend/maintenance/nir_requalify.py`, `backend/social/noa_fact.py`, `backend/BACKEND_API_ROUTES.py`, `backend/tests/test_noa_fact_match.py`. Deploy = SAFE preflight then guarded `--force-recreate`; rollback = `git revert` of the commit. Requalification data change rollback: remove `credentials.qualification` / restore `status='pending_review'` from the report ids.
+
+## 2026-11-13 (2) - Mission continuation. **PARTIAL - deployed + tested; outreach grant, ASAP file transfer, Telegram/WhatsApp live checks outstanding**
+
+### Deployment (VERIFIED)
+- Preflight SAFE (0 workers, 0 jobs) -> `guarded_restart.sh deploy-e681073-nir` (08:01 IL) and again `deploy-184e54c` (after the full suite). Running: tree == `184e54c` (`git diff --quiet 184e54c -- backend docker-compose.yml`), container healthy, RestartCount 0, OOMKilled false, `NIR_OUTREACH_ENABLED=1` and `BOAZ_TASKS_ENABLED=1` read from `/proc/1/environ` (not just `.env`); compose passes `NIR_OUTREACH_ENABLED` (new line). No other switch changed.
+- Rollback: `git revert 184e54c c681420 e681073` + remove `NIR_OUTREACH_ENABLED` from `.env`/compose + guarded recreate. New table `social_post_revisions` (self-created, additive) can stay.
+- **Bridge (`whatsapp-bridge/index.js`) NOT restarted** - separate service, separate approval; the running bridge still drops quote context. Quote-reply is therefore code+test only until the bridge is restarted (`node --check` OK).
+
+### NOA (code + tests; live effect after next NOA cycle)
+- Fact lookup now requires all words of the topic part, the car's make AND a `part_vehicle_fitment` row for that make+model; no cross-make fallback. Real SQL executed read-only on the live catalog (4 cars) - valid, returns make-matched parts.
+- Hashtags: EV tag removed from the default pool; `_hashtag_relevant` drops stale-year tags and EV tags on posts that never mention EVs.
+- Revision history: `social_post_revisions` (original draft = v1, every edit with source `whatsapp`/`telegram`/`web`), console command `היסטוריה <id>`; tested on the sandbox DB through 3 edits.
+- Quote-reply: `agents/quote_context.py` (bridge sends `quoted_text`/`quoted_message_id`; webhook passes it; Telegram `reply_to_message` handled): exactly one post id in the quote -> command on that post; zero/several ids never guess (ambiguous bare approve/reject -> "quote-ambiguous", changes nothing).
+- Tests: new `test_noa_fact_match` (4), `test_post_revision_history` (2), `test_quote_reply_routing` (4), `test_asap_stage_only` (2). **Full suite (sandbox, RUN_DB_MUTATION_TESTS=1): 3392 passed, 0 failed, 199 skipped** (one earlier `-x` run hit a single failure in a restore-rig test that did not recur - sandbox-state flake, not re-provable). Skips: policy/restore/rig env, live-login 2FA, frontend host-side, no-embedding data.
+- NOT done: no real WhatsApp/Telegram message was sent or read; Telegram and WhatsApp end-to-end are unverified live; bridge exposes no history.
+
+### NIR outreach - BLOCKED (authorization)
+- Recording the standing `supplier_message/routine_inquiry` grant from this session was refused by the permission classifier; it is not worked around. The owner records it with the console command `אשרפניותספקים`. Until then `send_outreach` refuses every send: 0 contacted, 0 replies, 0 activated. Activation additionally needs all six requirements VERIFIED (none are).
+
+### ASAP - download generated, transfer BLOCKED (browser extension disconnected)
+- Owner session was live in Chrome (account autosparefinder, 5 approved brands, Updated Brands: BDS Suspension (updated 11/12/26) and Fox Factory (11/11/26), data-download ids 130085 / 130108). Submitted ASAP's own generator for BDS (CSV, Updates Only): 121 products, finished; result is datasheet `/datasheet/2030392`.
+- The file was NOT yet moved: the extension disconnected before the relay. The old `asap-collect` endpoint would have overwritten `130085.csv` and auto-run an importer with no dry-run, so it was changed (`184e54c`): `stage_only` stores the original under `/app/state/asap/incoming/<brand>_<label>_<UTC>.csv` with sha256, never imports; a normal relay archives the previous file first; importer gained `--dry-run` (whole import in one transaction, rolled back). Pre-existing originals: `130085.csv` sha256 `7d77e912...1333`, `130108_products.csv` `62cb2983...01b0` (untouched).
+- The 3 BOAZ tasks (f2d44133, 35c9e1c0, 786de4a6) remain `in_progress`; none is complete. Fox Factory sheet not yet generated.
