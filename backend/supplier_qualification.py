@@ -32,6 +32,8 @@ Last Updated: 2026-10-27
 """
 from __future__ import annotations
 
+import re
+
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -212,11 +214,19 @@ def classify(rec: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, A
             "needs_owner_approval_to_activate": True}
 
 
+_EMAIL_RE = re.compile(r"^[\w.+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$")
+
+
+def valid_email(address: Any) -> bool:
+    """Syntax check incl. a TLD of >=2 letters. A site-published typo (``@autoworks.co.i``) is not a contact."""
+    return bool(_EMAIL_RE.match(str(address or "").strip()))
+
+
 def verified_contacts(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
     req = rec["requirements"]["contacts"]
     out = []
     for c in (req.get("details") or {}).get("contacts", []) or []:
-        if c.get("status") == VERIFIED and c.get("source") and "@" in str(c.get("address", "")):
+        if c.get("status") == VERIFIED and c.get("source") and valid_email(c.get("address")):
             out.append(c)
     return out
 

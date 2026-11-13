@@ -130,7 +130,7 @@ def judge(rec: dict, ev: dict, now) -> tuple[str, str]:
             Q.set_requirement(rec, "api", Q.VERIFIED, evidence_kind="official_documentation", source=pu,
                               note="official API / developer / dropship page reachable (access terms not verified)", now=now)
     cp = ev["pages"].get("contact")
-    contacts = sorted({m[0].strip().lower() for m in MAIL.findall(cp[1] if cp else "") if m[0]})[:3]
+    contacts = sorted({m[0].strip().lower() for m in MAIL.findall(cp[1] if cp else "") if m[0] and Q.valid_email(m[0])})[:3]
     if cp and contacts:
         Q.set_requirement(rec, "contacts", Q.VERIFIED, evidence_kind="official_policy_page", source=cp[0],
                           note="contact channel(s) published on the official contact page",
