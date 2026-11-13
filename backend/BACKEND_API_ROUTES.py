@@ -3765,6 +3765,44 @@ async def _wa_dead_letter(_r, item: dict, reason: str, error: str = "") -> None:
         print(f"[QuietHours] dead-letter record failed ({reason}): {exc}")
 
 
+# Retry queue for IMMEDIATE sends that provably did not leave (Phase 2, 2026-11-13). An alert sent
+# now (window open, or severity=critical) used to be lost when the bridge stayed down past the
+# provider's own 15 s retry budget - the caller got ok=False and, for one-shot sources, that was the
+# end of it. Only errors that prove nothing was sent qualify; a timeout / 500 / WhatsApp-side error
+# may already have been delivered and is never re-sent (a duplicate is worse than the loud failure).
+_WA_RETRY_QUEUE_KEY = "autospare:wa_send_retry"
+_WA_RETRY_MAX_AGE_S = int(os.getenv("WA_RETRY_MAX_AGE_S", str(6 * 3600)))
+
+
+def _wa_not_sent_error(error) -> bool:
+    """True only for provider errors that guarantee the message did not leave the bridge."""
+    from social.whatsapp_provider import _TRANSIENT_BRIDGE_ERRORS
+    e = str(error or "")
+    return e.startswith("bridge unreachable") or e in _TRANSIENT_BRIDGE_ERRORS
+
+
+async def _wa_send_now(to: str, text: str, critical: bool, alert_key: str) -> dict:
+    """Send immediately; a send that provably did not leave is queued for the retry pass."""
+    result = await _wa_send(to=to, text=text)
+    if result.get("ok") or not _wa_not_sent_error(result.get("error")):
+        return result
+    try:
+        _r = await get_redis()
+        payload = {"to": to, "text": text[:3800], "critical": bool(critical), "attempts": 0,
+                   "queued_ts": int(time.time()),
+                   "queued_at": datetime.now(APP_LOCAL_TZ).strftime("%d/%m %H:%M")}
+        if alert_key:
+            payload["alert_key"] = alert_key
+        await _r.eval(_WA_QUIET_ENQUEUE_LUA, 2, _WA_RETRY_QUEUE_KEY, _WA_QUIET_DEAD_KEY,
+                      alert_key, json.dumps(payload, ensure_ascii=False), -50, -1)
+        print(f"[QuietHours] send failed ({result.get('error')}) - queued for retry"
+              + (f" alert_key={alert_key}" if alert_key else ""))
+        return {"ok": True, "queued": True, "retry": True}
+    except Exception as exc:
+        print(f"[QuietHours] retry-queue failed ({exc}) - alert not delivered: {result.get('error')}")
+        return result
+
+
 async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: str = "") -> dict:
     """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
     Outside → queue to Redis; the health monitor flushes the queue at window open, so
@@ -3795,7 +3833,7 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: 
         return {"ok": False, "error": "INVALID_PAYLOAD: no recipient"}
     is_open, _ = _notify_window_open()
     if is_open or critical:
-        return await _wa_send(to=to, text=text)
+        return await _wa_send_now(to, text, critical, alert_key)
     try:
         _r = await get_redis()
         payload = {
@@ -3998,6 +4036,64 @@ async def _flush_wa_quiet_queue() -> int:
     return sent
 
 
+_WA_RETRY_REPLACE_LUA = """
+if redis.call('LREM', KEYS[1], 1, ARGV[1]) == 1 then
+    redis.call('RPUSH', KEYS[1], ARGV[2])
+    return 1
+end
+return 0
+"""
+
+
+async def _flush_wa_retry_queue() -> int:
+    """Re-send immediate sends that provably did not leave (see _wa_send_now). Runs every health
+    pass, window open or not: a critical item goes out at once, any other waits for the window.
+    Items are removed only on confirmed delivery, keyed on the exact payload read (a concurrent
+    same-key enqueue may replace it); bounded by attempts and age, then dead-lettered, never silent."""
+    sent = 0
+    try:
+        _r = await get_redis()
+        is_open = _notify_window_open()[0]
+        for raw in await _r.lrange(_WA_RETRY_QUEUE_KEY, 0, 49):
+            try:
+                item = json.loads(raw)
+                usable = isinstance(item, dict) and _wa_text_usable(item.get("text")) and str(item.get("to") or "").strip()
+            except Exception:
+                item, usable = {}, False
+            if not usable:
+                await _wa_dead_letter(_r, item if isinstance(item, dict) else {}, "invalid_payload")
+                await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
+                continue
+            if time.time() - float(item.get("queued_ts") or 0) > _WA_RETRY_MAX_AGE_S:
+                await _wa_dead_letter(_r, item, "expired")
+                await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
+                continue
+            if not (item.get("critical") or is_open):
+                continue                                   # quiet hours: wait for the window
+            try:
+                result = await _wa_send(to=item["to"], text=item["text"])
+            except Exception as exc:
+                result = {"ok": False, "error": str(exc)}
+            if result.get("ok"):
+                await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
+                sent += 1
+                continue
+            attempts = int(item.get("attempts", 0)) + 1
+            if _wa_permanent_error(result.get("error")) or attempts >= _WA_QUIET_MAX_ATTEMPTS:
+                reason = "permanent_error" if _wa_permanent_error(result.get("error")) else "retry_exhausted"
+                await _wa_dead_letter(_r, dict(item, attempts=attempts), reason, result.get("error"))
+                await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
+            else:
+                await _r.eval(_WA_RETRY_REPLACE_LUA, 1, _WA_RETRY_QUEUE_KEY, raw,
+                              json.dumps(dict(item, attempts=attempts), ensure_ascii=False))
+                print(f"[QuietHours] retry item failed, attempt {attempts}/{_WA_QUIET_MAX_ATTEMPTS}: {result.get('error')}")
+        if sent:
+            print(f"[QuietHours] retried {sent} failed send(s) successfully")
+    except Exception as exc:
+        print(f"[QuietHours] retry flush error: {exc}")
+    return sent
+
+
 def _wa_dead_letter_summary(entries, now_ts: float, window_s: int = 86400) -> "dict | None":
     """Counts by reason of dead-letter entries dropped in the last `window_s`; None if none."""
     counts: dict = {}
@@ -4017,6 +4113,7 @@ _WA_DEAD_REASON_HE = {
     "permanent_error": "הספק דחה את ההודעה",
     "invalid_payload": "הודעה ריקה או ללא נמען",
     "malformed": "רשומה פגומה בתור",
+    "expired": "ההתראה התיישנה לפני שניתן היה לשלוח אותה",
 }
 
 
@@ -6053,6 +6150,7 @@ async def _health_monitor_loop():
             # as the daytime window opens (this pass runs every 5 min).
             if _notify_window_open()[0]:
                 await _flush_wa_quiet_queue()
+            await _flush_wa_retry_queue()      # failed immediate sends; critical ones go out at any hour
 
             current_states = await _probe()
             # provider replaced by _wa_send

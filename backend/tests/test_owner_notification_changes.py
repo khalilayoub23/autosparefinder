@@ -266,6 +266,8 @@ _SKIP_DIRS = {"tests", "devtests", "legacy", "state", "__pycache__", "node_modul
 _PROVIDER_SEND_ALLOWED = {
     ("BACKEND_API_ROUTES.py", "_wa_send_quiet"),                  # the gate itself
     ("BACKEND_API_ROUTES.py", "_flush_wa_quiet_queue"),           # morning delivery of the queue
+    ("BACKEND_API_ROUTES.py", "_wa_send_now"),                    # the gate's immediate send + retry-queue on a proven not-sent
+    ("BACKEND_API_ROUTES.py", "_flush_wa_retry_queue"),           # retry pass for those (critical at any hour, others in-window)
     ("BACKEND_API_ROUTES.py", "_abandoned_cart_loop"),            # customer reminder: own window + lifetime cap
     ("BACKEND_API_ROUTES.py", "_pending_payment_reminder_loop"),  # customer reminder: own window + cap
     ("BACKEND_AUTH_SECURITY.py", "send_whatsapp_2fa"),            # login code requested by the user
