@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -351,7 +352,54 @@ async def process_owner_updates(store, notify: Notify, todos, now: Optional[date
             if _delivered(result or {}) and rows:
                 await store.mark_digested([r["id"] for r in rows])
             out["digest"] = _delivered(result or {})
+    try:
+        out["stale_handoffs"] = await check_handoffs(todos, notify, now)
+    except Exception as e:                                         # follow-up must never break the cycle
+        print(f"[email_agent] handoff follow-up failed: {safe_error(e, 160)}", flush=True)
     return out
+
+
+HANDOFF_STALE_H = float(os.getenv("EMAIL_HANDOFF_STALE_H", "24"))
+
+
+def stale_handoffs(tasks: List[Dict[str, Any]], now: datetime, stale_h: float = HANDOFF_STALE_H) -> List[Dict[str, Any]]:
+    """Email-Agent tasks a receiving agent never STARTED (status not_started) for > stale_h hours.
+    A routed email is not a finished handoff: only the receiving agent starting/closing the task is."""
+    out = []
+    for t in tasks:
+        created = t.get("created_at")
+        if t.get("status") != "not_started" or not isinstance(created, datetime):
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if (now - created).total_seconds() > stale_h * 3600:
+            out.append(t)
+    return out
+
+
+async def check_handoffs(todos, notify: Notify, now: Optional[datetime] = None) -> int:
+    """Detect handoffs nobody picked up and tell the owner ONCE per distinct set (notify-by-exception: same task set
+    = no resend before the 3-day reminder; resolved when every handoff has been started). Reports the real cause
+    when the receiving agent's executor switch is off."""
+    now = now or datetime.now(timezone.utc)
+    stale = stale_handoffs(await todos.open_email_tasks(200), now)
+    from BACKEND_API_ROUTES import resolve_owner_alert
+    if not stale:
+        await resolve_owner_alert("email", "כל משימות המייל שהועברו לסוכנים התחילו", alert_key="email_handoff_stale")
+        return 0
+    import supplier_flags as _sf
+    by_agent: Dict[str, int] = {}
+    for t in stale:
+        by_agent[str(t.get("agent") or "?")] = by_agent.get(str(t.get("agent") or "?"), 0) + 1
+    lines = [f"• {a}: {n} משימות לא התחילו מעל {HANDOFF_STALE_H:g} שעות" for a, n in sorted(by_agent.items())]
+    if "BOAZ" in by_agent and not _sf.enabled("BOAZ_TASKS_ENABLED"):
+        lines.append("סיבה: מבצע המשימות של BOAZ כבוי (BOAZ_TASKS_ENABLED) — המשימות רק ממתינות; הפעלה היא החלטת הבעלים.")
+    lines.append("פרטים: *משימות מייל*; סגירה ידנית: *סגורמשימה <מזהה>*.")
+    fp = ",".join(sorted(str(t["id"])[:8] for t in stale))
+    await notify("email", "מיילים שהועברו לסוכנים ולא טופלו", "\n".join(lines), severity="warning",
+                 alert_key="email_handoff_stale", cooldown_s=86400, state="action",
+                 fingerprint=fp, remind_s=3 * 86400)
+    return len(stale)
 
 
 # ── console helpers (agents/email_console.py) ─────────────────────────────────────

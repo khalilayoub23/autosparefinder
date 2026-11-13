@@ -88,6 +88,17 @@ def _extract_domains(text: str) -> list[str]:
 # ────────────────────────────────────────────────────────────────────────────
 # 1. DISCOVERY (real web search)
 # ────────────────────────────────────────────────────────────────────────────
+_SOFTWARE_SIGNALS = ("book a demo", "request a demo", "get a demo", "schedule a demo", "free trial", "saas", "start your free")
+_STORE_SIGNALS = ("add to cart", "add to basket", "shopping cart", "הוסף לעגלה")
+
+
+def looks_like_software_vendor(body: str) -> bool:
+    """A page that sells SOFTWARE (dropship/ecommerce platforms: demo/trial/SaaS wording, no cart) is not a parts
+    seller even though its text says "auto parts" (live candidates 2026-10-10: flxpoint, spark shipping, ...)."""
+    b = (body or "").lower()
+    return sum(1 for s in _SOFTWARE_SIGNALS if s in b) >= 2 and not any(s in b for s in _STORE_SIGNALS)
+
+
 async def _verify_domain(domain: str, timeout: float = 8.0) -> dict:
     """
     Best-effort live fetch to confirm a candidate is a real parts store and pick up
@@ -110,7 +121,8 @@ async def _verify_domain(domain: str, timeout: float = 8.0) -> dict:
             info["is_parts"] = any(s in body for s in _PARTS_SIGNALS)
             info["ships_il"] = any(s in body for s in _IL_SHIP_SIGNALS)
             info["has_api"] = any(s in body for s in _API_SIGNALS)
-            info["verified"] = info["http_ok"] and info["is_parts"]
+            info["software_vendor"] = looks_like_software_vendor(body)
+            info["verified"] = info["http_ok"] and info["is_parts"] and not info["software_vendor"]
     except Exception as e:
         info["error"] = type(e).__name__
     return info
@@ -315,7 +327,7 @@ async def run_sourcing_cycle(queries: Optional[list[str]] = None, max_onboard: i
                 if len([x for x in summary["onboarded"]]) >= max_onboard:
                     break
                 score = evaluate_seller(c)
-                if score < 0.55 or not c.get("signals", {}).get("http_ok"):
+                if score < 0.55 or not c.get("signals", {}).get("http_ok") or c.get("signals", {}).get("software_vendor"):
                     summary["skipped"] += 1
                     continue
                 res = await onboard_seller(

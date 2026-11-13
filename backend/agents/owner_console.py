@@ -1977,6 +1977,16 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp") -> 
         if not (m_ed.group(3) or "").strip():
             return f"חסר הטקסט המתוקן: *ערוך {_short(post['id'])} <הטקסט החדש>*"
         return await edit_post_text(db, post["id"], m_ed.group(3))
+    # An edited post returned WITHOUT the `ערוך <id>` prefix (id in the text, or clearly a revision of one pending
+    # post) is that post's next version - never free chat (2026-11-13; agents/returned_post.py).
+    from agents.returned_post import could_be_returned_post, match_returned_post
+    _rp_kind, _rp_post, _rp_text = (match_returned_post(msg, await _list_pending_posts(db, limit=25))
+                                    if could_be_returned_post(msg) else ("none", None, ""))
+    if _rp_kind == "match":
+        return "📨 זיהיתי את הפוסט שהחזרת כגרסה מתוקנת של " + _short(_rp_post["id"]) + ".\n" + await edit_post_text(db, _rp_post["id"], _rp_text)
+    if _rp_kind == "ambiguous":
+        return ("הטקסט דומה ליותר מפוסט אחד — לא שיניתי כלום. שלח שוב עם *ערוך <מזהה> <טקסט>*: "
+                + ", ".join(_short(p["id"]) for p in _rp_post))
     m_rj = re.match(r"^(reject|דחה)\b\s*(\S+)?", msg, re.I)
     if m_rj:
         post = await _resolve_post(db, m_rj.group(2) or "")
