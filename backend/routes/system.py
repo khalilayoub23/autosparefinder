@@ -112,7 +112,29 @@ async def asap_collect(request: Request):
         return JSONResponse(status_code=400, content={"error": "empty csv"}, headers=CORS_HEADERS)
     d = pathlib.Path("/app/state/asap")
     d.mkdir(parents=True, exist_ok=True)
+    if isinstance(data, dict) and data.get("stage_only"):
+        # STAGE ONLY (2026-11-13): keep the ORIGINAL bytes under a unique name + sha256; never overwrite a
+        # previous download and never start the importer (validate / dry-run first).
+        import hashlib
+        from datetime import datetime as _dt, timezone as _tz
+        inc = d / "incoming"
+        inc.mkdir(parents=True, exist_ok=True)
+        safe = "".join(ch for ch in brand_id if ch.isalnum() or ch in "-_")[:40] or "unknown"
+        label = "".join(ch for ch in str(data.get("label") or "") if ch.isalnum() or ch in "-_")[:40]
+        ts = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%SZ")
+        sp = inc / f"{safe}{('_' + label) if label else ''}_{ts}.csv"
+        raw_bytes = csv_text.encode("utf-8")
+        sp.write_bytes(raw_bytes)
+        sha = hashlib.sha256(raw_bytes).hexdigest()
+        print(f"[asap-collect] STAGED {sp.name} bytes={len(raw_bytes)} sha256={sha}", flush=True)
+        return JSONResponse(content={"status": "staged", "file": sp.name, "bytes": len(raw_bytes), "sha256": sha,
+                                     "rows": csv_text.count("\n")}, headers=CORS_HEADERS)
     fpath = d / f"{brand_id}.csv"
+    if fpath.exists():          # never destroy the previous original: archive it first
+        arch = d / "archive"
+        arch.mkdir(exist_ok=True)
+        import shutil
+        shutil.copy2(fpath, arch / f"{fpath.stem}.{int(fpath.stat().st_mtime)}.csv")
     fpath.write_text(csv_text, encoding="utf-8")
     header = csv_text.split("\n", 1)[0][:1500]
     rows = csv_text.count("\n")

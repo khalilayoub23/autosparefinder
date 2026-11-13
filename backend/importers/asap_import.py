@@ -356,6 +356,8 @@ async def main() -> None:
     ap.add_argument("csv_path")
     ap.add_argument("--brand-id", default="")
     ap.add_argument("--brand-name", default="")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="run the whole import inside one transaction and ROLL BACK (counts only)")
     args = ap.parse_args()
 
     if not os.path.exists(args.csv_path):
@@ -375,6 +377,10 @@ async def main() -> None:
           flush=True)
 
     conn = await asyncpg.connect(DB, statement_cache_size=0)
+    outer = None
+    if args.dry_run:
+        outer = conn.transaction()
+        await outer.start()
     try:
         if is_fitment:
             stats = await import_fitment(conn, rows)
@@ -386,8 +392,10 @@ async def main() -> None:
                 usd_ils = float(os.getenv("ILS_PER_USD", "3.72"))
             print(f"[asap_import] USD→ILS = {usd_ils}", flush=True)
             stats = await import_products(conn, rows, args.brand_name, usd_ils)
-        print(f"[asap_import] DONE {kind}: {stats}", flush=True)
+        print(f"[asap_import] {'DRY-RUN (rolled back)' if args.dry_run else 'DONE'} {kind}: {stats}", flush=True)
     finally:
+        if outer is not None:
+            await outer.rollback()
         await conn.close()
 
 
