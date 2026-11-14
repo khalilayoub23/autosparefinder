@@ -77,8 +77,25 @@ DUPLICATE_GROUPS_SQL = """
     ), grp AS (
         SELECT manufacturer_id, k, bool_and(held) AS all_held FROM member GROUP BY 1, 2
     )
-    SELECT COUNT(*) FILTER (WHERE NOT all_held) AS dupes, COUNT(*) FILTER (WHERE all_held) AS held FROM grp
+    SELECT COUNT(*) FILTER (WHERE NOT all_held) AS dupes, COUNT(*) FILTER (WHERE all_held) AS held,
+           (SELECT COALESCE(jsonb_agg(jsonb_build_object('g', x.manufacturer_id::text || '|' || x.k,
+                                                         'name', p.name, 'oem_number', p.oem_number)), '[]'::jsonb)
+              FROM (SELECT manufacturer_id, k FROM grp WHERE NOT all_held LIMIT 5000) x
+              JOIN g ON g.manufacturer_id IS NOT DISTINCT FROM x.manufacturer_id AND g.k = x.k
+              JOIN parts_catalog p ON p.id = ANY(g.ids)) AS open_members
+    FROM grp
 """
+
+
+def split_distinct_groups(open_members) -> tuple:
+    """(real duplicate groups, groups whose members are ALL provably different articles - part_identity)."""
+    import part_identity
+    groups: dict = {}
+    for m in open_members or []:
+        groups.setdefault(m["g"], []).append(m)
+    distinct = sum(1 for rows in groups.values()
+                   if all(part_identity.distinct_articles(a, b) for i, a in enumerate(rows) for b in rows[i + 1:]))
+    return len(groups) - distinct, distinct
 
 
 async def main() -> int:
@@ -98,12 +115,17 @@ async def main() -> int:
     dupes = held = None
     if not FAST:
         row = await c.fetchrow(DUPLICATE_GROUPS_SQL)
-        dupes, held = int(row["dupes"] or 0), int(row["held"] or 0)
+        held = int(row["held"] or 0)
+        _om = row["open_members"]
+        dupes, distinct = split_distinct_groups(json.loads(_om) if isinstance(_om, str) else _om)
+        dupes = max(dupes, int(row["dupes"] or 0) - distinct)      # groups beyond the 5000 sample still count
     if dupes is not None:
         record("duplicate OEM groups remaining", dupes == 0, dupes,
                "same manufacturer + OEM should be ONE master record")
         record("duplicate groups held by offer policy", True, held,
                "same-supplier offers with different SKUs: kept apart by policy, not a defect")
+        record("groups of different aftermarket articles", True, distinct,
+               "same digits, different brands (part_identity): never merged, not a defect")
 
     # 2. A merged loser must never still be active — that would double-list it.
     stranded = await c.fetchval("""

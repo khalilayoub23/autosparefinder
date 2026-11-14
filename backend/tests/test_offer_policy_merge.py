@@ -43,9 +43,15 @@ async def _scenario(module, fn):
                 await c.execute("INSERT INTO supplier_parts (id,supplier_id,part_id,supplier_sku,price_usd,price_ils,is_available,min_order_qty,part_type)"
                                 " VALUES ($1,$2,$3,$4,1,$5,true,1,$6)", oid, sid, pid, sku, price, pt)
             await c.execute("INSERT INTO price_history (id,supplier_part_id,new_price_ils,new_price_usd) VALUES ($1,$2,80,1)", uuid.uuid4(), o_los_s)
+            # the loser's own fitment (2 rows) + one row the master already has
+            for pid, model in ((loser, "M1"), (loser, "M2"), (canon, "M1")):
+                await c.execute("INSERT INTO part_vehicle_fitment (part_id, manufacturer, model, year_from, year_to) "
+                                "VALUES ($1,$2,$3,2010,2015)", pid, brand["name"], model)
             rows = await module.fetch_group(c, [str(canon), str(loser)])
             await module.merge_group(c, rows, False)
             res = {
+                "loser_fitment": await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE part_id=$1", loser),
+                "canon_fitment": await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE part_id=$1", canon),
                 "canon_price": await c.fetchval("SELECT price_ils::float FROM supplier_parts WHERE id=$1", o_can),
                 "loser_variant_offer_exists": bool(await c.fetchval("SELECT count(*) FROM supplier_parts WHERE id=$1", o_los_s)),
                 "history_rows": await c.fetchval("SELECT count(*) FROM price_history WHERE supplier_part_id=$1", o_los_s),
@@ -68,7 +74,45 @@ def test_merge_keeps_variant_offer_history_and_price():
         assert r["canon_price"] == 100.0                    # canonical price not overwritten without history
         assert r["other_supplier_offer_part"] == r["canon"]  # competing supplier's offer was moved, id preserved
         assert r["loser_active"] is True                    # loser still carries an offer -> not retired
+        # 2026-11-14: an active (kept) loser KEEPS its fitment; the master gets a copy of what it lacked
+        assert r["loser_fitment"] == 2 and r["canon_fitment"] == 2
     asyncio.run(_scenario(_load(ROOT / "maintenance" / "merge_master_parts.py", "mmp_live"), check))
+
+
+def test_merge_never_touches_a_different_aftermarket_article():
+    """REMSA 1187.02 vs TOPRAN 118 702: same string once punctuation is stripped, different parts (2026-11-14)."""
+    mod = _load(ROOT / "maintenance" / "merge_master_parts.py", "mmp_distinct")
+
+    async def run():
+        c = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"))
+        try:
+            async with c.transaction():
+                brand = await c.fetchrow("SELECT id, name FROM car_brands LIMIT 1")
+                tag = uuid.uuid4().hex[:6].upper()
+                S, T = uuid.uuid4(), uuid.uuid4()
+                for sid, nm in ((S, f"d-S-{tag}"), (T, f"d-T-{tag}")):
+                    await c.execute("INSERT INTO suppliers (id,name,country,is_active) VALUES ($1,$2,'IL',true)", sid, nm)
+                a, b = uuid.uuid4(), uuid.uuid4()
+                for pid, sku, name, oem, price in ((a, f"DA-{tag}", f"REMSA {tag}.02 Brake pad set", f"{tag}.02", 10),
+                                                   (b, f"DB-{tag}", f"TOPRAN {tag} 02 Gear selector cable", f"{tag} 02", None)):
+                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,base_price,created_at)"
+                                    " VALUES ($1,$2,$3,$4,$5,$6,true,$7,NOW())", pid, sku, name, brand["name"], brand["id"], oem, price)
+                ob = uuid.uuid4()
+                await c.execute("INSERT INTO supplier_parts (id,supplier_id,part_id,supplier_sku,price_usd,price_ils,is_available,min_order_qty)"
+                                " VALUES ($1,$2,$3,$4,1,50,true,1)", ob, T, b, f"X-{tag}")
+                await c.execute("INSERT INTO part_vehicle_fitment (part_id, manufacturer, model, year_from, year_to) VALUES ($1,$2,'Z',2010,2015)", b, brand["name"])
+                st = await mod.merge_group(c, await mod.fetch_group(c, [str(a), str(b)]), False)
+                assert st.get("skipped_distinct") == 1 and st["losers"] == 0
+                assert await c.fetchval("SELECT count(*) FROM parts_catalog WHERE id = ANY($1::uuid[]) AND is_active", [a, b]) == 2
+                assert await c.fetchval("SELECT part_id FROM supplier_parts WHERE id=$1", ob) == b
+                assert await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE part_id=$1", b) == 1
+                assert await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE part_id=$1", a) == 0
+                raise _Rollback()
+        except _Rollback:
+            pass
+        finally:
+            await c.close()
+    asyncio.run(run())
 
 
 def test_bmw_oem_dedup_keeps_conflicting_offer_and_history():

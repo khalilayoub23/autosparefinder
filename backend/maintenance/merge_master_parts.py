@@ -112,11 +112,14 @@ def score_row(r: Dict[str, Any]) -> int:
     return s
 
 
+import part_identity  # noqa: E402  (backend root is on sys.path via sitecustomize)
+
+
 async def fetch_group(conn, ids: List[str]) -> List[Dict[str, Any]]:
     cols = ", ".join(f"p.{f}" for f in ENRICH_FIELDS + PRICE_ANY + PRICE_MAX + PRICE_MIN)
     rows = await conn.fetch(
         f"""
-        SELECT p.id, p.sku, p.created_at, p.specifications, p.compatible_vehicles,
+        SELECT p.id, p.sku, p.name, p.created_at, p.specifications, p.compatible_vehicles,
                {cols},
                (SELECT COUNT(*) FROM supplier_parts sp WHERE sp.part_id = p.id)        AS n_offers,
                (SELECT COUNT(*) FROM part_vehicle_fitment f WHERE f.part_id = p.id)    AS n_fitment,
@@ -150,11 +153,22 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
     ranked = sorted(rows, key=lambda r: (-score_row(r), _created(r)))
-    canon, losers = ranked[0], ranked[1:]
+    canon, candidates = ranked[0], ranked[1:]
+    cid = canon["id"]
+
+    # ── 0. A different aftermarket article is NOT a duplicate (2026-11-14) ────
+    # part_identity: REMSA 1187.02 (pads) vs TOPRAN 118 702 (cable) only collide once punctuation is stripped. Such a
+    # row is left completely untouched; it used to be merged into an unrelated master with its offers and fitment.
+    losers = []
+    for l in candidates:
+        if part_identity.distinct_articles(canon, l):
+            st["skipped_distinct"] = st.get("skipped_distinct", 0) + 1
+        else:
+            losers.append(l)
     if not losers:
         return st
     st["losers"] = len(losers)
-    cid = canon["id"]
+    rows = [canon] + losers          # price/enrichment below must only see rows that are really the same part
 
     # ── 1. ENRICH: fill every field the master is missing ────────────────────
     updates: Dict[str, Any] = {}
@@ -222,15 +236,29 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
                         "UPDATE supplier_parts SET part_id = $1, updated_at = NOW() "
                         "WHERE id = $2", cid, o["id"])
             else:
-                # OFFER_DEDUPLICATION_POLICY 1.0.0: the canonical already has an offer from this supplier, but the
-                # loser's offer has its own SKU/variant/URL/price history. Different SKU => not provably the same
-                # commercial offer (class B/F), so it is NEVER deleted and the canonical's price is never overwritten
-                # (that lifted a price without a price_history row and destroyed the loser's history by FK cascade).
-                # The offer stays on the loser part, which therefore stays active (step 5).
+                # OFFER_DEDUPLICATION_POLICY: the master already has an offer from this supplier, but the loser's offer
+                # has its own SKU/variant/URL/price history. Different SKU => not provably the same commercial offer
+                # (class B/F), so it is NEVER deleted and the master's price is never overwritten. The offer stays on
+                # the loser part, which therefore stays ACTIVE (step 5) and keeps its own fitment and images (3, 4).
                 st["sp_kept_policy"] = st.get("sp_kept_policy", 0) + 1
                 kept_offers += 1
 
         # ── 3. FITMENT ───────────────────────────────────────────────────────
+        # A loser that stays active (kept_offers) KEEPS every fitment row: the master gets a COPY of what it lacks.
+        # (Until 2026-11-14 the rows were moved/deleted anyway, leaving an active, sellable part with no fitment.)
+        if kept_offers:
+            if not dry:
+                res = await conn.execute(
+                    """
+                    INSERT INTO part_vehicle_fitment (part_id, manufacturer, model, year_from, year_to, engine_type,
+                                                      transmission, notes, tozeret_cd, degem_cd, shnat_yitzur, manufacturer_id)
+                    SELECT $1, manufacturer, model, year_from, year_to, engine_type, transmission, notes,
+                           tozeret_cd, degem_cd, shnat_yitzur, manufacturer_id
+                    FROM part_vehicle_fitment WHERE part_id = $2
+                    ON CONFLICT (part_id, manufacturer, model, year_from) DO NOTHING
+                    """, cid, lid)
+                st["fit_copied"] = st.get("fit_copied", 0) + int(res.split()[-1])
+            continue                 # images stay with the active loser; no soft delete
         fits = await conn.fetch(
             "SELECT id, manufacturer, model, year_from FROM part_vehicle_fitment "
             "WHERE part_id = $1", lid)
@@ -262,8 +290,7 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
                         "UPDATE parts_images SET part_id = $1 WHERE id = $2", cid, im["id"])
 
         # ── 5. SOFT DELETE with a reference back to the master ───────────────
-        # (not while the loser still carries an offer that policy forbids moving or deleting)
-        if not dry and not kept_offers:
+        if not dry:
             await conn.execute(
                 """
                 UPDATE parts_catalog
