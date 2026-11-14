@@ -409,6 +409,16 @@ Rules:
   Inspect the live client config before asserting a root cause — error messages name symptoms.
 
 ### Data Quality
+- **ONE parts-identity policy: `backend/part_identity.py` (`classify` -> SAME / DIFFERENT / UNCERTAIN), fail closed (2026-11-14).**
+  Only a proven SAME may be merged, deactivated or relinked; UNCERTAIN is reported by the weekly gate (`pipeline_parity_check.py
+  --evidence FILE`), never merged. A shared number, a punctuation-stripped number, a similar title or a vehicle name is never proof:
+  an aftermarket article number is unique only within its brand (558 wrong merges undone). Brands come from
+  `backend/data/article_brands.json`; an alias needs a written-evidence entry in `article_brand_aliases.json` (a re-boxed product
+  is not an alias). Any new script that merges parts must call it and be added to `tests/test_part_identity_policy.py`.
+- **asyncpg returns `jsonb` as TEXT.** `isinstance(row["specifications"], dict)` is never true on a raw asyncpg row: the merge
+  replaced 86,146 masters' specifications with `{"merged_from": [...]}` for months. `json.loads` a jsonb column before using it.
+- **"A nightly job owns that field" is a claim to verify.** `fix_base_prices` / `normalize_base_price` are disabled in
+  `run_all_tasks`; nothing recomputes `base_price` unless `apply_base_price_rule` is called for the rows.
 - **A reversal-looking defect in a browser is a bidi rendering problem until proven otherwise.**
   Fix with `<bdi dir="ltr">` around Latin runs, not string reversal of stored data.
 - **Hebrew final forms (ךםןףץ) can only end a word.** A word STARTING with one proves visual
