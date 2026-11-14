@@ -7,6 +7,8 @@ const {
   DisconnectReason,
   fetchLatestBaileysVersion,
   normalizeMessageContent,
+  getAggregateVotesInPollMessage,
+  decryptPollVote,
   downloadContentFromMessage,
   BufferJSON,
 } = baileys
@@ -18,6 +20,9 @@ import qrcode from 'qrcode-terminal'
 import path from 'path'
 import { atomicWriteFile } from './atomic_write.js'
 import { createMsgCache } from './msg_cache.js'
+import { createPollRegistry } from './poll_votes.js'
+import { candidatePairs, tryDecryptVote } from './poll_decrypt.js'
+import { createHash } from 'crypto'
 import { installSafeConsoleFilter, createSafeBaileysLogger, jidHint, maskNumbers } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
@@ -121,6 +126,11 @@ const msgCache = createMsgCache(`${APP_DIR}/msg_cache.json`, {
   onError: (stage, err) => logEvent('MSG_CACHE_ERROR', `stage=${stage} err=${err.message}`),
 })
 
+const pollRegistry = createPollRegistry({
+  load: () => { try { return JSON.parse(fs.readFileSync(`${APP_DIR}/poll_map.json`, 'utf8')) } catch { return {} } },
+  save: (obj) => atomicWriteFile(`${APP_DIR}/poll_map.json`, JSON.stringify(obj)).catch(() => {}),
+})
+
 function cacheOutboundMessage(msgId, protoMessage) {
   msgCache.cacheOutboundMessage(msgId, protoMessage)
 }
@@ -189,11 +199,13 @@ app.post('/send', async (req, res) => {
     audio_base64,
     audio_mime,
     audio_ptt,
+    poll,
   } = req.body
 
   const hasText = typeof text === 'string' && text.trim().length > 0
   const hasImage = typeof image_base64 === 'string' && image_base64.trim().length > 0
   const hasAudio = typeof audio_base64 === 'string' && audio_base64.trim().length > 0
+  const hasPoll = !!(poll && typeof poll.name === 'string' && Array.isArray(poll.values) && poll.values.length >= 2)
 
   // Root-fix 2026-09-12: `waSocket` is created (non-null) BEFORE authentication
   // completes and stays non-null for the entire time the bridge sits at the QR
@@ -205,7 +217,7 @@ app.post('/send', async (req, res) => {
   // 'id')" — a confusing 500 instead of a clear, fast, actionable failure.
   // Checking `.user` (only set once Baileys confirms authentication) matches
   // the already-correct /health check exactly.
-  if (!waSocket || !waSocket.user || !to || (!hasText && !hasImage && !hasAudio)) {
+  if (!waSocket || !waSocket.user || !to || (!hasText && !hasImage && !hasAudio && !hasPoll)) {
     return res.status(503).json({
       ok: false,
       error: waSocket && !waSocket.user
@@ -218,7 +230,13 @@ app.post('/send', async (req, res) => {
     const jid = normalizeTargetJid(to, reply_jid)
     let sent = null
 
-    if (hasImage) {
+    if (hasPoll) {
+      const values = poll.values.slice(0, 6).map((v) => String(v).slice(0, 40))
+      const commands = Array.isArray(poll.commands) ? poll.commands.slice(0, values.length).map(String) : []
+      console.log('[Bridge] Sending poll to', jidHint(jid), '| options:', values.length)
+      sent = await waSocket.sendMessage(jid, { poll: { name: String(poll.name).slice(0, 90), values, selectableCount: 1 } })
+      if (sent?.key?.id) pollRegistry.register(sent.key.id, { values, commands, chatJid: jid })
+    } else if (hasImage) {
       const b64 = image_base64.includes(',') ? image_base64.split(',').pop() : image_base64
       const imageBuffer = Buffer.from((b64 || '').trim(), 'base64')
       if (!imageBuffer.length) {
@@ -570,6 +588,10 @@ async function startBot() {
       if (!jid || jid.endsWith('@g.us')) continue
 
       const content = normalizeMessageContent(msg.message) || msg.message
+      if (content.pollUpdateMessage) {
+        await handlePollVoteMessage(sock, msg, content.pollUpdateMessage)
+        continue
+      }
       const text = content.conversation
         || content.extendedTextMessage?.text
         || content.imageMessage?.caption
@@ -690,6 +712,69 @@ async function startBot() {
       }
     }
   })
+
+  // Owner poll votes (2026-11-13): a tap runs the SAME typed command the poll was registered with. The vote
+  // is decrypted from the cached poll creation message, mapped by poll_votes.js, and posted to the normal
+  // inbound webhook as if the owner had typed it - so no approval logic lives in the bridge.
+  sock.ev.on('messages.update', async (updates) => {
+    for (const { key, update } of updates || []) {
+      try {
+        if (!update?.pollUpdates || !key?.id || !pollRegistry.has(key.id)) continue
+        const original = msgCache.getCachedMessage(key.id)
+        if (!original) { logEvent('POLL_VOTE_NO_ORIGINAL', `id=${key.id}`); continue }
+        const votes = getAggregateVotesInPollMessage({ message: original, pollUpdates: update.pollUpdates }, sock.user?.id)
+        const picked = (votes || []).find((v) => Array.isArray(v.voters) && v.voters.length > 0)
+        const jid = key.remoteJid
+        const command = pollRegistry.resolve(key.id, picked?.name, jid)
+        if (!command || !jid || jid.endsWith('@g.us')) continue
+        const rawId = jid.split('@')[0]
+        const digits = rawId.replace(/\D/g, '')
+        const e164 = jid.endsWith('@lid') ? jid : (digits.startsWith('972') ? '+' + digits : '+972' + digits.slice(1))
+        logEvent('POLL_VOTE', `id=${key.id} option=${picked.name}`)
+        await axios.post(BACKEND_WEBHOOK, {
+          from: 'whatsapp:' + e164, body: command, quoted_message_id: '', quoted_text: '',
+          profile_name: '', reply_jid: jid, message_id: `poll:${key.id}:${picked.name}`,
+        }, { timeout: 90000 })
+      } catch (err) {
+        console.error('[Bridge] Poll vote error:', maskNumbers(err.message))
+      }
+    }
+  })
+}
+
+// A vote arrives as a pollUpdateMessage. Baileys' own decrypt fails on our PN/LID address mix, so decrypt here with
+// the candidate JID pairs (poll_decrypt.js) and run the poll's registered command through the normal inbound webhook.
+async function handlePollVoteMessage(sock, msg, update) {
+  try {
+    const creationKey = update.pollCreationMessageKey
+    if (!creationKey?.id || !pollRegistry.has(creationKey.id)) return
+    const original = msgCache.getCachedMessage(creationKey.id)
+    const pollEncKey = original?.messageContextInfo?.messageSecret
+    if (!original || !pollEncKey) { logEvent('POLL_VOTE_NO_ORIGINAL', `id=${creationKey.id}`); return }
+    const jid = msg.key.remoteJid
+    const pairs = candidatePairs({
+      meId: sock.user?.id, meLid: sock.user?.lid,
+      voterKeyAuthor: msg.key.participant || jid, chatJid: jid,
+    })
+    const got = tryDecryptVote(decryptPollVote, update.vote, { pollEncKey, pollMsgId: creationKey.id, pairs })
+    if (!got) { logEvent('POLL_VOTE_DECRYPT_FAILED', `id=${creationKey.id} pairs=${pairs.length}`); return }
+    const names = original.pollCreationMessage?.options?.map((o) => o.optionName)
+      || original.pollCreationMessageV3?.options?.map((o) => o.optionName) || []
+    const picked = (got.vote.selectedOptions || [])
+      .map((h) => names.find((n) => createHash('sha256').update(n).digest('hex') === Buffer.from(h).toString('hex')))
+      .find(Boolean)
+    const command = pollRegistry.resolve(creationKey.id, picked, jid)
+    if (!command || jid.endsWith('@g.us')) return
+    const digits = jid.split('@')[0].replace(/\D/g, '')
+    const e164 = jid.endsWith('@lid') ? jid : (digits.startsWith('972') ? '+' + digits : '+972' + digits.slice(1))
+    logEvent('POLL_VOTE', `id=${creationKey.id} option=${picked}`)
+    await axios.post(BACKEND_WEBHOOK, {
+      from: 'whatsapp:' + e164, body: command, quoted_message_id: '', quoted_text: '',
+      profile_name: '', reply_jid: jid, message_id: `poll:${creationKey.id}:${picked}`,
+    }, { timeout: 90000 })
+  } catch (err) {
+    console.error('[Bridge] Poll vote error:', maskNumbers(err.message))
+  }
 }
 
 startBot()

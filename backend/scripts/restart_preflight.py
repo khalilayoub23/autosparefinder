@@ -106,8 +106,14 @@ def evaluate(facts: Dict[str, Any], now_utc: Optional[datetime] = None) -> Dict[
 
     if facts.get("night_job"):
         blockers.append(f"night pipeline is running {facts['night_job']}")
+    elif in_night_window(now_utc) and facts.get("night_queued"):
+        # 2026-11-14: a recreation landed in the ~30 s gap between two chained night jobs (nothing "running"), the new
+        # container started the next job at once and the old startup cleanup then marked it dead. Jobs still QUEUED
+        # for the night mean the next one starts within a minute: never restart in that gap.
+        blockers.append("night pipeline has queued job(s) " + ", ".join(sorted(map(str, facts["night_queued"]))[:6])
+                        + " - the next one starts within a minute; restart after the night window or once they finish")
     elif in_night_window(now_utc):
-        notes.append("inside the night-pipeline window: the next queued job starts within a minute")
+        notes.append("inside the night-pipeline window and no job is queued: nothing to race")
 
     for job in facts.get("running_jobs") or []:
         blockers.append(f"job_registry: {job} is running")
@@ -225,6 +231,21 @@ def gather() -> Dict[str, Any]:
         facts["running_jobs"] = asyncio.run(_jobs())
     except Exception as e:
         facts["errors"]["job_registry"] = type(e).__name__
+    try:
+        import asyncio
+        import asyncpg
+
+        async def _queued():
+            c = await asyncpg.connect(os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://"),
+                                      timeout=10)
+            try:
+                return [r["job_key"] for r in await c.fetch(
+                    "SELECT job_key FROM night_pipeline_runs WHERE state = 'QUEUED' ORDER BY created_at")]
+            finally:
+                await c.close()
+        facts["night_queued"] = asyncio.run(_queued())
+    except Exception as e:
+        facts["errors"]["night_pipeline_runs"] = type(e).__name__
     try:
         from email_agent import control
         facts["email_writes_in_flight"] = [w for w in control.writes_in_flight() if not w.get("stale")]

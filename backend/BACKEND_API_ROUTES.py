@@ -20,6 +20,7 @@ import json
 import uuid
 from uuid import UUID as _UUID
 import os
+import owner_poll as _owner_poll
 import io
 import time
 import subprocess
@@ -3781,6 +3782,18 @@ def _wa_not_sent_error(error) -> bool:
     return e.startswith("bridge unreachable") or e in _TRANSIENT_BRIDGE_ERRORS
 
 
+def _late_footer(text: str, queued_at: str) -> str:
+    """Delivered-late note. A decision alert (one carrying an owner poll) gets the cleaner trailing footer,
+    kept BEFORE the poll trailer so the trailer stays last; every other message keeps the legacy leading
+    banner byte-for-byte (tests/test_whatsapp_quiet_queue.py, test_owner_notification_changes.py)."""
+    import owner_poll as _op
+    clean, poll = _op.split(text)
+    if not poll:
+        return f"🌙 [נשלח מאוחר — נשמר משעות הלילה {queued_at}]\n{text}"
+    out = _op.late_footer(clean, queued_at)
+    return _op.attach(out, poll["name"], list(zip(poll["values"], poll["commands"])))
+
+
 async def _wa_send_now(to: str, text: str, critical: bool, alert_key: str) -> dict:
     """Send immediately; a send that provably did not leave is queued for the retry pass."""
     result = await _wa_send(to=to, text=text)
@@ -3999,7 +4012,7 @@ async def _flush_wa_quiet_queue() -> int:
             try:
                 result = await _wa_send(
                     to=item["to"],
-                    text=f"🌙 [נשלח מאוחר — נשמר משעות הלילה {item.get('queued_at','')}]\n{item['text']}",
+                    text=_late_footer(item["text"], item.get("queued_at", "")),
                 )
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
@@ -4222,6 +4235,8 @@ async def notify_owner(
     state: str = "",
     fingerprint: str = "",
     remind_s: int = 0,
+    ref: str = "",
+    choices: "list | None" = None,
 ) -> dict:
     """The one function every proactive owner alert must call — health, harvest,
     orders, social, supplier. Gives every message a consistent
@@ -4264,7 +4279,15 @@ async def notify_owner(
     sev_icon = _NOTIFY_SEVERITY_ICON.get(severity, "ℹ️")
     _state_label = _NOTIFY_STATE_LABEL.get(state, "")
     header = f"{sev_icon} [{cat_label}] {_state_label + ' · ' if _state_label else ''}{title}"
-    text = f"{header}\n\n{body}" if body else header
+    # Cleaner layout (2026-11-13): bold title, body, one small id footer; `choices` adds a tap-to-pick
+    # poll (owner_poll.py) whose options run the SAME typed commands - the text still lists them.
+    import owner_poll as _op
+    if ref or choices:
+        text = _op.layout(header, body, ref=ref)       # decision alerts only; every other alert is unchanged
+        if choices:
+            text = _op.attach(text, title, choices)
+    else:
+        text = f"{header}\n\n{body}" if body else header
     # Root-fix 2026-09-01: severity="critical" must bypass quiet hours.
     # Before this, notify_owner() always called _wa_send_update(text, critical=False),
     # so DB-down / high-error-rate alerts were QUEUED until 09:00 even though the health
@@ -5379,6 +5402,8 @@ async def _noa_marketing_loop():
                             severity="info",
                             alert_key=_alert_key_post,
                             cooldown_s=86400,  # each post id notified at most once/day
+                            ref=_post_short_id if social_post_id else "",
+                            choices=_owner_poll.post_choices(_post_short_id) if social_post_id else None,
                         )
                     if NOA_TELEGRAM_MIRROR and TELEGRAM_OWNER_ID and TELEGRAM_ADMIN_TOKEN:
                         tg_msg = f"🎯 NOA — {platform.title()} post ready\n\n📝 {caption}"

@@ -4,6 +4,8 @@ import os
 import base64
 import httpx
 
+import owner_poll as _owner_poll
+
 BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3001/send")
 TYPING_URL = BRIDGE_URL.replace("/send", "/typing")
 DELETE_URL = BRIDGE_URL.replace("/send", "/delete")
@@ -120,11 +122,21 @@ async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
     # Same for a missing recipient (#70): a caller error, permanent — never a retry.
     if not str(to or "").replace("whatsapp:", "").strip():
         return {"ok": False, "error": "INVALID_PAYLOAD: no recipient", "key": None}
+    # Owner polls (owner_poll.py): the trailer is ALWAYS stripped; the poll is sent only to the owner's own chat.
+    text, _poll = _owner_poll.split(text)
+    if not text.strip():
+        return {"ok": False, "error": "INVALID_PAYLOAD: empty body", "key": None}
     payload = {"to": _normalize_bridge_phone(to), "text": text}
     if reply_jid:
         payload["reply_jid"] = _route_reply_jid(reply_jid)
     try:
         data = await _post_send(payload, 15.0)
+        if data.get("ok") and _poll and _owner_poll.is_owner_target(to):
+            # Best effort: the text already carries the typed commands, so a poll failure never fails the alert.
+            try:
+                await _post_send({"to": _normalize_bridge_phone(to), "poll": _poll}, 15.0)
+            except Exception:
+                pass
         # "key" is the sent-message key (remoteJid/id/fromMe) — lets the caller later
         # delete-for-everyone (e.g. remove a verified 2FA code from the chat).
         return {"ok": data.get("ok", False), "error": data.get("error"), "key": data.get("key")}

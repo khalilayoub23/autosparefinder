@@ -100,7 +100,8 @@ async def dispatch(platform: str, content: str, *, media_url: str | None = None,
                     r = await publish_video(obj[0], caption=caption, hashtags=all_tags)
                     return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
                             "error": None if r.get("ok") else str(r.get("error"))[:180],
-                            "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
+                            "not_configured": str(r.get("error", "")).lower().startswith("no access token"),
+                            "draft": bool(r.get("draft"))}
                 logger.warning("tiktok: stored reel %s missing in S3, generating video", video_key)
             except Exception as exc:
                 logger.warning("tiktok: stored reel publish failed (%s), generating video", exc)
@@ -116,7 +117,8 @@ async def dispatch(platform: str, content: str, *, media_url: str | None = None,
                 r = await publish_video(video_bytes, caption=caption, hashtags=all_tags)
                 return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
                         "error": None if r.get("ok") else str(r.get("error"))[:180],
-                        "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
+                        "not_configured": str(r.get("error", "")).lower().startswith("no access token"),
+                            "draft": bool(r.get("draft"))}
             except Exception as exc:
                 logger.warning("tiktok: media_url download failed (%s), generating video", exc)
 
@@ -145,7 +147,8 @@ async def dispatch(platform: str, content: str, *, media_url: str | None = None,
         r = await publish_video(video_bytes, caption=caption, hashtags=all_tags)
         return {"ok": bool(r.get("ok")), "id": r.get("publish_id"),
                 "error": None if r.get("ok") else str(r.get("error"))[:180],
-                "not_configured": str(r.get("error", "")).lower().startswith("no access token")}
+                "not_configured": str(r.get("error", "")).lower().startswith("no access token"),
+                            "draft": bool(r.get("draft"))}
 
     mod = _MODS.get(p)
     if not mod:

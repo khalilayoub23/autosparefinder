@@ -197,6 +197,19 @@ def test_each_kind_of_running_work_blocks(fact, value, needle):
     assert out["safe"] is False and any(needle in b for b in out["blockers"])
 
 
+def test_queued_night_jobs_block_a_restart_inside_the_window():
+    """2026-11-14: a restart in the gap between two chained night jobs raced the next job's start."""
+    night = datetime(2026, 11, 13, 23, 13, tzinfo=timezone.utc)      # 01:13 IST - the real incident
+    out = pre.evaluate(dict(CLEAN, night_queued=["sync_prices", "rex_night"]), night)
+    assert out["safe"] is False
+    assert any("queued job(s) rex_night, sync_prices" in b for b in out["blockers"])
+    # the same facts outside the window do not block (the pipeline is not about to start anything)
+    day = datetime(2026, 11, 14, 16, 0, tzinfo=timezone.utc)       # 18:00 IST: outside the night and group-scan windows
+    assert pre.evaluate(dict(CLEAN, night_queued=["sync_prices"]), day)["safe"] is True
+    # nothing queued -> still only a note
+    assert pre.evaluate(dict(CLEAN, night_queued=[]), night)["safe"] is True
+
+
 def test_night_window_without_a_running_job_is_a_note_not_a_blocker():
     night = datetime(2026, 10, 9, 23, 30, tzinfo=timezone.utc)       # 02:30 IDT
     out = pre.evaluate(dict(CLEAN), night)

@@ -95,3 +95,4 @@ jaguar_parts_raw.ndjson
 **/fb_browser_session/
 **/fb_browser_session/cookies.json
 state/fb_browser_session/
+whatsapp-bridge/poll_map.json

@@ -4,8 +4,9 @@ social/tiktok_publisher.py — TikTok Content Posting API client.
 Sandbox mode: set TIKTOK_SANDBOX=true in .env
 Production:   set TIKTOK_SANDBOX=false after App Review approval.
 
-Publishing flow (unchanged, app-level token, no user auth needed):
-  1. OAuth2 client_credentials — exchange client_key/secret for an app-level access_token
+Publishing flow (2026-11-13: USER token, not client_credentials - TikTok answers the app-level token with
+401 access_token_invalid on /post/publish/*):
+  1. The owner's stored OAuth user token (get_publish_token), granted with video.publish
   2. video_init — initialize upload session
   3. video_upload — upload video bytes
   4. video_publish — publish with caption + hashtags
@@ -54,10 +55,38 @@ _AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/"
 # Must exactly match the redirect_uri routes/webhooks.py's tiktok_oauth_callback
 # already exchanges against — TikTok requires an exact string match.
 REDIRECT_URI = "https://www.autosparefinder.co.il/api/v1/webhooks/tiktok-oauth"
-# Broad enough to cover the analytics read this collector needs
-# (user.info.basic + video.list) without touching the publish() flow above,
-# which continues to use the unrelated client_credentials grant unchanged.
-ANALYTICS_SCOPES = "user.info.basic,video.list"
+# The app (developers.tiktok.com) is live with the Content Posting API in UPLOAD-AS-DRAFT mode: scopes
+# user.info.basic + video.upload. Asking for video.publish / video.list before TikTok enables them gives
+# error=invalid_scope. A Direct Post revision (video.publish) was submitted 2026-11-13; once TikTok approves it, set
+# TIKTOK_DIRECT_POST=1, restart, and have the owner re-consent (a token only carries the scopes granted when it was
+# issued). Until then a post is delivered to the creator's TikTok inbox as a draft and the creator taps Post.
+_DIRECT_POST_PRIVACY = ("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY")
+
+
+def direct_post_enabled() -> bool:
+    return os.getenv("TIKTOK_DIRECT_POST", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def publish_scope() -> str:
+    return "video.publish" if direct_post_enabled() else "video.upload"
+
+
+def consent_scopes() -> str:
+    return f"user.info.basic,{publish_scope()}"
+
+
+def direct_post_privacy() -> str:
+    """Privacy of a Direct Post. An unaudited app may only post privately, so the default is SELF_ONLY; set
+    TIKTOK_PRIVACY_LEVEL=PUBLIC_TO_EVERYONE after TikTok audits the app. Anything unknown falls back to SELF_ONLY."""
+    level = os.getenv("TIKTOK_PRIVACY_LEVEL", "SELF_ONLY").strip().upper()
+    return level if level in _DIRECT_POST_PRIVACY else "SELF_ONLY"
+
+
+def needs_reconnect() -> str:
+    return (f"no access token - TikTok needs the owner's consent ({publish_scope()}). "
+            "Send 'טוקן טיקטוק' in the console and approve once.")
+
+
 _TOKEN_SETTING_KEY = "tiktok_oauth_user_token"
 
 
@@ -68,7 +97,7 @@ def get_authorize_url(state: str = "") -> str:
     never simulated). Everything up to this point is already correctly wired."""
     params = {
         "client_key": TIKTOK_CLIENT_KEY,
-        "scope": ANALYTICS_SCOPES,
+        "scope": consent_scopes(),
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
     }
@@ -222,30 +251,22 @@ async def fetch_video_metrics(video_ids: list[str], access_token: str) -> dict[s
         return {}
 
 
-async def get_access_token() -> Optional[str]:
-    """Client Credentials flow — returns app-level access token."""
-    if not TIKTOK_CLIENT_KEY or not TIKTOK_CLIENT_SECRET:
-        logger.error("TikTok credentials not set in .env")
-        return None
+async def get_publish_token() -> tuple[Optional[str], str]:
+    """(token, reason). The owner's stored user token, refreshed when expired, ONLY if it was granted
+    video.publish. Never the app-level client_credentials token: that one cannot publish."""
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                "https://open.tiktokapis.com/v2/oauth/token/",
-                data={
-                    "client_key":    TIKTOK_CLIENT_KEY,
-                    "client_secret": TIKTOK_CLIENT_SECRET,
-                    "grant_type":    "client_credentials",
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-        data = resp.json()
-        token = data.get("access_token")
-        if not token:
-            logger.error("TikTok token error: %s", data)
-        return token
+        from BACKEND_DATABASE_MODELS import async_session_factory
+        async with async_session_factory() as db:
+            tok = await get_stored_user_token(db)
+            if not tok:
+                return None, needs_reconnect()
+            if publish_scope() not in str(tok.get("scope") or ""):
+                return None, needs_reconnect() + " (stored token lacks " + publish_scope() + ")"
+            access = await get_valid_user_access_token(db)
+            return (access, "") if access else (None, needs_reconnect() + " (refresh failed)")
     except Exception as exc:
-        logger.error("get_access_token failed: %s", exc)
-        return None
+        logger.error("get_publish_token failed: %s", exc)
+        return None, f"no access token - token lookup failed: {str(exc)[:80]}"
 
 
 async def publish_video(
@@ -259,9 +280,9 @@ async def publish_video(
 
     Returns {"ok": bool, "publish_id": str|None, "error": str|None}
     """
-    token = access_token or await get_access_token()
+    token, reason = (access_token, "") if access_token else await get_publish_token()
     if not token:
-        return {"ok": False, "publish_id": None, "error": "no access token"}
+        return {"ok": False, "publish_id": None, "error": reason or needs_reconnect()}
 
     full_caption = caption + " " + " ".join(f"#{h.lstrip('#')}" for h in hashtags)
     headers = {
@@ -272,26 +293,28 @@ async def publish_video(
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
 
-            # Step 1 — initialize upload
+            # Step 1 — initialize upload. Direct Post (video.publish, TIKTOK_DIRECT_POST=1) publishes to the profile;
+            # otherwise the draft-inbox endpoint is used and the creator taps Post in the TikTok app.
+            direct = direct_post_enabled()
+            body = {"source_info": {
+                "source":     "FILE_UPLOAD",
+                "video_size": len(video_bytes),
+                "chunk_size": len(video_bytes),
+                "total_chunk_count": 1,
+            }}
+            if direct:
+                body["post_info"] = {
+                    "title":          full_caption[:150],
+                    "privacy_level":  direct_post_privacy(),
+                    "disable_duet":   False,
+                    "disable_stitch": False,
+                    "disable_comment": False,
+                    "video_cover_timestamp_ms": 1000,
+                }
             init_resp = await client.post(
-                f"{_BASE}/post/publish/video/init/",
+                f"{_BASE}/post/publish/{'video' if direct else 'inbox/video'}/init/",
                 headers=headers,
-                json={
-                    "post_info": {
-                        "title":        full_caption[:150],
-                        "privacy_level": "PUBLIC_TO_EVERYONE",
-                        "disable_duet":  False,
-                        "disable_stitch": False,
-                        "disable_comment": False,
-                        "video_cover_timestamp_ms": 1000,
-                    },
-                    "source_info": {
-                        "source":     "FILE_UPLOAD",
-                        "video_size": len(video_bytes),
-                        "chunk_size": len(video_bytes),
-                        "total_chunk_count": 1,
-                    },
-                },
+                json=body,
             )
             init_data = init_resp.json()
             if init_resp.status_code != 200:
@@ -315,7 +338,7 @@ async def publish_video(
 
         logger.info("tiktok_publisher: published video publish_id=%s sandbox=%s",
                     publish_id, TIKTOK_SANDBOX)
-        return {"ok": True, "publish_id": publish_id, "error": None}
+        return {"ok": True, "publish_id": publish_id, "error": None, "draft": not direct}
 
     except Exception as exc:
         logger.error("publish_video failed: %s", exc)
@@ -331,9 +354,9 @@ async def post_text_content(
     Post text-only content (photo post) — useful for quick marketing posts
     without video production.
     """
-    token = access_token or await get_access_token()
+    token, reason = (access_token, "") if access_token else await get_publish_token()
     if not token:
-        return {"ok": False, "post_id": None, "error": "no access token"}
+        return {"ok": False, "post_id": None, "error": reason or needs_reconnect()}
 
     full_caption = caption + " " + " ".join(f"#{h.lstrip('#')}" for h in hashtags)
     headers = {

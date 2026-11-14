@@ -3,6 +3,10 @@
 # Waits for the API to be healthy, then resumes any workers that were active before restart.
 # Triggered automatically by the docker-compose command on every container start.
 
+# Taken BEFORE uvicorn finishes starting (this script is launched in the background just ahead of it, see the
+# compose command). Anything that "started" after this instant belongs to THIS container.
+export CONTAINER_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+
 STATE_DIR="/app/state"
 LOG_DIR="/app/state/logs"
 mkdir -p "$STATE_DIR" "$LOG_DIR"
@@ -35,18 +39,23 @@ async def clear_lock():
 asyncio.run(clear_lock())
 PYEOF
 
-# Mark any stale running job_registry entries as dead
+# Mark stale running job_registry entries as dead - ONLY rows that started before this container did.
+# (2026-11-14: this used to be `WHERE status='running'`, which also killed a job the new container's night pipeline
+# had started 3 seconds earlier -> "Killed: container restarted before job finished" + a false critical alert to the
+# owner, while the job itself ran to completion.)
 python3 - << 'PYEOF'
 import asyncio, asyncpg, os
 DB = os.environ.get('DATABASE_URL', '').replace('postgresql+asyncpg://', 'postgresql://')
 async def cleanup_jobs():
     try:
         conn = await asyncpg.connect(DB)
+        from datetime import datetime
+        cstart = datetime.fromisoformat(os.environ['CONTAINER_START_UTC'])
         result = await conn.execute("""
             UPDATE job_registry SET status='dead', completed_at=NOW(),
                 error_message='Killed: container restarted before job finished'
-            WHERE status='running'
-        """)
+            WHERE status='running' AND started_at < $1
+        """, cstart)
         if 'UPDATE' in result and result != 'UPDATE 0':
             print(f'[container_start] Stale jobs killed: {result}')
         await conn.close()

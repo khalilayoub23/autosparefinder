@@ -31,6 +31,8 @@ Last Updated: 2026-10-27
 from __future__ import annotations
 
 import asyncio
+
+import owner_poll as _owner_poll
 import json
 import os
 import time
@@ -333,7 +335,9 @@ async def process_owner_updates(store, notify: Notify, todos, now: Optional[date
         title, body = format_alert(row, agent)
         result = await notify("email", title, body,
                               severity="warning" if row.get("requires_human") else "info",
-                              alert_key=f"email_{row['id']}", cooldown_s=30 * 86400)
+                              alert_key=f"email_{row['id']}", cooldown_s=30 * 86400,
+                              ref=ref(row),
+                              choices=_owner_poll.email_choices(ref(row), has_draft=bool(row.get("gmail_draft_id"))))
         if _delivered(result or {}):
             await store.mark_owner_notified(row["id"])
             out["alerted"] += 1

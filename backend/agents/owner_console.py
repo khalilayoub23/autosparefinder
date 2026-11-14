@@ -284,20 +284,38 @@ async def _tiktok_auth_status(db) -> str:
     simulates or invents having done this step.
     """
     from social.tiktok_publisher import get_stored_user_token, get_authorize_url
+    from social.tiktok_publisher import publish_scope
     tok = await get_stored_user_token(db)
-    if tok:
+    if tok and publish_scope() in str(tok.get("scope") or ""):
         return (
-            f"✅ טיקטוק מאושר לניתוח ביצועים (open_id: {tok.get('open_id','?')[:12]}…)\n"
-            f"scope: {tok.get('scope','')}\n"
-            f"איסוף ביצועים אמיתי פעיל במחזור הבא."
+            f"✅ טיקטוק מאושר לפרסום (open_id: {tok.get('open_id','?')[:12]}…)\n"
+            f"scope: {tok.get('scope','')}"
         )
     url = get_authorize_url(state="owner_console")
+    why = (f"האישור הקיים חסר הרשאה ({publish_scope()})." if tok
+           else "טיקטוק עדיין לא מאושר.")
     return (
-        "⚠️ טיקטוק עדיין לא מאושר לאיסוף נתוני ביצועים (פרסום כן עובד — זה נפרד).\n"
-        "כדי להפעיל, פתח את הקישור הזה ואשר בטיקטוק:\n"
-        f"{url}\n\n"
-        "לאחר האישור, המערכת תתחיל לאסוף צפיות/לייקים/תגובות אוטומטית."
+        f"⚠️ {why} בלי האישור, פרסום לטיקטוק נכשל.\n"
+        "פתח את הקישור ואשר פעם אחת בטיקטוק:\n"
+        f"{url}"
     )
+
+
+def post_publish_meta(external_post_ids) -> tuple:
+    """(media_url, link, video_key) of a NOA post, read from its `external_post_ids` JSONB (where NOA stores them
+    at draft time). The console's approval used to import `_social_meta` from BACKEND_API_ROUTES (it lives in
+    routes/admin.py and takes an ORM row) inside a bare try/except, so it ALWAYS failed silently and every post
+    approved from WhatsApp was published without its QR image, link or stored reel (found 2026-11-13)."""
+    meta = external_post_ids
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except Exception:
+            meta = {}
+    meta = meta if isinstance(meta, dict) else {}
+    return (meta.get("media_url") or meta.get("image_url"),
+            meta.get("link") or meta.get("cta_url"),
+            meta.get("video_key"))
 
 
 async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
@@ -334,14 +352,10 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
     # media/link best-effort from the app's meta helper (image-required platforms need it)
     media_url = link = video_key = None
     try:
-        from BACKEND_API_ROUTES import _social_meta  # type: ignore
-        res = await db.execute(_sql("SELECT * FROM social_posts WHERE id=:id"), {"id": pid})
-        meta = _social_meta(res.fetchone())
-        media_url = (meta or {}).get("media_url") or (meta or {}).get("image_url")
-        link = (meta or {}).get("link") or (meta or {}).get("cta_url")
-        video_key = (meta or {}).get("video_key")
-    except Exception:
-        pass
+        res = await db.execute(_sql("SELECT external_post_ids FROM social_posts WHERE id=:id"), {"id": pid})
+        media_url, link, video_key = post_publish_meta(res.scalar())
+    except Exception as exc:
+        log.warning("approve %s: could not load media/link/video_key (%s) - publishing text only", _short(pid), exc)
     from social import registry
     hashtags = [f"#{m.group(1)}" for m in re.finditer(r"#([A-Za-z0-9_֐-׿؀-ۿ]+)", content)]
     results = []
@@ -368,7 +382,8 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
                                         video_key=video_key)
             if r.get("ok"):
                 published[p] = r.get("id")
-                results.append(f"• {p}: ✅ פורסם")
+                results.append(f"• {p}: 📥 נשלח כטיוטה לטיקטוק — פתח את אפליקציית TikTok ולחץ 'פרסם'"
+                               if r.get("draft") else f"• {p}: ✅ פורסם")
             else:
                 results.append(f"• {p}: ❌ {str(r.get('error'))[:80]}")
         except Exception as e:
@@ -1994,7 +2009,10 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         if not post:
             return "פורמט: *ערוך <מזהה> <הטקסט המתוקן>* (המזהה מהרשימה: *פוסטים*)."
         if not (m_ed.group(3) or "").strip():
-            return f"חסר הטקסט המתוקן: *ערוך {_short(post['id'])} <הטקסט החדש>*"
+            _cur = str(post.get("content") or post.get("caption") or "").strip()
+            return (f"✏️ עריכת פוסט {_short(post['id'])}. הנוסח הנוכחי:\n\n{_cur[:900]}\n\n"
+                    f"שלח את הנוסח החדש כך: *ערוך {_short(post['id'])} <הטקסט החדש>* "
+                    f"(או השב בציטוט להודעה הזו). הפוסט יחכה לאישור מחדש.")
         return await edit_post_text(db, post["id"], m_ed.group(3))
     # An edited post returned WITHOUT the `ערוך <id>` prefix (id in the text, or clearly a revision of one pending
     # post) is that post's next version - never free chat (2026-11-13; agents/returned_post.py).
