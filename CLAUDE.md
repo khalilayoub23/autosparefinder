@@ -412,7 +412,7 @@ Rules:
 - **ONE parts-identity policy: `backend/part_identity.py` (`classify` -> SAME / DIFFERENT / UNCERTAIN), fail closed (2026-11-14).**
   Only a proven SAME may be merged, deactivated or relinked; UNCERTAIN is reported by the weekly gate (`pipeline_parity_check.py
   --evidence FILE`), never merged. A shared number, a punctuation-stripped number, a similar title or a vehicle name is never proof:
-  an aftermarket article number is unique only within its brand (558 wrong merges undone). Brands come from
+  an aftermarket article number is unique only within its brand (574 wrong merges undone). Brands come from
   `backend/data/article_brands.json`; an alias needs a written-evidence entry in `article_brand_aliases.json` (a re-boxed product
   is not an alias). Any new script that merges parts must call it and be added to `tests/test_part_identity_policy.py`.
 - **asyncpg returns `jsonb` as TEXT.** `isinstance(row["specifications"], dict)` is never true on a raw asyncpg row: the merge
