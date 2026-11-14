@@ -1,4 +1,11 @@
 {
  "about": "VERIFIED brand aliases for part_identity: two spellings of ONE brand. Every entry needs written evidence (>= 20 characters) or it is ignored. A re-boxed product sold under another company's brand is NOT an alias: METZGER / QUICK BRAKE and COFLE / METZGER are different brands and stay separate listings (2026-11-14 review).",
- "aliases": []
+ "aliases": [
+  {
+   "alias": "FERDINAND BILSTEIN",
+   "brand": "FEBI BILSTEIN",
+   "evidence": "febi bilstein is the brand of Ferdinand Bilstein GmbH + Co. KG (company name printed on febi packaging); live pair 2026-11-14: 'Front FERDINAND BILSTEIN 116361 Brake Pad Set' and 'febi bilstein 116361' are one article",
+   "verified_on": "2026-11-14"
+  }
+ ]
 }

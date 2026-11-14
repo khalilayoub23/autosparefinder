@@ -80,6 +80,8 @@ CASES = [
      row("GRILLE-BUMPER", "2420301", pt="oem", make="Ford"), U, "branded_vs_unbranded"),
     ("OEM-typed row with an unknown title prefix", row("Sinuslive 11205 Fuse", "11205", pt="oem"), row("Fuse", "11205", pt="oem"),
      U, "unrecognised_title_prefix"),
+    ("verified alias inside a vehicle/position-first title", row("Front FERDINAND BILSTEIN 116361 Brake Pad Set, disc brake", "116361"),
+     row("Chrysler Neon 2 Brake pad set febi bilstein 116361", "116361"), S, "same_brand_same_number"),
     # --- not even a candidate -----------------------------------------------------------------------------------
     ("different numbers", row("K2 T104 Brake Fluid", "T104"), row("K2 T105 Brake Fluid", "T105"), D, "different_number"),
     ("empty number", row("K2 Brake Fluid", ""), row("K2 Brake Fluid", ""), D, "different_number"),
