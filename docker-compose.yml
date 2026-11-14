@@ -243,6 +243,8 @@ services:
       # Direct Post (video.publish) only after TikTok approves the revision + the owner re-consents; default = draft upload
       TIKTOK_DIRECT_POST: ${TIKTOK_DIRECT_POST:-0}
       TIKTOK_PRIVACY_LEVEL: ${TIKTOK_PRIVACY_LEVEL:-SELF_ONLY}
+      # Weekly duplicate-merge cap per run (was the code default 2000; W46 needed ~2650, left 644 -> post-condition FAILED)
+      WEEKLY_MAINT_MERGE_LIMIT: ${WEEKLY_MAINT_MERGE_LIMIT:-10000}
       TELEGRAM_ADMIN_BOT_TOKEN: ${TELEGRAM_ADMIN_BOT_TOKEN}
       TELEGRAM_OWNER_CHAT_ID: ${TELEGRAM_OWNER_CHAT_ID}
       # NOA social publishers (see docs/SOCIAL_SETUP.md). Empty = platform stays draft.
