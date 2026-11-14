@@ -152,6 +152,25 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
             return _far_future
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
+    # A normalised number can cover SEVERAL different articles (K2 T104 twice + STEINHOF T-104): split the group into
+    # identity clusters first and merge each cluster on its own, so real duplicates are still merged when the
+    # best-scored row of the whole group happens to be a different article.
+    clusters: List[List[Dict[str, Any]]] = []
+    for r in rows:
+        for cl in clusters:
+            if not part_identity.distinct_articles(cl[0], r):
+                cl.append(r)
+                break
+        else:
+            clusters.append([r])
+    if len(clusters) > 1:
+        st["skipped_distinct"] = len(clusters) - 1
+        for cl in clusters:
+            if len(cl) > 1:
+                for k, v in (await merge_group(conn, cl, dry)).items():
+                    st[k] = st.get(k, 0) + v
+        return st
+
     ranked = sorted(rows, key=lambda r: (-score_row(r), _created(r)))
     canon, candidates = ranked[0], ranked[1:]
     cid = canon["id"]
@@ -505,7 +524,7 @@ async def run_one_manufacturer(mfr, limit: int, batch: int, dry: bool) -> int:
                     st = await merge_group(conn, grp, dry)
                     for k, v in st.items():
                         totals[k] = totals.get(k, 0) + v
-                    groups_done += 1
+                    groups_done += 1 if st.get("losers") else 0     # a group left untouched is not a merge
             except Exception as exc:
                 print(f"[merge] group {r['o']} failed: {type(exc).__name__}: {exc}",
                       flush=True)

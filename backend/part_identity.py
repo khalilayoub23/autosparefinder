@@ -7,7 +7,7 @@ Process: A manufacturer OEM number is unique whatever its punctuation (06Q-103-4
          (2026-11-14 audit: REMSA pads into a TOPRAN cable, K2 brake fluid into a STEINHOF towbar), moving the
          loser's offers and fitment onto an unrelated master.
          Rule (conservative - uncertain = leave unchanged): two rows are DISTINCT when their raw numbers differ by
-         more than case/spaces AND each row's name carries its own number with a different text in front of it
+         more than case AND each row's name carries its own number with a different text in front of it
          (the brand). Identical raw numbers are never called distinct here (same article, differently titled).
 Data Imported/Modified: none (pure functions).
 Data Sources: none.
@@ -23,8 +23,9 @@ _PREFIX = re.compile(r"^\s*article\s*(№|no\.?|#)?\s*:?\s*", re.I)
 
 
 def raw_number(oem_number: Any) -> str:
-    """The number as the source wrote it, minus the 'Article №:' label, case and spaces (punctuation KEPT)."""
-    return re.sub(r"\s+", "", _PREFIX.sub("", str(oem_number or ""))).upper()
+    """The number exactly as the source wrote it, minus the 'Article №:' label and case; inner spaces are KEPT
+    (collapsed to one): SWF 119272 (wipers) and TOPRAN 119 272 (breather pipe) differ only by a space."""
+    return re.sub(r"\s+", " ", _PREFIX.sub("", str(oem_number or ""))).strip().upper()
 
 
 def brand_prefix(name: Any, oem_number: Any) -> Optional[str]:

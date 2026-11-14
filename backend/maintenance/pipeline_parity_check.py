@@ -79,7 +79,9 @@ DUPLICATE_GROUPS_SQL = """
     )
     SELECT COUNT(*) FILTER (WHERE NOT all_held) AS dupes, COUNT(*) FILTER (WHERE all_held) AS held,
            (SELECT COALESCE(jsonb_agg(jsonb_build_object('g', x.manufacturer_id::text || '|' || x.k,
-                                                         'name', p.name, 'oem_number', p.oem_number)), '[]'::jsonb)
+                                                         'name', p.name, 'oem_number', p.oem_number,
+                                                         'suppliers', (SELECT COALESCE(jsonb_agg(DISTINCT sp.supplier_id::text), '[]'::jsonb)
+                                                                       FROM supplier_parts sp WHERE sp.part_id = p.id))), '[]'::jsonb)
               FROM (SELECT manufacturer_id, k FROM grp WHERE NOT all_held LIMIT 5000) x
               JOIN g ON g.manufacturer_id IS NOT DISTINCT FROM x.manufacturer_id AND g.k = x.k
               JOIN parts_catalog p ON p.id = ANY(g.ids)) AS open_members
@@ -88,14 +90,32 @@ DUPLICATE_GROUPS_SQL = """
 
 
 def split_distinct_groups(open_members) -> tuple:
-    """(real duplicate groups, groups whose members are ALL provably different articles - part_identity)."""
+    """(real duplicate groups, groups that are not a defect). A group is split into identity clusters
+    (part_identity) exactly as merge_master_parts does; it is a REAL duplicate only when some cluster of two or more
+    rows has a member the offer policy does not hold open (no offer whose supplier is also on another row of that
+    cluster). K2 T104 twice + STEINHOF T-104: one cluster of two (same supplier -> held) + a different article."""
     import part_identity
     groups: dict = {}
     for m in open_members or []:
         groups.setdefault(m["g"], []).append(m)
-    distinct = sum(1 for rows in groups.values()
-                   if all(part_identity.distinct_articles(a, b) for i, a in enumerate(rows) for b in rows[i + 1:]))
-    return len(groups) - distinct, distinct
+    real = 0
+    for rows in groups.values():
+        clusters: list = []
+        for r in rows:
+            for cl in clusters:
+                if not part_identity.distinct_articles(cl[0], r):
+                    cl.append(r)
+                    break
+            else:
+                clusters.append([r])
+        for cl in clusters:
+            if len(cl) < 2:
+                continue
+            sup = [set(m.get("suppliers") or []) for m in cl]
+            if any(not (s_i & set().union(*(sup[:i] + sup[i + 1:]))) for i, s_i in enumerate(sup)):
+                real += 1
+                break
+    return real, len(groups) - real
 
 
 async def main() -> int:
@@ -124,8 +144,8 @@ async def main() -> int:
                "same manufacturer + OEM should be ONE master record")
         record("duplicate groups held by offer policy", True, held,
                "same-supplier offers with different SKUs: kept apart by policy, not a defect")
-        record("groups of different aftermarket articles", True, distinct,
-               "same digits, different brands (part_identity): never merged, not a defect")
+        record("groups with different articles / policy-held clusters", True, distinct,
+               "same digits, different brands (part_identity) or held per cluster: not a defect")
 
     # 2. A merged loser must never still be active — that would double-list it.
     stranded = await c.fetchval("""

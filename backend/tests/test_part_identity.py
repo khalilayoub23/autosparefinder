@@ -15,6 +15,13 @@ def test_real_wrong_merges_are_distinct():
                                 _r("Hyundai Trajet Van Repair kit, suspension strut DACO Germany 151309", "151309"))
 
 
+def test_space_only_difference_between_two_brands_is_distinct():
+    assert pi.distinct_articles(_r("SWF 119272 SKODA Scala Hatchback windshield wipers", "119272"),
+                                _r("TOPRAN 119 272 Rocker cover breather pipe", "119 272"))
+    # an OEM number written with/without a space, names without the number: still the same part
+    assert not pi.distinct_articles(_r("מסנן", "8R0133843K BBB"), _r("מסנן אויר", "8R0133843KBBB"))
+
+
 def test_oem_punctuation_variants_stay_mergeable():
     assert not pi.distinct_articles(_r("מפריד שמן", "06Q103495H"), _r("Vapor Canister Purge Valve Assembly", "06Q-103-495-H"))
     assert not pi.distinct_articles(_r("Brake Hose", "587321D000DS"), _r("צינור בלם קד R קרנס 06", "587321D000-DS"))

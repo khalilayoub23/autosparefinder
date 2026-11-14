@@ -42,6 +42,7 @@ POLICY_BOUND_ACTORS = (
     "maintenance/quarantine_motorstore_offers_129.py",
     "maintenance/restore_merged_offers_133.py",
     "maintenance/remove_placeholder_offers_149.py",   # owner-authorised removal of provably fabricated sentinel offers (archived)
+    "maintenance/unmerge_distinct_articles.py",       # moves an offer BACK to the part it was wrongly merged away from (no delete/price change)
 )
 
 
