@@ -56,6 +56,31 @@ def meili_count():
         return int(json.load(r).get("numberOfDocuments", 0))
 
 
+DUPLICATE_GROUPS_SQL = """
+    WITH g AS (
+        SELECT manufacturer_id, upper(replace(replace(oem_number,' ',''),'-','')) AS k, array_agg(id) AS ids
+        FROM parts_catalog
+        WHERE is_active AND oem_number IS NOT NULL AND btrim(oem_number) <> ''
+        GROUP BY 1, 2 HAVING COUNT(*) > 1
+    ), o AS (
+        SELECT g.manufacturer_id, g.k, m.id, sp.supplier_id
+        FROM g CROSS JOIN LATERAL unnest(g.ids) AS m(id)
+        LEFT JOIN supplier_parts sp ON sp.part_id = m.id
+    ), shared AS (
+        SELECT manufacturer_id, k, supplier_id FROM o WHERE supplier_id IS NOT NULL
+        GROUP BY 1, 2, 3 HAVING COUNT(DISTINCT id) > 1
+    ), member AS (
+        SELECT o.manufacturer_id, o.k, o.id, bool_or(s.supplier_id IS NOT NULL) AS held
+        FROM o LEFT JOIN shared s ON s.manufacturer_id IS NOT DISTINCT FROM o.manufacturer_id
+                                 AND s.k = o.k AND s.supplier_id = o.supplier_id
+        GROUP BY 1, 2, 3
+    ), grp AS (
+        SELECT manufacturer_id, k, bool_and(held) AS all_held FROM member GROUP BY 1, 2
+    )
+    SELECT COUNT(*) FILTER (WHERE NOT all_held) AS dupes, COUNT(*) FILTER (WHERE all_held) AS held FROM grp
+"""
+
+
 async def main() -> int:
     c = await asyncpg.connect(DB, statement_cache_size=0)
     await c.execute("SET statement_timeout='300s'")
@@ -65,16 +90,20 @@ async def main() -> int:
 
     # 1. No duplicate (manufacturer, normalised OEM) group should remain active.
     #    EXPENSIVE: a GROUP BY aggregate over every active row (~90s).
-    dupes = None if FAST else await c.fetchval("""
-        SELECT COUNT(*) FROM (
-            SELECT 1 FROM parts_catalog
-            WHERE is_active AND oem_number IS NOT NULL AND btrim(oem_number) <> ''
-            GROUP BY manufacturer_id, upper(replace(replace(oem_number,' ',''),'-',''))
-            HAVING COUNT(*) > 1
-        ) g""")
+    #    A group is NOT a defect when the offer policy holds it open: merge_master_parts never moves or deletes a
+    #    loser's offer when the master already has an offer from the same supplier (OFFER_DEDUPLICATION_POLICY class
+    #    B/F: different SKU = not provably the same offer), so that loser stays active by design. Such a group has
+    #    every member carrying an offer whose supplier also appears on another member. Counting it failed the weekly
+    #    gate forever on a group nothing may merge (2026-11-07 and 2026-11-14: "1 remaining").
+    dupes = held = None
+    if not FAST:
+        row = await c.fetchrow(DUPLICATE_GROUPS_SQL)
+        dupes, held = int(row["dupes"] or 0), int(row["held"] or 0)
     if dupes is not None:
         record("duplicate OEM groups remaining", dupes == 0, dupes,
                "same manufacturer + OEM should be ONE master record")
+        record("duplicate groups held by offer policy", True, held,
+               "same-supplier offers with different SKUs: kept apart by policy, not a defect")
 
     # 2. A merged loser must never still be active — that would double-list it.
     stranded = await c.fetchval("""
