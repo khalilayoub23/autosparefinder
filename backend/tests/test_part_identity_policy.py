@@ -192,3 +192,20 @@ def test_every_merge_capable_script_asks_the_one_policy():
                                       "maintenance/pipeline_parity_check.py", "maintenance/restore_merged_offers_133.py",
                                       "maintenance/unmerge_distinct_articles.py"]), writers
     assert "distinct_articles" not in (ROOT / "maintenance/merge_master_parts.py").read_text(encoding="utf-8")
+
+
+def test_missing_vehicle_word_list_disables_vehicle_first_brands(tmp_path, monkeypatch):
+    """Without the vehicle-word list a make could pass as the brand ending a title: then no suffix brand is accepted."""
+    a = row("Ford Focus 4 Turnier Tappet FRECCIA PI 06-0019", "PI 06-0019")
+    b = row("FRECCIA PI 06-0019 Tappet Hydraulic", "PI 06-0019")
+    assert pi.classify(a, b).same
+    monkeypatch.setattr(pi, "_vehicle_words", frozenset())
+    assert pi.classify(a, b).decision == U
+    pi.configure()
+
+
+def test_builder_emits_vehicle_words():
+    src = (ROOT / "maintenance" / "build_article_brands.py").read_text(encoding="utf-8")
+    assert '"vehicle_words": sorted(vehicle_words)' in src and "refusing to write a vocabulary without vehicle_words" in src
+    doc = json.loads(pi.BRANDS_FILE.read_text(encoding="utf-8"))
+    assert len(doc["vehicle_words"]) > 100 and "SUZUKI" in doc["vehicle_words"]

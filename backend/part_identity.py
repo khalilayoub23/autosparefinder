@@ -117,6 +117,8 @@ def _suffix_brand_ok(cand: str) -> bool:
     global _vehicle_words
     if _vehicle_words is None:
         _vehicle_words = load_vehicle_words()
+    if not _vehicle_words:        # list missing/unreadable: a vehicle make could pass as a brand -> no suffix brands at all
+        return False
     return (len(re.sub(r"[^A-Z0-9]", "", cand)) >= 3 and cand not in _NOT_A_SUFFIX_BRAND and cand not in _vehicle_words
             and _vocabulary().get(cand, 0) >= MIN_SUFFIX_ROWS)
 
@@ -138,7 +140,7 @@ def _alias_map() -> Dict[str, str]:
 def configure(brands: Optional[Mapping[str, int]] = None, aliases: Optional[Mapping[str, str]] = None) -> None:
     """Tests / tools: replace the loaded vocabulary or alias table (None = reload from the data files)."""
     global _vocab, _aliases, _vehicle_words
-    _vehicle_words = None
+    _vehicle_words = None if brands is None else load_vehicle_words()
     _vocab = None if brands is None else {brand_key(k): int(v) for k, v in brands.items()}
     _aliases = None if aliases is None else {brand_key(k): brand_key(v) for k, v in aliases.items()}
 

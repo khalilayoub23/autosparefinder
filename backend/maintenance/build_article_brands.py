@@ -7,7 +7,9 @@ Process: 1. READ-ONLY scan of parts_catalog: for every row whose name contains i
             of it (first 40 characters at most) and count how many titles share it.
          2. Keep a prefix when at least --min-rows titles share it (default 30), it has at most 3 words, carries no
             bracket and is not a known non-brand (quantity prefixes such as '2X BRAKE DISC', generic words).
-         3. Write the JSON file (--out, default: print only). Review the diff before committing: a wrong entry makes two
+         3. Collect the vehicle makes and their words (car_brands, brand_aliases, parts_catalog.manufacturer) as
+            `vehicle_words`: never a brand at the END of a vehicle-first title ('Brake disc for Suzuki 51234').
+         4. Write the JSON file (--out, default: print only). Review the diff before committing: a wrong entry makes two
             unrelated rows look like one brand.
 Data Imported/Modified: none in the database; writes the JSON file given by --out.
 Data Sources: parts_catalog (name, oem_number).
@@ -48,12 +50,23 @@ async def build(min_rows: int) -> dict:
         await conn.execute("SET default_transaction_read_only = on")
         await conn.execute("SET statement_timeout = '600s'")
         rows = await conn.fetch(SQL, min_rows)
+        # vehicle makes / model-family words: part_identity never accepts them as the brand ENDING a vehicle-first title
+        makes = await conn.fetch("SELECT name FROM car_brands UNION SELECT alias FROM brand_aliases "
+                                 "UNION SELECT DISTINCT manufacturer FROM parts_catalog WHERE manufacturer IS NOT NULL")
+        vehicle_words = set()
+        for m in makes:
+            name = (m[0] or "").strip().upper()
+            if name:
+                vehicle_words.add(name)
+                vehicle_words.update(t for t in re.split(r"[\s\-/]+", name) if len(t) >= 2)
     finally:
         await conn.close()
     brands = {r["pfx"]: int(r["n"]) for r in rows if keep(r["pfx"])}
+    if not vehicle_words:
+        raise SystemExit("no vehicle makes found - refusing to write a vocabulary without vehicle_words")
     return {"generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "min_rows": min_rows,
             "source": "parts_catalog titles (maintenance/build_article_brands.py)",
-            "brands": dict(sorted(brands.items()))}
+            "brands": dict(sorted(brands.items())), "vehicle_words": sorted(vehicle_words)}
 
 
 def main() -> int:
