@@ -35,8 +35,8 @@ async def _scenario(module, fn):
                 await c.execute("INSERT INTO suppliers (id,name,country,is_active) VALUES ($1,$2,'IL',true)", sid, nm)
             canon, loser = uuid.uuid4(), uuid.uuid4()
             for pid, sku in ((canon, f"C-{tag}"), (loser, f"L-{tag}")):
-                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,base_price,created_at)"
-                                " VALUES ($1,$2,'n',$3,$4,$5,true,$6,NOW())", pid, sku, brand["name"], brand["id"], f"OEM{tag}", 10 if pid == canon else None)
+                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,base_price,created_at,part_type)"
+                                " VALUES ($1,$2,'n',$3,$4,$5,true,$6,NOW(),'oem')", pid, sku, brand["name"], brand["id"], f"OEM{tag}", 10 if pid == canon else None)
             o_can, o_los_s, o_los_t = (uuid.uuid4() for _ in range(3))
             for oid, sid, pid, sku, price, pt in ((o_can, S, canon, f"A-{tag}", 100, "oem"), (o_los_s, S, loser, f"B-{tag}", 80, "aftermarket"),
                                                   (o_los_t, T, loser, f"C-{tag}", 90, "oem")):
@@ -95,14 +95,14 @@ def test_merge_never_touches_a_different_aftermarket_article():
                 a, b = uuid.uuid4(), uuid.uuid4()
                 for pid, sku, name, oem, price in ((a, f"DA-{tag}", f"REMSA {tag}.02 Brake pad set", f"{tag}.02", 10),
                                                    (b, f"DB-{tag}", f"TOPRAN {tag} 02 Gear selector cable", f"{tag} 02", None)):
-                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,base_price,created_at)"
-                                    " VALUES ($1,$2,$3,$4,$5,$6,true,$7,NOW())", pid, sku, name, brand["name"], brand["id"], oem, price)
+                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,base_price,created_at,part_type)"
+                                    " VALUES ($1,$2,$3,$4,$5,$6,true,$7,NOW(),'aftermarket')", pid, sku, name, brand["name"], brand["id"], oem, price)
                 ob = uuid.uuid4()
                 await c.execute("INSERT INTO supplier_parts (id,supplier_id,part_id,supplier_sku,price_usd,price_ils,is_available,min_order_qty)"
                                 " VALUES ($1,$2,$3,$4,1,50,true,1)", ob, T, b, f"X-{tag}")
                 await c.execute("INSERT INTO part_vehicle_fitment (part_id, manufacturer, model, year_from, year_to) VALUES ($1,$2,'Z',2010,2015)", b, brand["name"])
                 st = await mod.merge_group(c, await mod.fetch_group(c, [str(a), str(b)]), False)
-                assert st.get("skipped_distinct") == 1 and st["losers"] == 0
+                assert st.get("skipped_distinct") == 2 and st["losers"] == 0      # both rows left untouched
                 assert await c.fetchval("SELECT count(*) FROM parts_catalog WHERE id = ANY($1::uuid[]) AND is_active", [a, b]) == 2
                 assert await c.fetchval("SELECT part_id FROM supplier_parts WHERE id=$1", ob) == b
                 assert await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE part_id=$1", b) == 1
@@ -131,8 +131,8 @@ def test_bmw_oem_dedup_keeps_conflicting_offer_and_history():
                     await c.execute("INSERT INTO suppliers (id,name,country,is_active) VALUES ($1,$2,'IL',true)", sid, nm)
                 canon, loser = uuid.uuid4(), uuid.uuid4()
                 for pid, sku in ((canon, f"BC-{tag}"), (loser, f"BL-{tag}")):
-                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at)"
-                                    " VALUES ($1,$2,'n',$3,$4,$5,true,NOW())", pid, sku, brand["name"], brand["id"], f"BOEM{tag}")
+                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,part_type)"
+                                    " VALUES ($1,$2,'n',$3,$4,$5,true,NOW(),'oem')", pid, sku, brand["name"], brand["id"], f"BOEM{tag}")
                 o_can, o_los_s, o_los_t = (uuid.uuid4() for _ in range(3))
                 for oid, sid, pid, sku, price, pt in ((o_can, S, canon, f"A-{tag}", 100, "oem"), (o_los_s, S, loser, f"B-{tag}", 80, "aftermarket"),
                                                       (o_los_t, T, loser, f"C-{tag}", 90, "oem")):

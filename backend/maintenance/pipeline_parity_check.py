@@ -11,7 +11,7 @@ Data Imported/Modified: NONE. Read-only by design — a verifier that writes can
   mask the very drift it exists to detect.
 Data Sources: parts_catalog, part_thumbnails, supplier_parts, Meilisearch stats.
 Missing Data Delegation: a WARN never fails the run; only a hard FAIL does.
-Last Updated: 2026-07-29
+Last Updated: 2026-11-14 (duplicate gate judged per article by part_identity; --evidence)
 
 WHY THIS EXISTS: "the pipeline ran" and "the pipeline worked" are different
 claims. This repo has been bitten by the gap repeatedly — Meilisearch silently
@@ -42,6 +42,8 @@ rows = []
 # the indexed/bounded checks so a monitor can run cheaply and often; the full
 # suite stays the post-pipeline gate.
 FAST = "--fast" in sys.argv
+# --evidence FILE: write every open candidate group with its per-row identity evidence (still read-only on the DB).
+EVIDENCE_PATH = sys.argv[sys.argv.index("--evidence") + 1] if "--evidence" in sys.argv[:-1] else None
 
 
 def record(name, ok, found, detail="", warn=False):
@@ -58,7 +60,7 @@ def meili_count():
 
 DUPLICATE_GROUPS_SQL = """
     WITH g AS (
-        SELECT manufacturer_id, upper(replace(replace(oem_number,' ',''),'-','')) AS k, array_agg(id) AS ids
+        SELECT manufacturer_id, upper(replace(replace(replace(oem_number,' ',''),'-',''),'.','')) AS k, array_agg(id) AS ids
         FROM parts_catalog
         WHERE is_active AND oem_number IS NOT NULL AND btrim(oem_number) <> ''
         GROUP BY 1, 2 HAVING COUNT(*) > 1
@@ -78,8 +80,10 @@ DUPLICATE_GROUPS_SQL = """
         SELECT manufacturer_id, k, bool_and(held) AS all_held FROM member GROUP BY 1, 2
     )
     SELECT COUNT(*) FILTER (WHERE NOT all_held) AS dupes, COUNT(*) FILTER (WHERE all_held) AS held,
-           (SELECT COALESCE(jsonb_agg(jsonb_build_object('g', x.manufacturer_id::text || '|' || x.k,
+           (SELECT COALESCE(jsonb_agg(jsonb_build_object('g', x.manufacturer_id::text || '|' || x.k, 'id', p.id::text,
                                                          'name', p.name, 'oem_number', p.oem_number,
+                                                         'part_type', p.part_type, 'manufacturer', p.manufacturer,
+                                                         'manufacturer_id', p.manufacturer_id::text,
                                                          'suppliers', (SELECT COALESCE(jsonb_agg(DISTINCT sp.supplier_id::text), '[]'::jsonb)
                                                                        FROM supplier_parts sp WHERE sp.part_id = p.id))), '[]'::jsonb)
               FROM (SELECT manufacturer_id, k FROM grp WHERE NOT all_held LIMIT 5000) x
@@ -89,33 +93,40 @@ DUPLICATE_GROUPS_SQL = """
 """
 
 
-def split_distinct_groups(open_members) -> tuple:
-    """(real duplicate groups, groups that are not a defect). A group is split into identity clusters
-    (part_identity) exactly as merge_master_parts does; it is a REAL duplicate only when some cluster of two or more
-    rows has a member the offer policy does not hold open (no offer whose supplier is also on another row of that
-    cluster). K2 T104 twice + STEINHOF T-104: one cluster of two (same supplier -> held) + a different article."""
+def classify_groups(open_members) -> dict:
+    """Judge every open candidate group with the ONE identity policy (part_identity.cluster - the same call
+    merge_master_parts makes), per article, not per group:
+      real      - some cluster of two or more rows PROVEN to be one product has a member the offer policy does not hold
+                  open (no offer whose supplier is also on another row of that cluster): the merge should have merged it.
+      different - no such cluster, and every row is proven to be another product (same digits, different brands).
+      uncertain - no such cluster, and at least one row's identity could not be established (no known brand, missing
+                  product type, vehicle-titled name): never merged automatically, listed for review.
+    K2 T104 twice + STEINHOF T-104: one cluster of two (same supplier -> held) + a different article."""
     import part_identity
     groups: dict = {}
     for m in open_members or []:
         groups.setdefault(m["g"], []).append(m)
-    real = 0
-    for rows in groups.values():
-        clusters: list = []
-        for r in rows:
-            for cl in clusters:
-                if not part_identity.distinct_articles(cl[0], r):
-                    cl.append(r)
-                    break
-            else:
-                clusters.append([r])
+    out = {"groups": len(groups), "real": 0, "different": 0, "uncertain": 0, "evidence": []}
+    for g, rows in groups.items():
+        clusters, held = part_identity.cluster(rows)
+        real = False
         for cl in clusters:
             if len(cl) < 2:
                 continue
             sup = [set(m.get("suppliers") or []) for m in cl]
             if any(not (s_i & set().union(*(sup[:i] + sup[i + 1:]))) for i, s_i in enumerate(sup)):
-                real += 1
+                real = True
                 break
-    return real, len(groups) - real
+        kind = "real" if real else ("uncertain" if held["uncertain"] else "different")
+        out[kind] += 1
+        out["evidence"].append({"group": g, "verdict": kind, "rows": part_identity.evidence(rows)})
+    return out
+
+
+def split_distinct_groups(open_members) -> tuple:
+    """(real duplicate groups, groups that are not a defect) - kept for callers that only need the two totals."""
+    r = classify_groups(open_members)
+    return r["real"], r["groups"] - r["real"]
 
 
 async def main() -> int:
@@ -137,15 +148,23 @@ async def main() -> int:
         row = await c.fetchrow(DUPLICATE_GROUPS_SQL)
         held = int(row["held"] or 0)
         _om = row["open_members"]
-        dupes, distinct = split_distinct_groups(json.loads(_om) if isinstance(_om, str) else _om)
-        dupes = max(dupes, int(row["dupes"] or 0) - distinct)      # groups beyond the 5000 sample still count
+        cg = classify_groups(json.loads(_om) if isinstance(_om, str) else _om)
+        # groups beyond the 5000-group sample were not judged: they count as real duplicates (fail closed)
+        dupes = cg["real"] + max(0, int(row["dupes"] or 0) - cg["groups"])
+        distinct, uncertain = cg["different"], cg["uncertain"]
+        if EVIDENCE_PATH:
+            with open(EVIDENCE_PATH, "w", encoding="utf-8") as fh:
+                json.dump({"groups": cg["groups"], "real": cg["real"], "different": distinct, "uncertain": uncertain,
+                           "policy_held": held, "evidence": cg["evidence"]}, fh, ensure_ascii=False, indent=1)
     if dupes is not None:
         record("duplicate OEM groups remaining", dupes == 0, dupes,
                "same manufacturer + OEM should be ONE master record")
         record("duplicate groups held by offer policy", True, held,
                "same-supplier offers with different SKUs: kept apart by policy, not a defect")
-        record("groups with different articles / policy-held clusters", True, distinct,
-               "same digits, different brands (part_identity) or held per cluster: not a defect")
+        record("groups of different products / policy-held clusters", True, distinct,
+               "same digits, proven different products (part_identity) or held per cluster: not a defect")
+        record("groups with unproven identity (never auto-merged)", True, uncertain,
+               "no known brand / missing type / vehicle-titled: review with --evidence FILE")
 
     # 2. A merged loser must never still be active — that would double-list it.
     stranded = await c.fetchval("""
@@ -247,7 +266,7 @@ if __name__ == "__main__":
     # real scan instead of getting a usage line.
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
-        print("usage: pipeline_parity_check.py [--fast]   (read-only)")
+        print("usage: pipeline_parity_check.py [--fast] [--evidence FILE]   (read-only on the database)")
         print("  --fast  skip the 4M-row aggregates; keep the cheap indexed checks")
         print("env: PARITY_MAX_INDEX_LAG (default 50000)")
         sys.exit(0)

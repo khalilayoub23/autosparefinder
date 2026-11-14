@@ -3,7 +3,7 @@ import part_identity as pi
 
 
 def _r(name, num):
-    return {"name": name, "oem_number": num}
+    return {"name": name, "oem_number": num, "part_type": "aftermarket", "manufacturer_id": "m1", "manufacturer": "Toyota"}
 
 
 def test_real_wrong_merges_are_distinct():

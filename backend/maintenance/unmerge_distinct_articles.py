@@ -80,7 +80,7 @@ def _raw(v: Any) -> str:
 async def _part(conn, pid) -> Optional[Dict[str, Any]]:
     r = await conn.fetchrow(
         "SELECT id, sku, name, oem_number, is_active, created_at, specifications, description, name_he, barcode, "
-        "compatible_vehicles FROM parts_catalog WHERE id = $1", pid)
+        "compatible_vehicles, part_type, manufacturer_id, manufacturer FROM parts_catalog WHERE id = $1", pid)
     if not r:
         return None
     d = dict(r)
@@ -150,6 +150,7 @@ async def build_pair_plan(conn, loser_id, master_id) -> Optional[Dict[str, Any]]
         "fitment_move": fit_move, "fitment_delete_duplicate": fit_dup, "images_move": img_move,
         "master_fields_clear": clear,
         "unattributed": {"master_fitment_rows_left": fit_total - len(fit_move) - len(fit_dup),
+                         "same_raw_number": lraw == wraw,       # offers cannot be told apart by supplier SKU: none is moved
                          "loser_has_no_offer_after": not offers and not loser_keys},
     }
 
@@ -208,12 +209,18 @@ async def apply_pair(conn, plan: Dict[str, Any]) -> Dict[str, Any]:
     return prev
 
 
-async def build_manifest() -> Dict[str, Any]:
+async def build_manifest(pairs_file: Optional[str] = None) -> Dict[str, Any]:
+    """`pairs_file` (JSON list of {"loser", "master"}): plan only these recorded merges - used for wrong merges whose RAW
+    numbers are identical (ERA 550348 sensor merged into NRF 550348 radiator), which PAIRS_SQL deliberately does not
+    scan (that would be every merge ever made). Every pair still has to pass build_pair_plan's proof."""
     conn = await asyncpg.connect(DB, statement_cache_size=0)
     try:
         await conn.execute("SET statement_timeout = '600s'")
         async with conn.transaction(readonly=True):
-            pairs = await conn.fetch(PAIRS_SQL)
+            if pairs_file:
+                pairs = [{"loser": x["loser"], "master": x["master"]} for x in json.loads(Path(pairs_file).read_text())]
+            else:
+                pairs = await conn.fetch(PAIRS_SQL)
             plans = []
             for p in pairs:
                 plan = await build_pair_plan(conn, p["loser"], p["master"])
@@ -261,6 +268,7 @@ async def apply_manifest(manifest: Dict[str, Any], limit: Optional[int]) -> Dict
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", action="store_true", help="read-only: write the manifest and print totals")
+    ap.add_argument("--pairs-file", help="with --manifest: JSON list of {loser, master} to plan instead of the full scan")
     ap.add_argument("--apply", metavar="MANIFEST_FILE")
     ap.add_argument("--expect-sha256")
     ap.add_argument("--approval-ref")
@@ -269,7 +277,7 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     if a.manifest:
         offer_policy.gate_or_exit(ACTOR, True)
-        m = asyncio.run(build_manifest())
+        m = asyncio.run(build_manifest(a.pairs_file))
         m["totals"] = _totals(m["pairs"])
         out = OUT_DIR / f"manifest_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
         out.write_text(json.dumps(m, ensure_ascii=False, indent=1))

@@ -39,11 +39,11 @@ def test_wrong_merge_is_planned_and_undone_exactly():
                 loser, master = uuid.uuid4(), uuid.uuid4()
                 t_l = datetime(2026, 6, 1, 10, 0)
                 t_m = t_l + timedelta(days=30)
-                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,description,specifications)"
-                                " VALUES ($1,$2,$3,$4,$5,$6,false,$7,'pads desc',$8::jsonb)", loser, f"UL-{tag}", f"REMSA {tag}.02 Brake pad set",
+                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,description,specifications,part_type)"
+                                " VALUES ($1,$2,$3,$4,$5,$6,false,$7,'pads desc',$8::jsonb,'aftermarket')", loser, f"UL-{tag}", f"REMSA {tag}.02 Brake pad set",
                                 brand["name"], brand["id"], f"{tag}.02", t_l, '{"dedup_merged_into": "%s"}' % master)
-                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,description,specifications)"
-                                " VALUES ($1,$2,$3,$4,$5,$6,true,$7,'pads desc',$8::jsonb)", master, f"UM-{tag}", f"TOPRAN {tag} 02 Gear selector cable",
+                await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,description,specifications,part_type)"
+                                " VALUES ($1,$2,$3,$4,$5,$6,true,$7,'pads desc',$8::jsonb,'aftermarket')", master, f"UM-{tag}", f"TOPRAN {tag} 02 Gear selector cable",
                                 brand["name"], brand["id"], f"{tag} 02", t_m, '{"merged_from": ["%s"]}' % loser)
                 o_l, o_m = uuid.uuid4(), uuid.uuid4()
                 for oid, sku, price in ((o_l, f"{tag}.02", 40), (o_m, f"{tag} 02", 90)):
@@ -93,8 +93,8 @@ def test_same_article_pair_is_never_planned():
                 loser, master = uuid.uuid4(), uuid.uuid4()
                 for pid, sku, oem, active, spec in ((loser, f"SL-{tag}", f"06Q{tag}H", False, '{"dedup_merged_into": "%s"}' % master),
                                                     (master, f"SM-{tag}", f"06Q-{tag}-H", True, '{"merged_from": ["%s"]}' % loser)):
-                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,specifications)"
-                                    " VALUES ($1,$2,'Oil separator',$3,$4,$5,$6,NOW(),$7::jsonb)", pid, sku, brand["name"], brand["id"], oem, active, spec)
+                    await c.execute("INSERT INTO parts_catalog (id,sku,name,manufacturer,manufacturer_id,oem_number,is_active,created_at,specifications,part_type)"
+                                    " VALUES ($1,$2,'Oil separator',$3,$4,$5,$6,NOW(),$7::jsonb,'oem')", pid, sku, brand["name"], brand["id"], oem, active, spec)
                 assert await mod.build_pair_plan(c, loser, master) is None
                 raise _Rollback()
         except _Rollback:

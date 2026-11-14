@@ -21,7 +21,10 @@ the customer price is derived from the CHEAPEST reachable offer
 customer is quoted. Nothing may be abandoned.
 
 IDENTITY — what counts as the same part
-    manufacturer_id + NORMALISED oem_number.
+    manufacturer_id + NORMALISED oem_number is only the CANDIDATE key. Whether two candidate rows are one product
+    is decided by part_identity.classify (fail closed, 2026-11-14): genuine parts of one manufacturer, or one known
+    aftermarket brand with the same raw number. Different brands, a missing/conflicting product type, an unbranded
+    or vehicle-titled name -> the rows are left untouched and counted (skipped_distinct / skipped_uncertain).
     OEM is the manufacturer's unique identifier for a physical part; the NAME is
     not an identity (owner decision 2026-07-29). Generic names are reused across
     thousands of different components — 'key insert' 37,426 rows, 'harness'
@@ -59,7 +62,7 @@ Usage:
     python3 /app/maintenance/merge_master_parts.py --repair-stranded
 
 Data Modified: parts_catalog, supplier_parts, part_vehicle_fitment, parts_images
-Last Updated:  2026-07-29
+Last Updated:  2026-11-14 (identity: part_identity.classify, fail closed; specifications are unioned, not replaced)
 """
 from __future__ import annotations
 
@@ -120,6 +123,7 @@ async def fetch_group(conn, ids: List[str]) -> List[Dict[str, Any]]:
     rows = await conn.fetch(
         f"""
         SELECT p.id, p.sku, p.name, p.created_at, p.specifications, p.compatible_vehicles,
+               p.manufacturer_id, p.manufacturer,
                {cols},
                (SELECT COUNT(*) FROM supplier_parts sp WHERE sp.part_id = p.id)        AS n_offers,
                (SELECT COUNT(*) FROM part_vehicle_fitment f WHERE f.part_id = p.id)    AS n_fitment,
@@ -130,7 +134,20 @@ async def fetch_group(conn, ids: List[str]) -> List[Dict[str, Any]]:
         """,
         ids,
     )
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        # asyncpg returns jsonb as TEXT. Until 2026-11-14 the merge tested isinstance(..., dict), which was never true,
+        # so the master's whole `specifications` was REPLACED by {"merged_from": [...]} (source, product_url, image_url
+        # and every earlier provenance key lost) instead of being unioned with the losers'.
+        for k in ("specifications", "compatible_vehicles"):
+            if isinstance(d.get(k), str):
+                try:
+                    d[k] = json.loads(d[k])
+                except Exception:
+                    d[k] = None
+        out.append(d)
+    return out
 
 
 async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, int]:
@@ -152,19 +169,14 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
             return _far_future
         return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
 
-    # A normalised number can cover SEVERAL different articles (K2 T104 twice + STEINHOF T-104): split the group into
-    # identity clusters first and merge each cluster on its own, so real duplicates are still merged when the
-    # best-scored row of the whole group happens to be a different article.
-    clusters: List[List[Dict[str, Any]]] = []
-    for r in rows:
-        for cl in clusters:
-            if not part_identity.distinct_articles(cl[0], r):
-                cl.append(r)
-                break
-        else:
-            clusters.append([r])
+    # IDENTITY (part_identity, fail closed): a normalised number can cover SEVERAL products (K2 T104 twice + STEINHOF
+    # T-104). The group is split into identity clusters; only rows PROVEN to be the same product are merged. A row
+    # proven different, or whose identity cannot be established (no known brand, missing product type, vehicle-titled
+    # name without a brand), is left completely untouched and counted.
+    clusters, held = part_identity.cluster(rows)
     if len(clusters) > 1:
-        st["skipped_distinct"] = len(clusters) - 1
+        st["skipped_distinct"] = held["different"]
+        st["skipped_uncertain"] = held["uncertain"]
         for cl in clusters:
             if len(cl) > 1:
                 for k, v in (await merge_group(conn, cl, dry)).items():
@@ -174,16 +186,15 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
     ranked = sorted(rows, key=lambda r: (-score_row(r), _created(r)))
     canon, candidates = ranked[0], ranked[1:]
     cid = canon["id"]
-
-    # ── 0. A different aftermarket article is NOT a duplicate (2026-11-14) ────
-    # part_identity: REMSA 1187.02 (pads) vs TOPRAN 118 702 (cable) only collide once punctuation is stripped. Such a
-    # row is left completely untouched; it used to be merged into an unrelated master with its offers and fitment.
+    # Defence in depth: whatever built `rows`, a loser is merged only on a proven SAME verdict against the master.
     losers = []
     for l in candidates:
-        if part_identity.distinct_articles(canon, l):
-            st["skipped_distinct"] = st.get("skipped_distinct", 0) + 1
-        else:
+        v = part_identity.classify(canon, l)
+        if v.same:
             losers.append(l)
+        else:
+            key = "skipped_distinct" if v.decision == part_identity.DIFFERENT else "skipped_uncertain"
+            st[key] = st.get(key, 0) + 1
     if not losers:
         return st
     st["losers"] = len(losers)
@@ -216,7 +227,15 @@ async def merge_group(conn, rows: List[Dict[str, Any]], dry: bool) -> Dict[str, 
             merged_specs.update(l["specifications"])
     if isinstance(canon.get("specifications"), dict):
         merged_specs.update(canon["specifications"])
-    merged_specs["merged_from"] = [str(l["id"]) for l in losers][:20]
+    # merged_from is cumulative: an earlier merge's record must survive a later one (audit trail), and a loser's own
+    # merge/unmerge markers describe the LOSER, not the master.
+    for k in ("dedup_merged_into", "unmerged_from", "unmerged_at"):
+        if not (isinstance(canon.get("specifications"), dict) and k in canon["specifications"]):
+            merged_specs.pop(k, None)
+    earlier = canon["specifications"].get("merged_from") if isinstance(canon.get("specifications"), dict) else None
+    merged_from = [str(x) for x in (earlier if isinstance(earlier, list) else [])]
+    merged_from += [str(l["id"]) for l in losers if str(l["id"]) not in merged_from]
+    merged_specs["merged_from"] = merged_from
     updates["specifications"] = json.dumps(merged_specs, ensure_ascii=False, default=str)
 
     if not canon.get("compatible_vehicles"):

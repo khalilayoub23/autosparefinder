@@ -39,6 +39,8 @@ import os
 
 import asyncpg
 
+import part_identity  # backend root is on sys.path via sitecustomize
+
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 
 NORM = "REPLACE(REPLACE(REPLACE(UPPER(oem_number),' ',''),'-',''),'.','')"
@@ -99,6 +101,17 @@ async def _fetch_dup_groups(conn, brand, batch, dry=False):
 async def _merge_group(conn, canonical, losers, dry):
     """Repoint FKs from losers -> canonical, then soft-delete losers. Returns stats."""
     st = {"sp_moved": 0, "sp_dropped": 0, "fit_moved": 0, "fit_dropped": 0, "losers": len(losers)}
+    # IDENTITY (part_identity, fail closed - 2026-11-14): a loser is merged only when it is PROVEN to be the same
+    # product as the canonical row. The normalised number alone (this script's group key) is a candidate, never proof.
+    ident = {str(r["id"]): dict(r) for r in await conn.fetch(
+        "SELECT id, name, oem_number, part_type, manufacturer_id, manufacturer FROM parts_catalog WHERE id = ANY($1::uuid[])",
+        [canonical] + list(losers))}
+    proven = [l for l in losers if str(canonical) in ident and str(l) in ident
+              and part_identity.classify(ident[str(canonical)], ident[str(l)]).same]
+    st["skipped_identity"] = len(losers) - len(proven)
+    losers, st["losers"] = proven, len(proven)
+    if not losers:
+        return st
     if dry:
         st["sp_moved"] = await conn.fetchval(
             "SELECT COUNT(*) FROM supplier_parts WHERE part_id = ANY($1::uuid[])", losers) or 0
