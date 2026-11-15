@@ -59,6 +59,10 @@ def _handle_sigterm(signum, frame):
     print("[car_parts_ie_import] SIGTERM received — will checkpoint after current part and exit")
 
 
+class _SkipOffer(Exception):
+    """Internal: the offer write is skipped on purpose (reason already counted)."""
+
+
 DB_DSN = (
     f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
@@ -407,13 +411,14 @@ async def import_file(
                 _wmonths, _wsource = _warranty_resolve(None)
                 # OFFER_DEDUPLICATION_POLICY class C: a price change of an existing offer must leave a price_history row.
                 _own = await conn.fetchrow(
-                    "SELECT p.name FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
+                    "SELECT p.name, sp.supplier_url FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
                     supplier_id, sku_raw)
-                offer_sku = cpie_identity.offer_key(sku_raw, _brand, cpie_identity.brand_of(_own["name"], sku_raw) if _own else None, _own is not None)
-                if offer_sku is None:
+                _same_url = bool(_own and url and (_own["supplier_url"] or "").strip().lower() == url.strip().lower())
+                offer_sku = cpie_identity.offer_key(sku_raw, _brand, cpie_identity.brand_of(_own["name"], sku_raw) if _own else None, _own is not None, _same_url)
+                if offer_sku is None:  # owner of the bare key cannot be identified: no offer write (counted); the image/fitment work below still runs
                     supplier_skipped += 1
                     skip_reasons["offer_owner_brand_unresolved"] = skip_reasons.get("offer_owner_brand_unresolved", 0) + 1
-                    continue
+                    raise _SkipOffer()
                 _old_offer = await conn.fetchrow(
                     "SELECT id, price_ils, price_usd FROM supplier_parts WHERE supplier_id=$1::uuid AND supplier_sku=$2",
                     supplier_id, offer_sku,
@@ -442,6 +447,8 @@ async def import_file(
                 )
                 supplier_rows += 1
                 await _record_price_change(conn, _old_offer, price_ils, "car_parts_ie_import")
+            except _SkipOffer:
+                pass
             except Exception as e:
                 # Data behaviour unchanged (the offer is skipped, autocommit leaves nothing half-written); the skip is now
                 # counted and the first few are logged with their reason (e.g. a unique/variant clash on the part+supplier).

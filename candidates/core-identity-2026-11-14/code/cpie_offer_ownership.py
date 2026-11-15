@@ -50,11 +50,15 @@ def _make(url):
 async def build() -> Path:
     conn = await asyncpg.connect(DB)
     await conn.execute("SET statement_timeout='900s'")
-    parts = await conn.fetch("""SELECT id::text id, sku, oem_number art, name, specifications->>'product_url' pu, is_active
-        FROM parts_catalog WHERE specifications->>'source'='Car-Parts.ie'""")
+    parts = await conn.fetch("""SELECT id::text id, sku, oem_number art, name, specifications->>'product_url' pu, is_active,
+        specifications->'merged_from' mf FROM parts_catalog WHERE specifications->>'source'='Car-Parts.ie'""")
     offers = {r["supplier_sku"]: r for r in await conn.fetch(
         "SELECT id::text id, part_id::text part_id, supplier_sku, supplier_url, price_ils::float price FROM supplier_parts WHERE supplier_id=$1::uuid", SUP)}
+    outside = {r["id"]: r for r in await conn.fetch(
+        """SELECT id::text id, name, is_active, specifications->'merged_from' mf FROM parts_catalog WHERE id = ANY($1::uuid[])""",
+        sorted({o["part_id"] for o in offers.values()} - {p["id"] for p in parts}))}
     await conn.close()
+    byid = {p["id"]: p for p in parts}
     by = collections.defaultdict(list)
     for p in parts:
         by[p["art"]].append(p)
@@ -69,6 +73,13 @@ async def build() -> Path:
             counts["HOLD_no_offer"] += 1
             items.append({"article": art, "action": "NONE_no_offer", "parts": [r["id"] for r in rs]}); continue
         holder = next((r for r in rs if r["id"] == off["part_id"]), None)
+        if holder is None:  # the offer sits on a part outside this article's source-key rows (e.g. a wiped master): never guess
+            counts["HOLD_holder_outside_article_rows"] += 1
+            items.append({"article": art, "offer": off["id"], "action": "HOLD", "reason": "offer holder is not one of the article's car-parts.ie rows",
+                          "holder": off["part_id"]}); continue
+        if not brand.get(holder["id"]):
+            counts["HOLD_holder_brand_unresolved"] += 1
+            items.append({"article": art, "offer": off["id"], "action": "HOLD", "reason": "holder brand unresolved", "holder": off["part_id"]}); continue
         ou, oc = _u(off["supplier_url"]), _cat(off["supplier_url"])
         t1 = [r for r in rs if _u(r["pu"]) == ou and brand[r["id"]]]
         if len(t1) >= 1 and len({brand[r["id"]] for r in t1}) == 1:
@@ -95,6 +106,14 @@ async def build() -> Path:
                 counts["HOLD_move_needs_exact_url"] += 1
                 items.append({"article": art, "offer": off["id"], "action": "HOLD", "reason": "move proposed on category-only evidence",
                               "holder": off["part_id"], "owner_brand": owner_brand, "candidates": [r["id"] for r in exact]}); continue
+            tp = byid[exact[0]["id"]]
+            def _mf(x):
+                v = x["mf"]; v = json.loads(v) if isinstance(v, str) else v
+                return set(v or [])
+            if not tp["is_active"] or tp["id"] in _mf(holder) or holder["id"] in _mf(tp):
+                counts["HOLD_target_inactive_or_merge_related"] += 1
+                items.append({"article": art, "offer": off["id"], "action": "HOLD", "reason": "target inactive or merge-related to the holder",
+                              "holder": off["part_id"], "target": tp["id"]}); continue
             counts["MOVE"] += 1; act, target = "MOVE", exact[0]["id"]
         items.append({"article": art, "offer": off["id"], "action": act, "tier": tier, "owner_brand": owner_brand,
                       "from_part": off["part_id"], "to_part": target, "price": off["price"], "url": off["supplier_url"],
@@ -111,14 +130,13 @@ async def build() -> Path:
 ACTOR = "maintenance/cpie_offer_ownership.py"
 
 
-async def apply(path: Path, ref: str) -> None:
+async def apply(path: Path, ref: str, limit: int = None) -> None:
     man = json.load(open(path))
     conn = await asyncpg.connect(DB)
     done, skipped = [], []
     try:
-        for it in man["items"]:
-            if it.get("action") != "MOVE":
-                continue
+        moves = sorted((i for i in man["items"] if i.get("action") == "MOVE"), key=lambda i: i["article"])
+        for it in (moves[:limit] if limit else moves):
             try:
                 async with conn.transaction():
                     got = await conn.fetch("SELECT id FROM parts_catalog WHERE id = ANY($1::uuid[]) FOR UPDATE NOWAIT",
@@ -131,6 +149,7 @@ async def apply(path: Path, ref: str) -> None:
                     if await conn.fetchval("SELECT 1 FROM supplier_parts WHERE part_id=$1::uuid AND supplier_id=$2::uuid LIMIT 1", it["to_part"], SUP):
                         raise RuntimeError("precondition: target part already holds a Car-Parts.ie offer")
                     await conn.execute("UPDATE supplier_parts SET part_id=$2::uuid, updated_at=NOW() WHERE id=$1::uuid", it["offer"], it["to_part"])
+                    await conn.execute("UPDATE parts_catalog SET updated_at=NOW() WHERE id = ANY($1::uuid[])", [it["from_part"], it["to_part"]])  # meili incremental sync keys on it
                     done.append({"offer": it["offer"], "previous_part_id": it["from_part"], "new_part_id": it["to_part"], "article": it["article"]})
             except Exception as exc:  # noqa: BLE001 - one row's failure must not stop the others; it is reported
                 skipped.append({"offer": it.get("offer"), "article": it.get("article"), "reason": str(exc)[:200]})
@@ -157,6 +176,7 @@ async def rollback(result_path: Path, ref: str, dsn: str = None) -> dict:
                                            d["previous_part_id"], SUP):
                         raise RuntimeError("precondition: previous part already holds a Car-Parts.ie offer")
                     await conn.execute("UPDATE supplier_parts SET part_id=$2::uuid, updated_at=NOW() WHERE id=$1::uuid", d["offer"], d["previous_part_id"])
+                    await conn.execute("UPDATE parts_catalog SET updated_at=NOW() WHERE id = ANY($1::uuid[])", [d["new_part_id"], d["previous_part_id"]])
                     back.append(d["offer"])
             except Exception as exc:  # noqa: BLE001
                 skipped.append({"offer": d["offer"], "reason": str(exc)[:200]})
@@ -173,6 +193,7 @@ if __name__ == "__main__":
     ap.add_argument("--rollback", action="store_true")
     ap.add_argument("--result")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--limit", type=int)
     ap.add_argument("--manifest")
     ap.add_argument("--expect-sha256")
     ap.add_argument("--approval-ref")
@@ -192,4 +213,4 @@ if __name__ == "__main__":
         if not a.expect_sha256 or hashlib.sha256(mp.read_bytes()).hexdigest() != a.expect_sha256 or not a.approval_ref:
             print("REFUSED: --expect-sha256 must equal the manifest hash and --approval-ref is required")
             raise SystemExit(3)
-        asyncio.run(apply(mp, a.approval_ref))
+        asyncio.run(apply(mp, a.approval_ref, a.limit))

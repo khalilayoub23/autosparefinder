@@ -44,3 +44,8 @@ def test_brand_resolution_uses_identity_vocabulary_not_vehicle_make():
     # vehicle-first title: the brand is the known brand before the number, never 'HONDA'
     assert ci.brand_of("MAPCO 62505 Honda CRX AF fuel filter", "62505") == "MAPCO"
     assert ci.brand_of("Honda CRX fuel filter", "62505") is None
+
+
+def test_same_listing_url_keeps_the_bare_key_even_if_holder_brand_unresolved():
+    assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True) == "1"
+    assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=False) == "FAE~1"

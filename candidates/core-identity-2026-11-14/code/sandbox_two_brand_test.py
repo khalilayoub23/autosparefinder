@@ -28,7 +28,7 @@ async def main():
     assert len(parts) == 2, f"expected 2 distinct part rows, got {parts}"
     assert len(offs) == 2, f"expected 2 offers, got {offs}"
     by_brand = {('MAPCO' if 'MAPCO' in o[2] else 'FAE'): o[1] for o in offs}
-    assert by_brand == {'MAPCO': round(10.0*float(os.getenv('EUR_ILS_RATE','3.48')),2), 'FAE': round(20.0*float(os.getenv('EUR_ILS_RATE','3.48')),2)} or True
+    assert by_brand == {'MAPCO': 34.8, 'FAE': 69.6}, by_brand
     assert abs(by_brand['MAPCO'] - by_brand['FAE']) > 1, "prices collapsed"
     assert snaps[2] == snaps[3] == snaps[1], "repeated imports changed state"
     print('OK order', ORDER)

@@ -43,11 +43,15 @@ def part_sku(make_prefix: str, article: str, brand: Optional[str], existing_bran
     return legacy if existing_brand == brand else f"{make_prefix}-{_tok(brand)}{SEP}{article}"
 
 
-def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str], bare_exists: bool) -> Optional[str]:
-    """None = skip the offer write (owner of the bare key cannot be identified)."""
+def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str], bare_exists: bool, same_url: bool = False) -> Optional[str]:
+    """None = skip the offer write (owner of the bare key cannot be identified).
+    same_url: the incoming product page IS the page the existing bare offer was harvested from - the same listing,
+    whatever the brand text says (evidence that keeps price updates flowing to offers whose holder brand is unresolved)."""
     if not brand:
         return None
     if not bare_exists:
+        return article
+    if same_url:
         return article
     if bare_owner_brand is None:
         return None
