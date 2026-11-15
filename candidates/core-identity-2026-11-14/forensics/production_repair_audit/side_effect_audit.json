@@ -1,0 +1,46 @@
+{
+ "read_at_utc": "2026-11-15T18:01:45.792168+00:00",
+ "manifest_vs_live_by_class": {
+  "('VERIFIED_CORRECT', None)": {
+   "unchanged_value": 2534,
+   "value_changed+newer_ua": 62
+  },
+  "('VERIFIED_WRONG', 'NOT_READY')": {
+   "unchanged_value": 1070
+  },
+  "('MISSING_EVIDENCE', None)": {
+   "unchanged_value": 760,
+   "value_changed+newer_ua": 2,
+   "unchanged_value+newer_ua": 2
+  },
+  "('AMBIGUOUS', None)": {
+   "unchanged_value": 1279
+  },
+  "('VERIFIED_WRONG', 'UNDO_CANDIDATE_NEEDS_SEPARATE_APPROVAL')": {
+   "unchanged_value": 36
+  },
+  "('VERIFIED_WRONG', 'READY')": {
+   "unchanged_value": 93
+  }
+ },
+ "price_history": {
+  "rows_with_source_like_repair_since_2026-11-15": 0,
+  "rows_on_the_93_offers_after_manifest_time": 0
+ },
+ "moves_3858": {
+  "recorded_in_result_files": 3858,
+  "found": 3858,
+  "on_recorded_new_part": 3858,
+  "on_previous_part": 0
+ },
+ "sandbox_postgres": {
+  "the_93_offers_present": 0,
+  "note": "sandbox does not hold these offers; repair did not run there either (0 repair price_history rows)"
+ },
+ "interpretation": [
+  "READY 93, UNDO 36, NOT_READY 1070, AMBIGUOUS 1279: 100% still at manifest values, no newer updated_at.",
+  "Changed rows exist only in VERIFIED_CORRECT (62) and MISSING_EVIDENCE (4): all with newer updated_at = normal harvester writes after the manifest, not in repair scope.",
+  "Value-changed rows are NOT proof of a repair: no repair artifact, tool or price_history row exists."
+ ],
+ "limitation": "no pre-repair baseline other than the manifest; harvester keeps writing, so rows outside the 93 are not frozen"
+}

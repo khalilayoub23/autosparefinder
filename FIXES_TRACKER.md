@@ -10289,3 +10289,9 @@ Re-checked against the live DB and files this turn (not the earlier tracker text
 - Exposed 5,838 bare offers: **VERIFIED_WRONG 1,199** (44 listing-page same-URL defect, 1,155 original old-importer last-writer-wins), VERIFIED_CORRECT 2,596, AMBIGUOUS 1,279, MISSING_EVIDENCE 764; 153,686 not exposed. Repair-ready 93, undo-candidate 36 (needs separate approval), NOT_READY 1,070. Confirmed missing brand offers: 32 (buggy window) + 1,429 (original defect). 4,590 multi-brand bare offers have no evidence in the window (unassessed) - 1,199 is a lower bound.
 - iwis/AIC `59008Set` traced: AIC row 82 of the chevrolet/volt-2011 payload overwrote iwis 354.44 with 679.26 at 10:32:58Z; AIC offer missing; the iwis price is ASSUMED (no iwis row retained).
 - Independent Opus review: method PASS (84/84 re-derived), classification corrections applied (see report §5). Nothing repaired; plan + rollback design only. Local commits, not pushed.
+
+### CORE workstream C - PRODUCTION AUDIT OF THE 93 "AUTHORIZED" REPAIRS (2026-11-15 20:01 IL; READ-ONLY) - status **BLOCKED / NOT DONE: 0/93 applied**
+- **VERIFIED (live DB):** all 93 READY offers still hold the manifest's pre-repair price, URL, part_id and the same `updated_at`: 93 NOT_APPLIED (canary 0/20, remaining 0/73). No apply tool, result file, price_history `cpie_overwrite_repair` row (prod or sandbox) or commit exists; the plan and rollback design are design-only. The mission's premise (repairs executed) is false.
+- Side effects checked: 3,858/3,858 earlier moves intact; 36 UNDO, 1,070 NOT_READY, 1,279 AMBIGUOUS rows 100% at manifest values. Rollback coverage 0/0 (no tool).
+- Consultant review PARTIAL (transcript-only). Artifacts: `candidates/core-identity-2026-11-14/forensics/production_repair_audit/`.
+- **Open decision (owner):** build + sandbox-test the repair and rollback tools, then a separately gated production run; 36 UNDO rows need their own approval.

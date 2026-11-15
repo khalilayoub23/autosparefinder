@@ -1,0 +1,5 @@
+{
+ "applied_repairs": 0,
+ "rollback_records_for_applied": 0,
+ "coverage": "0/0 applied; rollback is DESIGN ONLY (REPAIR_ROLLBACK_DESIGN.md), no tool, no sandbox test possible; the old cpie_offer_ownership.py --rollback must not be used"
+}
