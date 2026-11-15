@@ -1,0 +1,1273 @@
+{
+ "manifest_sha256": "655952659c60ff9824c8d9921662114776e749303265d0894f53202f62223158",
+ "approval_ref": "owner chat 2026-11-15: approved build+sandbox+canary20->rest of the 93 READY repairs (this window: 90 eligible, 3 preserved)",
+ "run_id": "20261115T184322Z_rest",
+ "phase": "rest",
+ "pre_apply_backup": "/app/state/cpie_ownership/overwrite_repair/pre_apply_20261115T184322Z_rest.json",
+ "pre_apply_backup_sha256": "7cc7f9223209fea592483bfe771440bc1b23c5d5877d8158461b0fb725673d27",
+ "done": [
+  {
+   "offer_id": "e0b84a01-fd0a-42b0-b27d-d0117eb7b99e",
+   "part_id": "5c0fc940-18f8-44b1-82f0-c21d1f7d4c59",
+   "supplier_sku": "16985",
+   "before": {
+    "price_ils": "107.50",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/80-81-85-b2/cv-joint",
+    "updated_at": "2026-11-15T06:38:14.132017"
+   },
+   "after": {
+    "price_ils": "136.00",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/crafter-platform-chassis-sz/brake-pads",
+    "updated_at": "2026-11-15T18:43:22.360263"
+   },
+   "price_history_id": "c6867589-29e1-483d-8b6d-2c308f84ae10",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "86832b9b-3fe7-4853-81af-618e4c5f4960",
+   "part_id": "27a3e69a-90e9-4c21-90f3-98d567fe8edd",
+   "supplier_sku": "16995",
+   "before": {
+    "price_ils": "70.54",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a3-sportback-8va/brake-pads",
+    "updated_at": "2026-11-15T06:24:01.476231"
+   },
+   "after": {
+    "price_ils": "89.71",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/alto/brake-discs",
+    "updated_at": "2026-11-15T18:43:22.409393"
+   },
+   "price_history_id": "0386d20a-b3ac-4014-ae00-09f9671dd892",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "e630815d-bd32-40c2-a3e8-889fd14d0552",
+   "part_id": "93c8ca38-34b1-494e-aa5d-62f737915ca4",
+   "supplier_sku": "18626",
+   "before": {
+    "price_ils": "120.34",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ford/mondeo/brake-discs",
+    "updated_at": "2026-11-15T01:21:43.364801"
+   },
+   "after": {
+    "price_ils": "213.43",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/corolla-estate-e21/brake-discs",
+    "updated_at": "2026-11-15T18:43:22.431900"
+   },
+   "price_history_id": "be146ecd-4d6a-4653-b3c9-7df7def59af8",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "bfdedd0f-3f9c-4d6d-96d8-c7565b635b88",
+   "part_id": "51162631-ba8f-4427-be8a-f6c5d4753fe2",
+   "supplier_sku": "19664",
+   "before": {
+    "price_ils": "56.62",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/b3-coupe-e36/steering-auto",
+    "updated_at": "2026-11-15T05:38:24.730491"
+   },
+   "after": {
+    "price_ils": "54.32",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/xc90/suspension-auto",
+    "updated_at": "2026-11-15T18:43:22.465227"
+   },
+   "price_history_id": "ebebdd8a-1d72-4853-8889-c0d49d97a599",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "14ac7af1-1389-47d8-82b5-1608761e9e0f",
+   "part_id": "f4470164-a3ab-4688-befa-1a7ef8426e5f",
+   "supplier_sku": "19812",
+   "before": {
+    "price_ils": "56.31",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/spider-916s/tie-rod",
+    "updated_at": "2026-11-15T05:14:40.905998"
+   },
+   "after": {
+    "price_ils": "39.39",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/lupo-5z1/steering-auto",
+    "updated_at": "2026-11-15T18:43:22.498430"
+   },
+   "price_history_id": "e135bcdd-ea98-44fa-a8a1-9dc158306b86",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "5305bc81-0e4b-46de-bd71-84b1eb18c944",
+   "part_id": "087cb0be-22d1-463d-b943-93d0dd37cfa0",
+   "supplier_sku": "20535",
+   "before": {
+    "price_ils": "1153.20",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volkswagen/transporter/catalytic-converter",
+    "updated_at": "2026-11-15T00:37:23.162920"
+   },
+   "after": {
+    "price_ils": "209.11",
+    "supplier_url": "https://www.car-parts.ie/car-parts/hyundai/tucson/shock-absorber",
+    "updated_at": "2026-11-15T18:43:22.524318"
+   },
+   "price_history_id": "0e9c2256-1eb3-4e1b-a308-54f0fbf51d7d",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "16c2e431-3d16-4b35-840f-2bfeaa80ebdb",
+   "part_id": "4c69c029-44b9-41ed-8bfb-c39780f7b959",
+   "supplier_sku": "21247",
+   "before": {
+    "price_ils": "51.75",
+    "supplier_url": "https://www.car-parts.ie/car-parts/renault/clio-b/belt-drive-auto",
+    "updated_at": "2026-11-15T04:10:44.583986"
+   },
+   "after": {
+    "price_ils": "690.47",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/frontera-mk-i-a-sport/catalytic-converter",
+    "updated_at": "2026-11-15T18:43:22.549404"
+   },
+   "price_history_id": "47a091d1-496c-4985-ae36-691fce16dc90",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "90a3aa2d-2853-4510-98db-f4ffe0c43de3",
+   "part_id": "140f8054-a343-4520-b2cb-e6083512eda4",
+   "supplier_sku": "21771",
+   "before": {
+    "price_ils": "1367.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/159-sportwagon-939/catalytic-converter",
+    "updated_at": "2026-11-15T04:56:05.437368"
+   },
+   "after": {
+    "price_ils": "147.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/combo-mk-i-b/water-pump",
+    "updated_at": "2026-11-15T18:43:22.574534"
+   },
+   "price_history_id": "91d7ea28-ef5d-44d8-b909-95b28ac118f6",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "f99c0a8a-1fb9-42dc-bbb8-5439a216d87d",
+   "part_id": "3bc2211d-913d-4e50-a3a1-a5655955f517",
+   "supplier_sku": "27423",
+   "before": {
+    "price_ils": "348.70",
+    "supplier_url": "https://www.car-parts.ie/car-parts/peugeot/307/power-steering-pump",
+    "updated_at": "2026-11-15T02:44:35.058877"
+   },
+   "after": {
+    "price_ils": "961.25",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c3-picasso/wiper-motor",
+    "updated_at": "2026-11-15T18:43:22.604786"
+   },
+   "price_history_id": "15ee2e27-f9a2-4391-9758-10a958bb48d3",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "d4c380df-2b72-4173-bab6-d440018f6ffa",
+   "part_id": "0593f7a4-a6c1-4d79-bf27-e8e22ee446bd",
+   "supplier_sku": "27503",
+   "before": {
+    "price_ils": "131.37",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a8-4e/control-arm",
+    "updated_at": "2026-11-15T06:42:47.380222"
+   },
+   "after": {
+    "price_ils": "712.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mazda/bt-50/power-steering-pump",
+    "updated_at": "2026-11-15T18:43:22.635664"
+   },
+   "price_history_id": "12ccaad2-7bdc-42fe-b9a4-a91ce5bb65aa",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "82eb211f-9b80-495c-80f3-1cefc1c02540",
+   "part_id": "4c1c39d4-8441-4878-aa6c-a05ebfea066b",
+   "supplier_sku": "27615",
+   "before": {
+    "price_ils": "541.14",
+    "supplier_url": "https://www.car-parts.ie/car-parts/fiat/grande-punt0/wiper-motor",
+    "updated_at": "2026-11-15T04:27:11.408770"
+   },
+   "after": {
+    "price_ils": "568.08",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mazda/-323-ta-xlg/power-steering-pump",
+    "updated_at": "2026-11-15T18:43:22.671526"
+   },
+   "price_history_id": "e62b1d9d-b97b-4bb1-a2fe-9bb0a7f86c7e",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "090c94df-7270-440d-8b82-ae66bc978d08",
+   "part_id": "ba11b8de-f3cf-41e9-af17-2e724b9742e9",
+   "supplier_sku": "27812",
+   "before": {
+    "price_ils": "72.52",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/rav-4-plug-in/tie-rod",
+    "updated_at": "2026-11-15T02:19:41.795971"
+   },
+   "after": {
+    "price_ils": "526.66",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/toledo/power-steering-pump",
+    "updated_at": "2026-11-15T18:43:22.700772"
+   },
+   "price_history_id": "65d28dcb-d4f0-49aa-9774-2f8f909e93c2",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "33a7daa4-dc47-474b-aca7-ed0f47b2b9c6",
+   "part_id": "d9f4c2d0-0164-4349-a4bd-b965c4f59374",
+   "supplier_sku": "27820",
+   "before": {
+    "price_ils": "264.34",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a4-convertible-8h7-b6-8he-b7/power-steering-pump",
+    "updated_at": "2026-11-15T06:33:33.446007"
+   },
+   "after": {
+    "price_ils": "49.03",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/outback-be-bh/tie-rod",
+    "updated_at": "2026-11-15T18:43:22.733153"
+   },
+   "price_history_id": "88ca5f17-958a-4b30-bf93-4200da8595ba",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "84486ed1-a55e-4167-a986-bd270987374a",
+   "part_id": "5cab4e5a-7d2f-42d4-88d2-37ec62019b86",
+   "supplier_sku": "28058",
+   "before": {
+    "price_ils": "898.68",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/cordoba/catalytic-converter",
+    "updated_at": "2026-11-15T03:54:53.171754"
+   },
+   "after": {
+    "price_ils": "56.90",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/crossover/tie-rod",
+    "updated_at": "2026-11-15T18:43:22.781686"
+   },
+   "price_history_id": "8334b26b-4778-4095-ae07-21a6cb3f5687",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "be545af4-c172-46fc-a4f6-00a7cc079684",
+   "part_id": "5ea72820-43d9-411b-8636-9d54655a17f6",
+   "supplier_sku": "28197",
+   "before": {
+    "price_ils": "703.52",
+    "supplier_url": "https://www.car-parts.ie/car-parts/bmw/x6-30d/catalytic-converter",
+    "updated_at": "2026-11-15T04:30:59.392469"
+   },
+   "after": {
+    "price_ils": "30.83",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/saveiro-v/brakes-auto",
+    "updated_at": "2026-11-15T18:43:22.804190"
+   },
+   "price_history_id": "44370908-1021-4283-be56-fd96e3fd85f4",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "96f6ccea-5015-4787-995c-114ee1a8e820",
+   "part_id": "213ec7ee-5477-4f21-986e-ebcebe8bf64c",
+   "supplier_sku": "28201",
+   "before": {
+    "price_ils": "1385.84",
+    "supplier_url": "https://www.car-parts.ie/car-parts/peugeot/308-sw/catalytic-converter",
+    "updated_at": "2026-11-15T02:36:04.798752"
+   },
+   "after": {
+    "price_ils": "25.44",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/samurai-sj/pollen-filter",
+    "updated_at": "2026-11-15T18:43:22.834394"
+   },
+   "price_history_id": "640af4b5-dd3f-4f82-ad2b-313096c99d56",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "162f11db-a810-4ea1-bd9f-bc5f7da8187e",
+   "part_id": "dc6ea01d-c1da-4cda-844a-389ea13160bc",
+   "supplier_sku": "28277",
+   "before": {
+    "price_ils": "79.52",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/lfa-giulietta/engine-mount",
+    "updated_at": "2026-11-15T03:22:25.630011"
+   },
+   "after": {
+    "price_ils": "1547.80",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ford/tourneo-connect/catalytic-converter",
+    "updated_at": "2026-11-15T18:43:22.857052"
+   },
+   "price_history_id": "a03d0da9-8bd9-4f67-a948-7dcc5e4c6a4f",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "25cc966b-f205-4ce8-ae07-634620c8eaf9",
+   "part_id": "5df9b8c6-fdff-48b9-ac31-2ac0901f2b62",
+   "supplier_sku": "28890",
+   "before": {
+    "price_ils": "118.46",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/1-suv-hx11/thermostat",
+    "updated_at": "2026-11-14T12:05:31.328877"
+   },
+   "after": {
+    "price_ils": "1228.02",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/fortwo-coupe-453/catalytic-converter",
+    "updated_at": "2026-11-15T18:43:22.876490"
+   },
+   "price_history_id": "babb393f-9c6e-46d0-b09a-630e0ced9507",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "570c3059-a84f-418e-9ffc-d2a6e9613095",
+   "part_id": "90e1c6bd-c5bc-4056-b33c-58ca75ca20b9",
+   "supplier_sku": "30012",
+   "before": {
+    "price_ils": "78.20",
+    "supplier_url": "https://www.car-parts.ie/car-parts/isuzu/ippon/abs-sensor",
+    "updated_at": "2026-11-15T02:02:45.056008"
+   },
+   "after": {
+    "price_ils": "40.26",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/celica-coupe-st16-at16/engine-auto",
+    "updated_at": "2026-11-15T18:43:22.908997"
+   },
+   "price_history_id": "7755ee5c-a608-44c0-a4c5-93262a8be511",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "1b653a5e-3c76-4f46-914e-8acc1f7a3c64",
+   "part_id": "66865b47-89ce-44ef-9095-b3dd9c76a021",
+   "supplier_sku": "30607",
+   "before": {
+    "price_ils": "105.37",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/gt-937/abs-sensor",
+    "updated_at": "2026-11-15T05:15:39.154747"
+   },
+   "after": {
+    "price_ils": "342.68",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volkswagen/t-cross-life/timing-chain",
+    "updated_at": "2026-11-15T18:43:22.953312"
+   },
+   "price_history_id": "2f9f1619-d16c-4e9b-835a-2262f5290879",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "8ef80648-0420-4bb9-8713-99bb2e81a5e1",
+   "part_id": "c380426f-ba4d-4185-871d-d022a365e1b3",
+   "supplier_sku": "30633",
+   "before": {
+    "price_ils": "76.94",
+    "supplier_url": "https://www.car-parts.ie/car-parts/land-rover/discovry-sport/abs-sensor",
+    "updated_at": "2026-11-15T04:26:05.817039"
+   },
+   "after": {
+    "price_ils": "158.86",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mercedes-benz/sprinter/engine-mount",
+    "updated_at": "2026-11-15T18:43:22.982222"
+   },
+   "price_history_id": "a66ab56a-a7d2-4ed4-aeaa-dceb85f14fab",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "606c0475-235a-42e3-9aee-477147bcc141",
+   "part_id": "482dc008-451b-4610-b763-7fd433b463e7",
+   "supplier_sku": "31322",
+   "before": {
+    "price_ils": "170.73",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/crossover/abs-sensor",
+    "updated_at": "2026-11-15T00:27:45.168809"
+   },
+   "after": {
+    "price_ils": "85.54",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/astra-mk-iii-f/engine-mount",
+    "updated_at": "2026-11-15T18:43:23.000951"
+   },
+   "price_history_id": "78043c91-6df4-4fd5-9099-b19f4597a201",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "1bd3f107-4798-4c21-a2d0-cfcdfcdee4d1",
+   "part_id": "109c8513-fc9d-441b-b0e2-fbd6a6b83645",
+   "supplier_sku": "31472",
+   "before": {
+    "price_ils": "78.30",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/giulietta-940/abs-sensor",
+    "updated_at": "2026-11-15T05:04:04.452879"
+   },
+   "after": {
+    "price_ils": "55.12",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/alto/tie-rod",
+    "updated_at": "2026-11-15T18:43:23.027995"
+   },
+   "price_history_id": "66ec6c74-73c9-4f73-905e-c61d585dd708",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "7723f574-2da6-4074-ac9c-8b3ea1492db1",
+   "part_id": "1663b19b-adf0-4a17-8356-d1bcb01978c3",
+   "supplier_sku": "31509",
+   "before": {
+    "price_ils": "100.64",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/impreza/wheel-bearing",
+    "updated_at": "2026-11-14T23:48:18.108567"
+   },
+   "after": {
+    "price_ils": "68.87",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/wish-mpv-zne1-ane1/abs-sensor",
+    "updated_at": "2026-11-15T18:43:23.053573"
+   },
+   "price_history_id": "922ad558-e747-4002-a75e-9a23556abff2",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "b86d3fac-7f7b-4dcf-98e9-472759285bf3",
+   "part_id": "72b090f5-7bbd-45d6-a0f1-0ce59b1fcf9c",
+   "supplier_sku": "31578",
+   "before": {
+    "price_ils": "68.87",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-ii-b-combi/abs-sensor",
+    "updated_at": "2026-11-14T19:23:10.787546"
+   },
+   "after": {
+    "price_ils": "174.28",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-i-a-van-fd/engine-mount",
+    "updated_at": "2026-11-15T18:43:23.081289"
+   },
+   "price_history_id": "e0f16b59-2822-4198-811a-74fad10e03a6",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "4e86f874-b065-4677-9b30-1565848fd73d",
+   "part_id": "92c2ea0e-c375-49fa-819b-5cc648156a2a",
+   "supplier_sku": "35240",
+   "before": {
+    "price_ils": "111.08",
+    "supplier_url": "https://www.car-parts.ie/car-parts/tesla/model-y/brake-pads",
+    "updated_at": "2026-11-14T23:14:36.783639"
+   },
+   "after": {
+    "price_ils": "228.95",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/tercel-estate-al2/water-pump",
+    "updated_at": "2026-11-15T18:43:23.115825"
+   },
+   "price_history_id": "55210d73-37b9-4be3-977d-7c38447c79a9",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "a1f94526-ad81-4f1b-be81-f0bfbd2a9085",
+   "part_id": "d9544543-ce75-425a-b56f-8d7e5c91d2f2",
+   "supplier_sku": "36066",
+   "before": {
+    "price_ils": "59.68",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/alfasud-sprint-902-a/brake-pads",
+    "updated_at": "2026-11-15T05:12:32.642653"
+   },
+   "after": {
+    "price_ils": "288.25",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/amarok-platform-chassis-s1b/cv-joint",
+    "updated_at": "2026-11-15T18:43:23.146303"
+   },
+   "price_history_id": "d258f055-3770-4f88-8820-cd723d3187ec",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "00ef3dd6-ab5f-4aa6-b5d7-bcbf2dea1404",
+   "part_id": "f7660ce9-3ca3-4fa7-905a-827aa9e9b343",
+   "supplier_sku": "36604",
+   "before": {
+    "price_ils": "15.00",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a6-avant-4f5-c6/damping-auto",
+    "updated_at": "2026-11-15T06:36:16.008536"
+   },
+   "after": {
+    "price_ils": "73.60",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/corona-saloon-1987/brakes-auto",
+    "updated_at": "2026-11-15T18:43:23.175814"
+   },
+   "price_history_id": "1550ffc9-6745-45f9-b9c5-369bfc31fe6b",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "e51be721-e3f1-4b35-bd37-9933202da4b7",
+   "part_id": "ff0ddd80-41ff-4db6-aa2d-129798db82c3",
+   "supplier_sku": "36723",
+   "before": {
+    "price_ils": "32.29",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a6-4g2-c7-4gc/damping-auto",
+    "updated_at": "2026-11-15T06:41:56.551135"
+   },
+   "after": {
+    "price_ils": "58.74",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/baleno/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.200783"
+   },
+   "price_history_id": "027a3358-b2f1-4a6b-a019-e778167a59df",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "9168af87-031c-4d31-8156-161970b11e68",
+   "part_id": "2508da5b-1922-4575-a090-afff58d1d0a8",
+   "supplier_sku": "36758",
+   "before": {
+    "price_ils": "135.93",
+    "supplier_url": "https://www.car-parts.ie/car-parts/renault/grand-scenic/engine-mount",
+    "updated_at": "2026-11-15T02:41:16.304779"
+   },
+   "after": {
+    "price_ils": "69.08",
+    "supplier_url": "https://www.car-parts.ie/car-parts/honda/fr-v/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.222513"
+   },
+   "price_history_id": "a8638911-76cc-42bc-a8a6-bdfef2743e1a",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "72f6e82c-1951-4291-a2b8-96546672b774",
+   "part_id": "cb384448-6606-4593-9326-23e895de0978",
+   "supplier_sku": "37136",
+   "before": {
+    "price_ils": "235.77",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ford/puma/engine-mount",
+    "updated_at": "2026-11-15T01:35:44.563384"
+   },
+   "after": {
+    "price_ils": "54.22",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/prius/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.248003"
+   },
+   "price_history_id": "443f25c9-b60c-40ff-8c69-625e5c3ec603",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "f357c574-429b-4c96-94e6-3853ff159e0f",
+   "part_id": "0b811425-4249-4509-8f2c-8663d09f4d46",
+   "supplier_sku": "37231",
+   "before": {
+    "price_ils": "108.12",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/prado/brake-pads",
+    "updated_at": "2026-11-15T01:46:45.803201"
+   },
+   "after": {
+    "price_ils": "178.32",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/golf-iv-variant-1j5/gearbox-mount",
+    "updated_at": "2026-11-15T18:43:23.269655"
+   },
+   "price_history_id": "ff946ba4-174c-4f50-8e8b-0a139f27855b",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "ea5edafb-c0ee-40ae-a247-bed5edff808c",
+   "part_id": "033da72c-bb7f-4937-a82c-b2d7e7290ce6",
+   "supplier_sku": "37249",
+   "before": {
+    "price_ils": "126.39",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a6-avant-4f5-c6/gearbox-mount",
+    "updated_at": "2026-11-15T06:36:12.986265"
+   },
+   "after": {
+    "price_ils": "79.97",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/agila-mk-i-a/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.294137"
+   },
+   "price_history_id": "1ed2ea2f-81f5-4c8c-9a3b-1a1e2b571087",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "70ca3c4a-d458-4c0b-b53e-7fe88cd4c585",
+   "part_id": "434a160b-31c1-466e-8a1c-70bddf3316b7",
+   "supplier_sku": "37619",
+   "before": {
+    "price_ils": "249.24",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/toledo/wiper-motor",
+    "updated_at": "2026-11-15T01:22:22.449609"
+   },
+   "after": {
+    "price_ils": "69.60",
+    "supplier_url": "https://www.car-parts.ie/car-parts/kia/carnival/brakes-auto",
+    "updated_at": "2026-11-15T18:43:23.311217"
+   },
+   "price_history_id": "5c439822-efa2-4346-9eeb-c740ad520529",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "4f9291c4-dce0-4dcc-9e8b-28ec5eeddbbe",
+   "part_id": "caf96515-b1f2-40de-8b42-923b7d01b03e",
+   "supplier_sku": "40321",
+   "before": {
+    "price_ils": "143.76",
+    "supplier_url": "https://www.car-parts.ie/car-parts/asia-motors/hi-topic-am-725/belt-drive-auto",
+    "updated_at": "2026-11-15T05:53:35.650816"
+   },
+   "after": {
+    "price_ils": "133.63",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/jetta-saloon-bu3/ignition-system-auto",
+    "updated_at": "2026-11-15T18:43:23.329653"
+   },
+   "price_history_id": "4a879576-5084-48d8-9c7b-9b05f8ed9bbd",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "1166f8ed-5b09-4ff5-a12e-5eb472ba405e",
+   "part_id": "d7d54d2b-6f7b-4c8e-bc5e-ef16add03689",
+   "supplier_sku": "40564",
+   "before": {
+    "price_ils": "128.31",
+    "supplier_url": "https://www.car-parts.ie/car-parts/honda/jazz/shock-absorber",
+    "updated_at": "2026-11-14T23:15:24.048819"
+   },
+   "after": {
+    "price_ils": "59.06",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/astra-mk-iii-f-estate/ball-joint",
+    "updated_at": "2026-11-15T18:43:23.353559"
+   },
+   "price_history_id": "afb39229-d002-4e8d-9d45-4e92a2cde48c",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "de6757bd-ea2d-472d-8f85-513490757c36",
+   "part_id": "6df030c3-4471-4198-99f3-67c9e049b351",
+   "supplier_sku": "40997",
+   "before": {
+    "price_ils": "75.62",
+    "supplier_url": "https://www.car-parts.ie/car-parts/hyundai/elantra/tie-rod",
+    "updated_at": "2026-11-14T23:17:44.328191"
+   },
+   "after": {
+    "price_ils": "199.65",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/antara-j26-h26/water-pump",
+    "updated_at": "2026-11-15T18:43:23.387787"
+   },
+   "price_history_id": "b8650462-46f0-4c6f-b7bf-9b478ac27f85",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "59bd5618-56eb-45d7-bf6f-9c6197ab45c2",
+   "part_id": "a691383b-9a9a-4caa-99a3-dfb2479e52f0",
+   "supplier_sku": "42277",
+   "before": {
+    "price_ils": "1027.19",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a5-convertible-f57/catalytic-converter",
+    "updated_at": "2026-11-15T06:34:42.745842"
+   },
+   "after": {
+    "price_ils": "75.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/crossover/ball-joint",
+    "updated_at": "2026-11-15T18:43:23.419363"
+   },
+   "price_history_id": "a1fa6309-ae89-4a33-b6a0-9a639bf7d0a4",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "a0aac1b0-1d70-49cc-aa51-f79451292168",
+   "part_id": "be186bed-66b1-4e58-9b27-22c240dd7367",
+   "supplier_sku": "45016",
+   "before": {
+    "price_ils": "109.45",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/gt-86-coupe-zn6/tie-rod",
+    "updated_at": "2026-11-14T17:03:56.879537"
+   },
+   "after": {
+    "price_ils": "20.53",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/celica-coupe-st16-at16/windscreen-cleaning-system-auto",
+    "updated_at": "2026-11-15T18:43:23.447774"
+   },
+   "price_history_id": "75a8d8cf-cd3b-472e-b0c0-51f25c23e715",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "75f6363d-9270-4946-a3dc-6f8156c5a40e",
+   "part_id": "f1e77389-6c32-4873-b256-7c28e8e4c005",
+   "supplier_sku": "45031",
+   "before": {
+    "price_ils": "137.08",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/astra-mk-viii-l-sports-tourer/ignition-system-auto",
+    "updated_at": "2026-11-14T19:11:32.968305"
+   },
+   "after": {
+    "price_ils": "66.82",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/across-a5z/steering-auto",
+    "updated_at": "2026-11-15T18:43:23.473615"
+   },
+   "price_history_id": "e6c1b76b-d48d-4621-814f-95378f27355f",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "159c4e27-a013-43e2-91e7-ce3d9de70936",
+   "part_id": "362f3778-295b-47dd-bdde-b7a2408037be",
+   "supplier_sku": "45057",
+   "before": {
+    "price_ils": "158.79",
+    "supplier_url": "https://www.car-parts.ie/car-parts/renault/kadjar/water-pump",
+    "updated_at": "2026-11-15T00:27:54.646850"
+   },
+   "after": {
+    "price_ils": "106.84",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/rav-4-v-a5/control-arm",
+    "updated_at": "2026-11-15T18:43:23.496470"
+   },
+   "price_history_id": "8dbfb7c1-054e-43a1-97f7-1b9218156c2b",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "3d9537a0-a52d-47cf-b75d-d5a841c43852",
+   "part_id": "010f1a35-f8b3-46d8-8e1b-a126283dbee4",
+   "supplier_sku": "45116",
+   "before": {
+    "price_ils": "532.51",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/e-tron-gt-saloon-f83/timing-belt-kit",
+    "updated_at": "2026-11-15T06:32:54.887003"
+   },
+   "after": {
+    "price_ils": "53.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/auris-touring-sports-ade18-zwe18-zre18/tie-rod",
+    "updated_at": "2026-11-15T18:43:23.521141"
+   },
+   "price_history_id": "78df475a-94ff-4fc7-b011-ccf2745dffe6",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "3663f5ed-3db9-4e62-b28e-e8a6ee6bb680",
+   "part_id": "2a39e944-e9bf-447d-8984-0eefc2d64119",
+   "supplier_sku": "45165",
+   "before": {
+    "price_ils": "28.40",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/corolla-coupe-e7/suspension-auto",
+    "updated_at": "2026-11-14T15:33:13.343041"
+   },
+   "after": {
+    "price_ils": "69.29",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/cabrio-450/fuel-filter",
+    "updated_at": "2026-11-15T18:43:23.545026"
+   },
+   "price_history_id": "3f749ab0-29d5-4eb6-87b8-5db5dbd76a07",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "bc3cec20-596a-4287-9970-5fadfa34d7b7",
+   "part_id": "aa3d6310-d955-4c8d-bc75-89e769b40196",
+   "supplier_sku": "46106",
+   "before": {
+    "price_ils": "59.06",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/80-80-82-b1/ball-joint",
+    "updated_at": "2026-11-15T06:38:23.139856"
+   },
+   "after": {
+    "price_ils": "101.65",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-iii-c-chassis-cab-u9/damping-auto",
+    "updated_at": "2026-11-15T18:43:23.568133"
+   },
+   "price_history_id": "0eede9b2-86cf-4a64-8846-a307e0404a43",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "ea40d2ec-2482-4cd8-ad09-2a966a93fd0b",
+   "part_id": "3ce4ea8b-f7ef-4d7b-afc5-75f5847e84f7",
+   "supplier_sku": "49440",
+   "before": {
+    "price_ils": "2194.49",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a8-4h/timing-chain",
+    "updated_at": "2026-11-15T06:38:52.160255"
+   },
+   "after": {
+    "price_ils": "65.63",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mitsubishi/lancer-sportbac/tie-rod",
+    "updated_at": "2026-11-15T18:43:23.602527"
+   },
+   "price_history_id": "45b39851-81b5-4696-862a-d3f953853835",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "faae33ad-7911-470b-8b5d-a5b5993ed051",
+   "part_id": "59d50d36-91e9-416e-ae8f-35925533834d",
+   "supplier_sku": "49717",
+   "before": {
+    "price_ils": "44.34",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/100-avant-43-c2/steering-auto",
+    "updated_at": "2026-11-15T06:40:57.472559"
+   },
+   "after": {
+    "price_ils": "287.20",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/nv200/timing-chain",
+    "updated_at": "2026-11-15T18:43:23.623553"
+   },
+   "price_history_id": "a8e9b4a3-5b1d-452d-ba50-cc5eaf3e28bd",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "fc11dc89-ea3e-4f2e-8aa2-28d6c46bb442",
+   "part_id": "bdba6e93-c6ee-4ef4-8fdc-3b1ef2e4cbbd",
+   "supplier_sku": "49775",
+   "before": {
+    "price_ils": "76.66",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/80-89-89q-8a-b3/control-arm",
+    "updated_at": "2026-11-15T06:37:51.781734"
+   },
+   "after": {
+    "price_ils": "266.29",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/altima/timing-chain",
+    "updated_at": "2026-11-15T18:43:23.641108"
+   },
+   "price_history_id": "42bf9817-561b-4c27-9e40-8ca4609e2455",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "d29f1b89-61f4-4c4c-8ca3-89e91da5a828",
+   "part_id": "fc5bd7ff-b58c-4575-9962-11da5e1d3dd3",
+   "supplier_sku": "51022",
+   "before": {
+    "price_ils": "93.75",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/spider-916s/ball-joint",
+    "updated_at": "2026-11-15T05:14:40.995226"
+   },
+   "after": {
+    "price_ils": "82.20",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/allion-ii-nzt26-zrt26/abs-sensor",
+    "updated_at": "2026-11-15T18:43:23.659726"
+   },
+   "price_history_id": "ba36f06c-d99e-4bf0-9bb3-62de2b9226be",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "b84af720-1748-4307-994a-df020993558b",
+   "part_id": "b7b8f32f-75e5-470b-8eac-d6410669419a",
+   "supplier_sku": "5118",
+   "before": {
+    "price_ils": "56.38",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/nv200/ignition-system-auto",
+    "updated_at": "2026-11-15T01:12:46.797952"
+   },
+   "after": {
+    "price_ils": "72.04",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/dyna-150-platform-chassis-1988/belt-drive-auto",
+    "updated_at": "2026-11-15T18:43:23.688417"
+   },
+   "price_history_id": "0dc37a12-72db-4230-b751-7d5a52f16f67",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "1b2e54ac-0146-4bfd-9a72-a1c345e94381",
+   "part_id": "a666211a-44f2-4597-8976-38ad6964054e",
+   "supplier_sku": "51472",
+   "before": {
+    "price_ils": "87.03",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/amarok-platform-chassis-s1b/ball-joint",
+    "updated_at": "2026-11-14T21:41:34.627564"
+   },
+   "after": {
+    "price_ils": "130.53",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/outback-bl-bp/abs-sensor",
+    "updated_at": "2026-11-15T18:43:23.718050"
+   },
+   "price_history_id": "19340a18-27fc-4c95-bd1a-470e675a0d07",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "15fbc045-350b-4fd0-9fa8-c038371a9ed3",
+   "part_id": "a4c6eabe-e967-49c5-b80c-c95d13722735",
+   "supplier_sku": "51576",
+   "before": {
+    "price_ils": "79.66",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/cavalier/thermostat",
+    "updated_at": "2026-11-14T19:06:05.416425"
+   },
+   "after": {
+    "price_ils": "14.13",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/land-cruiser-hardtop-j7/suspension-auto",
+    "updated_at": "2026-11-15T18:43:23.748569"
+   },
+   "price_history_id": "dbc2d4a0-a8a1-4cfd-bcb6-b5b55eafb180",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "c03aaf6b-301a-442f-93a4-ca6760c70d87",
+   "part_id": "a9799200-1d40-428d-8a52-36328001922d",
+   "supplier_sku": "58322",
+   "before": {
+    "price_ils": "298.58",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-i-a-van-fd/radiator",
+    "updated_at": "2026-11-14T18:37:57.943507"
+   },
+   "after": {
+    "price_ils": "45.59",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/127-127a/thermostat",
+    "updated_at": "2026-11-15T18:43:23.771993"
+   },
+   "price_history_id": "4efec4ea-db38-44ea-9d55-6da876e25673",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "eace6896-1a09-4326-8ef5-53f53f524a99",
+   "part_id": "6ef50971-fae2-4ef7-a4c6-71d2fd201474",
+   "supplier_sku": "58324",
+   "before": {
+    "price_ils": "98.31",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c5-aircross/ball-joint",
+    "updated_at": "2026-11-15T00:19:24.279056"
+   },
+   "after": {
+    "price_ils": "228.67",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-i-a-combi-jd/radiator",
+    "updated_at": "2026-11-15T18:43:23.800428"
+   },
+   "price_history_id": "dc5ec65c-4d21-4f92-9c0c-a292f160c30b",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "05bfcb34-1c65-42bd-b5b3-6f9a2f8ba59b",
+   "part_id": "72ef0089-9b98-48df-988a-9cb472291159",
+   "supplier_sku": "59779",
+   "before": {
+    "price_ils": "325.83",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/v60-ii-cross-country-227/control-arm",
+    "updated_at": "2026-11-14T20:21:21.529932"
+   },
+   "after": {
+    "price_ils": "80.67",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/astra-mk-vi-j-estate/tie-rod",
+    "updated_at": "2026-11-15T18:43:23.827596"
+   },
+   "price_history_id": "77889dc7-ae4d-41ac-a173-a2c279d9134c",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "d85979fa-ee76-4f77-8c81-707429e4ac63",
+   "part_id": "49ab02be-550f-4cec-9e19-66d63bebbbfb",
+   "supplier_sku": "60044",
+   "before": {
+    "price_ils": "215.27",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/156-sportwagon-932/radiator",
+    "updated_at": "2026-11-15T04:59:13.862034"
+   },
+   "after": {
+    "price_ils": "94.69",
+    "supplier_url": "https://www.car-parts.ie/car-parts/lexus/lexus-ls500h/tie-rod",
+    "updated_at": "2026-11-15T18:43:23.855454"
+   },
+   "price_history_id": "8ea6fc43-e5d5-4783-ab3a-45d977fff50c",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "2e27c245-16ba-4840-a532-61e4f660021c",
+   "part_id": "c5f0ed86-4d29-417b-b70f-cfc841073f01",
+   "supplier_sku": "6076",
+   "before": {
+    "price_ils": "183.81",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/159-sportwagon-939/cv-joint",
+    "updated_at": "2026-11-15T04:56:06.358987"
+   },
+   "after": {
+    "price_ils": "81.61",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/amarok-platform-chassis-s1b/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.878591"
+   },
+   "price_history_id": "f2c63e3a-e032-432c-9d04-e68b3f0479af",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "d17c31d5-6569-4512-b9e2-28ff8ade7441",
+   "part_id": "a1c83766-8136-4cd8-81e4-46d4d66be7e2",
+   "supplier_sku": "6261",
+   "before": {
+    "price_ils": "576.98",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mercedes-benz/sprinter/clutch-pressure-plate",
+    "updated_at": "2026-11-15T02:10:23.502231"
+   },
+   "after": {
+    "price_ils": "50.56",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/almera/brakes-auto",
+    "updated_at": "2026-11-15T18:43:23.911549"
+   },
+   "price_history_id": "2e38cb25-8156-4b1e-b3d9-dc80b0383f66",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "2e516ab3-06a7-4e56-9716-a835420f434a",
+   "part_id": "9bf26a62-473a-4b3a-b0e8-06c222545363",
+   "supplier_sku": "6346",
+   "before": {
+    "price_ils": "35.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mercedes-benz/sprinter/ignition-system-auto",
+    "updated_at": "2026-11-15T02:10:27.925694"
+   },
+   "after": {
+    "price_ils": "59.26",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ssangyong/musso-fj/brakes-auto",
+    "updated_at": "2026-11-15T18:43:23.938687"
+   },
+   "price_history_id": "0ad0b5ca-2c71-4591-9c29-484cc12e91db",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "ecb0a3be-709f-4f35-a651-b25feb91ec1f",
+   "part_id": "8921cf18-b1be-4610-b16d-a433f5efa806",
+   "supplier_sku": "6458",
+   "before": {
+    "price_ils": "47.08",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a4-avant-8ed-b7/spark-plug",
+    "updated_at": "2026-11-15T06:33:18.254940"
+   },
+   "after": {
+    "price_ils": "61.00",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/svx-cx/brake-pads",
+    "updated_at": "2026-11-15T18:43:23.973789"
+   },
+   "price_history_id": "79f5b004-b3fb-4254-8be4-d575748e46d2",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "650919d7-fb8a-4b0c-bd94-b12b04a51072",
+   "part_id": "6573892c-4bfe-4e8b-bb53-3f3d8d42f4b8",
+   "supplier_sku": "6711",
+   "before": {
+    "price_ils": "19.38",
+    "supplier_url": "https://www.car-parts.ie/car-parts/honda/stream/spark-plug",
+    "updated_at": "2026-11-15T03:00:34.214282"
+   },
+   "after": {
+    "price_ils": "80.18",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/legacy-v-estate-bm-br/cv-joint",
+    "updated_at": "2026-11-15T18:43:23.998414"
+   },
+   "price_history_id": "1111e1e6-a16b-463b-b216-c645abefa067",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "897e8a09-c75c-4b96-ae59-c660ec67e392",
+   "part_id": "8e0e8b97-81b8-4344-8d33-b33d59b0fe84",
+   "supplier_sku": "6T46127",
+   "before": {
+    "price_ils": "26.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/super-90/brakes-auto",
+    "updated_at": "2026-11-15T06:42:36.280344"
+   },
+   "after": {
+    "price_ils": "14.96",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/transporter-iii-platform-chassis/brakes-auto",
+    "updated_at": "2026-11-15T18:43:24.024553"
+   },
+   "price_history_id": "6913a676-ceff-4f09-98ca-ed6fb6fd05a6",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "35f321c9-375e-49b8-881b-fd040be32caa",
+   "part_id": "9a00bb15-729f-43bf-96a1-73c29da8f757",
+   "supplier_sku": "76906",
+   "before": {
+    "price_ils": "53.63",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/146-930/abs-sensor",
+    "updated_at": "2026-11-15T05:02:35.291371"
+   },
+   "after": {
+    "price_ils": "93.09",
+    "supplier_url": "https://www.car-parts.ie/car-parts/hyundai/elantra/fuel-pump",
+    "updated_at": "2026-11-15T18:43:24.059105"
+   },
+   "price_history_id": "e7512ed0-4d97-4e15-8859-a42cee4f1c8b",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "2b443e4f-0a83-4b28-99b9-b00858292382",
+   "part_id": "30aaabaf-08ab-4dc3-b1cf-50df5b74d4c8",
+   "supplier_sku": "908802",
+   "before": {
+    "price_ils": "2690.14",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/80-8c-b4/cylinder-head",
+    "updated_at": "2026-11-15T06:38:02.587631"
+   },
+   "after": {
+    "price_ils": "244.40",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ssangyong/tivoli-grand/engine-oil",
+    "updated_at": "2026-11-15T18:43:24.093604"
+   },
+   "price_history_id": "6ac9b47d-0e68-4498-acdd-ff30a90bcb67",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "926a82ac-b5aa-46cf-8632-78b56d2d3364",
+   "part_id": "28cf1fb8-ad0f-4f1f-8033-9f810577abef",
+   "supplier_sku": "910182",
+   "before": {
+    "price_ils": "91.80",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/spider-939/damping-auto",
+    "updated_at": "2026-11-15T05:17:38.438863"
+   },
+   "after": {
+    "price_ils": "1651.92",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/transporter-ii-bus/cylinder-head",
+    "updated_at": "2026-11-15T18:43:24.129628"
+   },
+   "price_history_id": "33bfb64f-f31a-4457-9f70-250a7d9c4a05",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "72cc00ac-eb80-4deb-bdb5-e86d1fdf1813",
+   "part_id": "158c2729-c1d6-46ea-bb76-8ce2e17545e2",
+   "supplier_sku": "93289",
+   "before": {
+    "price_ils": "2657.43",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/golf-viii-variant-cg5/turbocharger",
+    "updated_at": "2026-11-14T22:41:26.809756"
+   },
+   "after": {
+    "price_ils": "75.93",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/yaris-p21-pa1-ph1/spark-plug",
+    "updated_at": "2026-11-15T18:43:24.160284"
+   },
+   "price_history_id": "90d502be-a73d-41be-9663-c36e6c2b38ca",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "39af8b90-703c-4e98-ab85-9ae7c7c19ab0",
+   "part_id": "9c47a46a-333a-408b-8849-72e9a807644d",
+   "supplier_sku": "94833",
+   "before": {
+    "price_ils": "51.36",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a6-e-tron-sportback-gha/spark-plug",
+    "updated_at": "2026-11-15T06:43:39.268214"
+   },
+   "after": {
+    "price_ils": "59.09",
+    "supplier_url": "https://www.car-parts.ie/car-parts/opel/astra/belt-drive-auto",
+    "updated_at": "2026-11-15T18:43:24.192594"
+   },
+   "price_history_id": "80d8a713-f51f-4738-8cd3-e36ffabc8bb8",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "30ddd279-588d-48ed-bf03-7bc9b8a726a8",
+   "part_id": "3c69b249-2d61-4431-98fa-78b1c26f09b3",
+   "supplier_sku": "94976",
+   "before": {
+    "price_ils": "44.82",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/tt-roadster-8j9/ignition-system-auto",
+    "updated_at": "2026-11-15T06:43:54.401711"
+   },
+   "after": {
+    "price_ils": "110.94",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/cascada-convertible/belt-drive-auto",
+    "updated_at": "2026-11-15T18:43:24.221432"
+   },
+   "price_history_id": "7f5b54da-0bb4-40cd-981f-8e9a91e0aebf",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "700ae777-ce92-4784-9e98-125d6f26c74e",
+   "part_id": "8e598df3-503f-409f-8f17-b99dcc4eaa92",
+   "supplier_sku": "OL2175",
+   "before": {
+    "price_ils": "416.87",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/frontera-mk-i-a-sport/radiator",
+    "updated_at": "2026-11-14T18:26:24.090909"
+   },
+   "after": {
+    "price_ils": "768.91",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/monterey/radiator",
+    "updated_at": "2026-11-15T18:43:24.245522"
+   },
+   "price_history_id": "3875f124-caea-4c6b-9c55-967118e36247",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "98bbbc33-0360-4296-9ff1-d7c585604349",
+   "part_id": "a9d51e94-1587-4101-868c-0c2a503b6238",
+   "supplier_sku": "PA425",
+   "before": {
+    "price_ils": "130.53",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/polo-box-86cf/water-pump",
+    "updated_at": "2026-11-14T21:29:14.110726"
+   },
+   "after": {
+    "price_ils": "6.51",
+    "supplier_url": "https://www.car-parts.ie/car-parts/subaru/impreza-estate-us/engine-cooling-system-auto",
+    "updated_at": "2026-11-15T18:43:24.272921"
+   },
+   "price_history_id": "88de1eef-e0da-4e84-a563-36cfc52e63b0",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  },
+  {
+   "offer_id": "24c208a8-45c4-46ed-a58f-1d32e71a7c59",
+   "part_id": "9aa7ec22-22d4-423d-9011-6a7a01afd744",
+   "supplier_sku": "TCK97",
+   "before": {
+    "price_ils": "1216.33",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/d3-e90/timing-chain",
+    "updated_at": "2026-11-15T05:49:29.531848"
+   },
+   "after": {
+    "price_ils": "406.78",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/wagon-r-em/timing-chain",
+    "updated_at": "2026-11-15T18:43:24.331196"
+   },
+   "price_history_id": "fcbdfe63-2485-44b1-aa2a-22f19f9cd9ae",
+   "run_id": "20261115T184322Z_rest",
+   "phase": "rest"
+  }
+ ],
+ "skipped": [],
+ "applied": 70,
+ "skipped_count": 0
+}

@@ -1,0 +1,12 @@
+SAFE 2026-11-15T19:43:17+01:00
+{"counts": {"NOT_APPLIED": 90}}
+[offer-policy] maintenance/cpie_overwrite_repair.py: policy 1.1.0 sha256=041c62d1f0b3a42e
+{"result": "/app/state/cpie_ownership/overwrite_repair/result_20261115T184318Z_canary.json", "applied": 20, "skipped": 0, "reasons": []}
+{"ACCEPT": true, "fails": [], "applied": 20, "skipped": [], "price_history": 20, "journal_committed": 20, "fulldiff_changed_columns": {"offer.price_ils": 20, "offer.supplier_url": 20, "offer.updated_at": 20, "part.updated_at": 20}, "rest_scope_states": {"NOT_APPLIED": 70}}
+canary accepted 2026-11-15T19:43:20+01:00
+SAFE 2026-11-15T19:43:21+01:00
+[offer-policy] maintenance/cpie_overwrite_repair.py: policy 1.1.0 sha256=041c62d1f0b3a42e
+{"result": "/app/state/cpie_ownership/overwrite_repair/result_20261115T184322Z_rest.json", "applied": 70, "skipped": 0, "reasons": []}
+{"ACCEPT": true, "fails": [], "applied": 70, "skipped": [], "price_history": 70, "journal_committed": 70, "fulldiff_changed_columns": {"offer.price_ils": 70, "offer.supplier_url": 70, "offer.updated_at": 70, "part.updated_at": 70}, "rest_scope_states": {}}
+{"counts": {"VERIFIED_REPAIRED": 90}, "rows": {"debe1b8c-8b05-4dbd-b7d6-0dca5ba88b83": "VERIFIED_REPAIRED", "5c9970f7-701a-4641-ada4-403b61f83645": "VERIFIED_REPAIRED", "33efd8a3-79de-4e31-a608-5cacab240201": "VERIFIED_REPAIRED", "ecb81330-fe5e-440f-82de-d0c466f57194": "VERIFIED_REPAIRED", "7b6e9161-a745-429b-bc4c-17fed62032e5": "VERIFIED_REPAIRED", "b538596b-95df-417c-b8c9-1ee39db81ee5": "VERIFIE
+WINDOW DONE 2026-11-15T19:43:26+01:00 canary=/app/state/cpie_ownership/overwrite_repair/result_20261115T184318Z_canary.json rest=/app/state/cpie_ownership/overwrite_repair/result_20261115T184322Z_rest.json

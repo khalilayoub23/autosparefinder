@@ -10295,3 +10295,8 @@ Re-checked against the live DB and files this turn (not the earlier tracker text
 - Side effects checked: 3,858/3,858 earlier moves intact; 36 UNDO, 1,070 NOT_READY, 1,279 AMBIGUOUS rows 100% at manifest values. Rollback coverage 0/0 (no tool).
 - Consultant review PARTIAL (transcript-only). Artifacts: `candidates/core-identity-2026-11-14/forensics/production_repair_audit/`.
 - **Open decision (owner):** build + sandbox-test the repair and rollback tools, then a separately gated production run; 36 UNDO rows need their own approval.
+
+### CORE workstream C - PRODUCTION REPAIR OF THE READY OFFERS EXECUTED 2026-11-15 20:43 IL - **PASS (90 repaired, 3 preserved owner rewrites; rebase and replay re-classification NOT run)**
+- Supersedes the earlier "0/93 applied" audit (kept). Tool `backend/maintenance/cpie_overwrite_repair.py` sha256 0deaa5333d1a8882, commits 24edc2b/cdeea7c/534b73e; offer_policy actor registered; 45 sandbox checks incl. the `--rebase` value path.
+- Production: preflight SAFE before each phase; canary 20 + rest 70 applied, 0 skipped, acceptance + full-row diff clean; 90/90 verified vs journal and manifest target; 89 of 90 still at the final read, 1 (58984b1f) rewritten by its owner brand keeping the target price. Preserved (owner brand rewrote after the manifest): 856bf4de, ebde0803, c5dbbb3f. 0 customer references; 3,858 moves intact.
+- Not done: `--rebase` (14 stale base_price parts are pre-existing, listed in the execution doc) and plan §2 replay re-run (exact CAS guard used instead). Artifacts + sha256: `candidates/core-identity-2026-11-14/forensics/production_repair_execution/`; state volume `/app/state/cpie_ownership/overwrite_repair/`.

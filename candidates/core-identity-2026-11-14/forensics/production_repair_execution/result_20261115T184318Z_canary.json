@@ -1,0 +1,373 @@
+{
+ "manifest_sha256": "655952659c60ff9824c8d9921662114776e749303265d0894f53202f62223158",
+ "approval_ref": "owner chat 2026-11-15: approved build+sandbox+canary20->rest of the 93 READY repairs (this window: 90 eligible, 3 preserved)",
+ "run_id": "20261115T184318Z_canary",
+ "phase": "canary",
+ "pre_apply_backup": "/app/state/cpie_ownership/overwrite_repair/pre_apply_20261115T184318Z_canary.json",
+ "pre_apply_backup_sha256": "4e8358625ccb9f3467f6baa2ca23054f3e5373d86fe9bc7011d8462b480ff081",
+ "done": [
+  {
+   "offer_id": "debe1b8c-8b05-4dbd-b7d6-0dca5ba88b83",
+   "part_id": "270b8b9b-15b1-418b-b04f-236a4df12fbd",
+   "supplier_sku": "04773",
+   "before": {
+    "price_ils": "176.89",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/golf-i-17/exhaust-system-auto",
+    "updated_at": "2026-11-14T21:37:12.493702"
+   },
+   "after": {
+    "price_ils": "22.72",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/nova/thermostat",
+    "updated_at": "2026-11-15T18:43:18.888033"
+   },
+   "price_history_id": "c9cdcf22-17a7-4d72-9e40-0c04abb1c9f7",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "5c9970f7-701a-4641-ada4-403b61f83645",
+   "part_id": "119a274c-dde2-4717-8a02-1c539f484f15",
+   "supplier_sku": "10006",
+   "before": {
+    "price_ils": "31.01",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/d3-estate-f31/ignition-system-auto",
+    "updated_at": "2026-11-15T05:22:01.891098"
+   },
+   "after": {
+    "price_ils": "304.67",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volkswagen/transporter/camshaft",
+    "updated_at": "2026-11-15T18:43:18.925421"
+   },
+   "price_history_id": "db9cb4d2-b222-444a-bd8d-b0afc90cdd23",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "33efd8a3-79de-4e31-a608-5cacab240201",
+   "part_id": "86851e0b-5548-49b0-9c88-467e2684470a",
+   "supplier_sku": "100075",
+   "before": {
+    "price_ils": "217.78",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a3-convertible-8p7/window-regulator",
+    "updated_at": "2026-11-15T06:28:57.483085"
+   },
+   "after": {
+    "price_ils": "348.42",
+    "supplier_url": "https://www.car-parts.ie/car-parts/honda/jazz/timing-chain",
+    "updated_at": "2026-11-15T18:43:18.957091"
+   },
+   "price_history_id": "762a1f9a-83f8-434b-a7b4-c7c765b71aeb",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "ecb81330-fe5e-440f-82de-d0c466f57194",
+   "part_id": "bae65d89-f90f-44bf-8213-6f8fa32b4a58",
+   "supplier_sku": "102602",
+   "before": {
+    "price_ils": "506.97",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c3-aircross/cylinder-head",
+    "updated_at": "2026-11-15T02:38:42.581055"
+   },
+   "after": {
+    "price_ils": "352.80",
+    "supplier_url": "https://www.car-parts.ie/car-parts/kia/sportage/window-regulator",
+    "updated_at": "2026-11-15T18:43:18.985939"
+   },
+   "price_history_id": "af525002-f240-4059-925b-7c4bbd5db245",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "7b6e9161-a745-429b-bc4c-17fed62032e5",
+   "part_id": "051c8406-c637-4cfa-b642-038af5d39692",
+   "supplier_sku": "102998",
+   "before": {
+    "price_ils": "243.46",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a8-4e/window-regulator",
+    "updated_at": "2026-11-15T06:42:49.774971"
+   },
+   "after": {
+    "price_ils": "30.76",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/avensis-estate-zrt27-adt27/steering-auto",
+    "updated_at": "2026-11-15T18:43:19.022526"
+   },
+   "price_history_id": "87ca7613-2d27-49f4-848b-f33e6e8bec2d",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "b538596b-95df-417c-b8c9-1ee39db81ee5",
+   "part_id": "99874b8f-b059-48fa-942c-13d083e009f9",
+   "supplier_sku": "103802",
+   "before": {
+    "price_ils": "69.22",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/b7-e65/air-filter",
+    "updated_at": "2026-11-15T05:45:58.998310"
+   },
+   "after": {
+    "price_ils": "57.18",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/swift-i-aa/tie-rod",
+    "updated_at": "2026-11-15T18:43:19.058589"
+   },
+   "price_history_id": "0c77500d-feda-41a7-84eb-c9cacb2b9642",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "53b38f20-24cd-4b8c-9e11-19472efc6cc5",
+   "part_id": "66e0e3c9-dd78-421b-8274-436fa838a0bc",
+   "supplier_sku": "110 819",
+   "before": {
+    "price_ils": "46.35",
+    "supplier_url": "https://www.car-parts.ie/car-parts/skoda/fabia/body-auto",
+    "updated_at": "2026-11-14T22:56:55.471385"
+   },
+   "after": {
+    "price_ils": "295.52",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/camry-v2/shock-absorber",
+    "updated_at": "2026-11-15T18:43:19.086964"
+   },
+   "price_history_id": "14e06d03-567b-4278-9eab-0cb55daf242b",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "d68edf2f-f09a-4c00-a643-709c23a7c252",
+   "part_id": "cbd35a56-f8ea-47f4-b845-6fb64ad62006",
+   "supplier_sku": "119104",
+   "before": {
+    "price_ils": "377.58",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpine/v6/wiper-blades",
+    "updated_at": "2026-11-15T05:51:58.826301"
+   },
+   "after": {
+    "price_ils": "179.99",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/jimny-sj-ja-jb/windscreen-cleaning-system-auto",
+    "updated_at": "2026-11-15T18:43:19.116686"
+   },
+   "price_history_id": "0d81b158-2d15-4706-a29d-c0c5d5678509",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "58984b1f-17fd-4560-afe0-a00964c33fa3",
+   "part_id": "3f785c50-b0ad-492f-b773-64fe61779819",
+   "supplier_sku": "1360",
+   "before": {
+    "price_ils": "77.12",
+    "supplier_url": "https://www.car-parts.ie/car-parts/aston-martin/dbs-volante/engine-oil",
+    "updated_at": "2026-11-15T06:09:25.888899"
+   },
+   "after": {
+    "price_ils": "20.01",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/140-estate-145/spark-plug",
+    "updated_at": "2026-11-15T18:43:19.150191"
+   },
+   "price_history_id": "1cad6baf-74a9-46c7-906f-04e2fd42de74",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "9e89b673-45d7-4987-ae9a-a7167e782d68",
+   "part_id": "c95d50a1-2cdd-436f-b2d2-a080244b9deb",
+   "supplier_sku": "15032",
+   "before": {
+    "price_ils": "316.78",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alfa-romeo/ar-8-platform-chassis-280/brake-discs",
+    "updated_at": "2026-11-15T05:13:53.714925"
+   },
+   "after": {
+    "price_ils": "106.63",
+    "supplier_url": "https://www.car-parts.ie/car-parts/tesla/model-y-juniper/steering-auto",
+    "updated_at": "2026-11-15T18:43:19.201244"
+   },
+   "price_history_id": "96569490-9126-47a9-90ee-8e9ede8feeba",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "afd4b1bc-490a-4529-ad18-d97411dd3d3e",
+   "part_id": "8786bbd5-1d37-4bcf-856e-7f644b791306",
+   "supplier_sku": "15735",
+   "before": {
+    "price_ils": "151.45",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/b6-e21/brake-discs",
+    "updated_at": "2026-11-15T05:31:22.099600"
+   },
+   "after": {
+    "price_ils": "133.60",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/v90-estate/belt-drive-auto",
+    "updated_at": "2026-11-15T18:43:19.274644"
+   },
+   "price_history_id": "c26253a4-ccc6-4b6d-90cc-091fe732b9da",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "1da010de-2046-4dcb-b268-c015916ce06e",
+   "part_id": "efc8b632-7d42-4365-bf1c-72f135804f24",
+   "supplier_sku": "15910",
+   "before": {
+    "price_ils": "110.56",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/toledo/gearbox-mount",
+    "updated_at": "2026-11-15T01:22:21.756608"
+   },
+   "after": {
+    "price_ils": "80.77",
+    "supplier_url": "https://www.car-parts.ie/car-parts/skoda/110-coupe/brake-discs",
+    "updated_at": "2026-11-15T18:43:19.352124"
+   },
+   "price_history_id": "f87c5ce8-37cc-4316-92a4-c548d4fc63aa",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "77269344-1249-44ac-b106-750aa31e4e2e",
+   "part_id": "d2bd0c31-c741-4297-a4b6-61a64b217335",
+   "supplier_sku": "15912",
+   "before": {
+    "price_ils": "81.95",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/164-1968/brake-discs",
+    "updated_at": "2026-11-14T20:23:40.402259"
+   },
+   "after": {
+    "price_ils": "37.06",
+    "supplier_url": "https://www.car-parts.ie/car-parts/skoda/favorit-forman-785/brake-discs",
+    "updated_at": "2026-11-15T18:43:19.430498"
+   },
+   "price_history_id": "5a89a244-93dd-46dd-8f36-9a9884465804",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "06de5bc8-1c1d-4ccd-9997-bdc67d041e5e",
+   "part_id": "eaa5f2f1-8067-4092-a7fe-127550c1e529",
+   "supplier_sku": "16012",
+   "before": {
+    "price_ils": "65.46",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/polo-86c-80/brake-pads",
+    "updated_at": "2026-11-14T21:13:49.514985"
+   },
+   "after": {
+    "price_ils": "84.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/swift-ii-saloon-ah-aj/brake-discs",
+    "updated_at": "2026-11-15T18:43:19.491898"
+   },
+   "price_history_id": "c0d5d94f-8c09-4a6b-a44d-13de0ab98a26",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "1259210c-e2eb-4b4e-9318-1676b70f8c75",
+   "part_id": "81aadb7b-df5d-4bce-bfcb-434e733ee4ad",
+   "supplier_sku": "16237",
+   "before": {
+    "price_ils": "103.91",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/highlander/cv-joint",
+    "updated_at": "2026-11-15T01:12:10.304380"
+   },
+   "after": {
+    "price_ils": "115.92",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/850-ls/brake-discs",
+    "updated_at": "2026-11-15T18:43:19.547819"
+   },
+   "price_history_id": "6f7dceef-efc5-4941-8e03-32ef8806c37a",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "1d6d42df-c391-4f2b-a6ac-f43e8ccd259f",
+   "part_id": "50c22bc4-95de-411b-9ace-64133a29ffee",
+   "supplier_sku": "16296",
+   "before": {
+    "price_ils": "66.43",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/crossover/cv-joint",
+    "updated_at": "2026-11-15T00:27:45.621697"
+   },
+   "after": {
+    "price_ils": "127.23",
+    "supplier_url": "https://www.car-parts.ie/car-parts/skoda/felicia-ii-estate-6u5/shock-absorber",
+    "updated_at": "2026-11-15T18:43:19.586819"
+   },
+   "price_history_id": "03cf47f7-200f-4aae-8030-bd65d5d1813b",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "c7129d7b-a9dd-4e87-adf6-fcfa42fcd061",
+   "part_id": "74d7d7b9-4a59-43c2-a4bd-1c996ab66675",
+   "supplier_sku": "16298",
+   "before": {
+    "price_ils": "87.63",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/transporter-iii-platform-chassis/brake-pads",
+    "updated_at": "2026-11-14T23:19:22.777119"
+   },
+   "after": {
+    "price_ils": "162.17",
+    "supplier_url": "https://www.car-parts.ie/car-parts/suzuki/x-90-el/cv-joint",
+    "updated_at": "2026-11-15T18:43:19.621853"
+   },
+   "price_history_id": "f946bfa3-ef22-4f53-a0e9-b2714815ae5b",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "866831f3-65cb-4195-bacd-436c16dec6f5",
+   "part_id": "a5c58e73-daf0-4c8e-b324-a3c0ff99aa6c",
+   "supplier_sku": "16537",
+   "before": {
+    "price_ils": "162.27",
+    "supplier_url": "https://www.car-parts.ie/car-parts/wiesmann/gt-mf5-coupe/brake-discs",
+    "updated_at": "2026-11-14T23:24:07.844315"
+   },
+   "after": {
+    "price_ils": "80.84",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/taro-1989/brakes-auto",
+    "updated_at": "2026-11-15T18:43:19.652948"
+   },
+   "price_history_id": "0c4b7777-11f9-422e-b4f3-f8d21be334df",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "bbe49f26-2abb-4399-ab2c-655314134698",
+   "part_id": "bf62cbd0-dc46-4fe9-b024-47ebe7815196",
+   "supplier_sku": "16581",
+   "before": {
+    "price_ils": "107.01",
+    "supplier_url": "https://www.car-parts.ie/car-parts/mazda/-323-ta-xlg/cv-joint",
+    "updated_at": "2026-11-15T04:21:18.072062"
+   },
+   "after": {
+    "price_ils": "69.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/starlet/brake-pads",
+    "updated_at": "2026-11-15T18:43:19.700178"
+   },
+   "price_history_id": "cba6873a-6600-43b6-bd5b-b25ac6e4de32",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "9d96cc83-9be6-43c0-aeeb-7afb1dc3ae2e",
+   "part_id": "8e76c9b8-0e08-4e06-bae6-c9845a0cf676",
+   "supplier_sku": "16843",
+   "before": {
+    "price_ils": "149.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/200-44-44q/cv-joint",
+    "updated_at": "2026-11-15T06:26:26.596257"
+   },
+   "after": {
+    "price_ils": "90.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/movano-mk-ii-b-combi/brake-pads",
+    "updated_at": "2026-11-15T18:43:19.747620"
+   },
+   "price_history_id": "9a80ed52-8b60-4632-8c4b-69b9a6e06d71",
+   "run_id": "20261115T184318Z_canary",
+   "phase": "canary"
+  }
+ ],
+ "skipped": [],
+ "applied": 20,
+ "skipped_count": 0
+}
