@@ -10,7 +10,9 @@ Process:  default run = build the manifest (READ-ONLY, sha256-stamped).
          url+price, the target part must hold no Car-Parts.ie offer; the offer's part_id is changed - nothing is
          deleted, no price or url is touched. The previous part_id of every moved offer is written to the result file.
          Run only with the harvester stopped (approved operation) and the actor listed in offer_policy.POLICY_BOUND_ACTORS.
-Data Imported/Modified: supplier_parts.part_id of MOVE rows only (apply); nothing in manifest mode.
+         `--rollback --result RESULT.json --approval-ref R`: puts every applied offer back on its previous part (only if
+         it is still on the part the result recorded and the previous part holds no Car-Parts.ie offer); price/url untouched.
+Data Imported/Modified: supplier_parts.part_id of MOVE rows only (apply / rollback); nothing in manifest mode.
 Data Sources: parts_catalog (specifications.product_url, name), supplier_parts, part_identity brand vocabulary.
 Missing Data Delegation: parts of the other brands get no offer here (their real prices were overwritten); the importer
          creates them under a brand-qualified key on the next harvest.
@@ -140,14 +142,48 @@ async def apply(path: Path, ref: str) -> None:
     print(json.dumps({"result": str(res), "applied": len(done), "skipped": len(skipped)}))
 
 
+async def rollback(result_path: Path, ref: str, dsn: str = None) -> dict:
+    res = json.load(open(result_path))
+    conn = await asyncpg.connect(dsn or DB)
+    back, skipped = [], []
+    try:
+        for d in res["done"]:
+            try:
+                async with conn.transaction():
+                    off = await conn.fetchrow("SELECT part_id::text pid FROM supplier_parts WHERE id=$1::uuid FOR UPDATE NOWAIT", d["offer"])
+                    if off is None or off["pid"] != d["new_part_id"]:
+                        raise RuntimeError("precondition: offer is no longer on the part the result recorded")
+                    if await conn.fetchval("SELECT 1 FROM supplier_parts WHERE part_id=$1::uuid AND supplier_id=$2::uuid LIMIT 1",
+                                           d["previous_part_id"], SUP):
+                        raise RuntimeError("precondition: previous part already holds a Car-Parts.ie offer")
+                    await conn.execute("UPDATE supplier_parts SET part_id=$2::uuid, updated_at=NOW() WHERE id=$1::uuid", d["offer"], d["previous_part_id"])
+                    back.append(d["offer"])
+            except Exception as exc:  # noqa: BLE001
+                skipped.append({"offer": d["offer"], "reason": str(exc)[:200]})
+    finally:
+        await conn.close()
+    out = OUT / f"cpie_ownership_rollback_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
+    out.write_text(json.dumps({"result": str(result_path), "approval_ref": ref, "restored": len(back), "skipped": len(skipped), "skipped_rows": skipped}))
+    print(json.dumps({"rollback": str(out), "restored": len(back), "skipped": len(skipped)}))
+    return {"restored": len(back), "skipped": skipped}
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--rollback", action="store_true")
+    ap.add_argument("--result")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--manifest")
     ap.add_argument("--expect-sha256")
     ap.add_argument("--approval-ref")
     a = ap.parse_args()
-    if not a.apply:
+    if a.rollback:
+        import offer_policy
+        offer_policy.gate_or_exit(ACTOR, False)
+        if not a.approval_ref or not a.result:
+            print("REFUSED: --result and --approval-ref are required"); raise SystemExit(3)
+        asyncio.run(rollback(Path(a.result), a.approval_ref))
+    elif not a.apply:
         asyncio.run(build())
     else:
         import offer_policy

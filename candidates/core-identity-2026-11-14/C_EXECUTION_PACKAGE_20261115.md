@@ -13,3 +13,8 @@ Result file: UPDATE supplier_parts SET part_id=<previous_part_id> for each appli
 ## Tests (sandbox_backend, run 2026-11-15): candidates/.../test_cpie_identity.py 6 passed (same number two brands, repeated import, order independence, fail-closed, token reversible, brand from vocabulary not vehicle make).
 ## Not yet done (honest list)
 - reverse (rollback) mode of the apply tool; tests/test_offer_policy.py coverage for the new bound actor; DB-backed importer test in sandbox_postgres (two-brand harvest file twice, both orders); `Article №:` prefix defect; single-row overwrite measurement from backups; consultant review of THIS package.
+
+## Prerequisites closed 2026-11-15 (owner approved the execution window on the condition these pass)
+1. Sandbox DB test (code/sandbox_two_brand_test.py; throw-away DBs sandbox_c1/c2, schema-only + car_brands): two brands, one article number, same make, 4 imports (A, B, A+B, B+A), BOTH arrival orders -> exactly 2 part rows, 2 offers, each name with its own price (34.80 / 69.60), repeated imports change nothing, no duplicate offer. Whoever arrives first owns the bare key (order AB: bare=MAPCO, FAE~75659; order BA: bare=FAE, MAPCO~75659). CONTROL: the unpatched importer in the same test collapses to ONE part row (assertion fails) - the test detects the defect.
+2. Rollback (maintenance/cpie_offer_ownership.py --rollback): sandbox_apply_rollback_test.py - apply moves exactly one offer (price/url/availability unchanged; a stale-precondition row is skipped), rollback restores the snapshot of supplier_parts (all columns incl. updated_at excluded) EXACTLY; second rollback is a no-op.
+Note: the importer hard-codes DB_DSN to postgres_catalog (sandbox copy was patched to DATABASE_URL; production file untouched).
