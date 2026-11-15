@@ -335,7 +335,7 @@ async def cmd_rollback(a):
     return out
 
 
-async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, run_id) -> dict:
+async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, run_id, rate=None) -> dict:
     """base_price of the repaired parts through the ONE ownership rule (`rule` = db_update_agent.apply_base_price_rule),
     one transaction per part with the part row locked FOR UPDATE NOWAIT for the whole read->write, so a concurrent writer
     can neither be overwritten nor race the rule. A part is touched only if its current base_price is the value from the
@@ -357,7 +357,7 @@ async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, ru
                     ok_vals = {D(bk[pid].get("base_price")) if pid in bk else None, prior_after.get(pid)}
                     if cur not in ok_vals:
                         raise RuntimeError("base_price_changed_since_backup")
-                    await rule(db, scope="all", part_ids=[pid])
+                    await rule(db, scope="all", part_ids=[pid], usd_to_ils=rate)
                     new = D((await db.execute(text("SELECT base_price FROM parts_catalog WHERE id=CAST(:i AS uuid)"), {"i": pid})).scalar())
                     if new == cur:
                         unchanged += 1
@@ -396,7 +396,12 @@ async def cmd_rebase(a):
     if a.prior_rebase:
         prior = {x["part_id"]: D(x["after"]) for f in a.prior_rebase for x in json.load(open(f))["done"]}
     OUT.mkdir(parents=True, exist_ok=True)
-    out = await rebase_parts(res, [r["pre_apply_backup"] for r in results], prior, async_session_factory, d.apply_base_price_rule, res["run_id"])
+    rate = a.usd_to_ils
+    if rate is None:  # fetched ONCE so a rate change between passes cannot make a second pass non-zero
+        async with async_session_factory() as db:
+            rate = await d.get_usd_to_ils_rate(db)
+    out = await rebase_parts(res, [r["pre_apply_backup"] for r in results], prior, async_session_factory, d.apply_base_price_rule, res["run_id"], rate)
+    out["usd_to_ils"] = rate
     rp = OUT / f"rebase_{res['run_id']}_{time.strftime('%H%M%S', time.gmtime())}.json"
     rp.write_text(json.dumps(out, indent=1))
     print(json.dumps({"rebase": str(rp), "changed": out["changed"], "unchanged": out["unchanged"], "skipped": out["skipped_count"],
@@ -413,6 +418,56 @@ async def cmd_rollback_rebase(a):
     if out["skipped"]:
         raise SystemExit(2)
     return out
+
+
+async def cmd_accept(a):
+    """Read-only acceptance of one apply phase (exit 1 on any failure): applied rows are VERIFIED_REPAIRED and equal the
+    journal's `after`; full-row diff clean; price_history rows == price changes; journal committed == applied; the skips of
+    the phase are guard/lock skips only; rows outside the phase and not excluded were not touched by the phase."""
+    res = json.load(open(a.result))
+    rows = scope_rows(a)
+    byid = {x["offer_id"]: x for x in rows}
+    conn = await asyncpg.connect(a.dsn or DB)
+    fails = []
+    try:
+        await conn.execute("SET default_transaction_read_only=on")
+        done_ids = [d["offer_id"] for d in res["done"]]
+        st = await verify([byid[i] for i in done_ids], conn)
+        if any(v != "VERIFIED_REPAIRED" for v in st.values()):
+            fails.append({"not_repaired": {k: v for k, v in st.items() if v != "VERIFIED_REPAIRED"}})
+        live = {r["id"]: r for r in await conn.fetch(_SEL.replace("WHERE id=$1::uuid", "WHERE id=ANY($1::uuid[])"), done_ids)}
+        for d in res["done"]:
+            l = live[d["offer_id"]]
+            if (D(l["price"]), l["url"], l["ua"]) != (D(d["after"]["price_ils"]), d["after"]["supplier_url"], ts(d["after"]["updated_at"])):
+                fails.append({"later_write_or_mismatch_vs_after": d["offer_id"]})
+        fd = await fulldiff(res["pre_apply_backup"], rows, conn)
+        if fd["rows_with_unexpected_changes"]:
+            fails.append({"unexpected_columns": fd["rows_with_unexpected_changes"][:5]})
+        want_ph = sum(1 for d in res["done"] if D(d["before"]["price_ils"]) != D(d["after"]["price_ils"]))
+        got_ph = await conn.fetchval("SELECT count(*) FROM price_history WHERE source=$1 AND id=ANY($2::uuid[])", SRC_APPLY,
+                                     [d["price_history_id"] for d in res["done"] if d["price_history_id"]])
+        if got_ph != want_ph:
+            fails.append({"price_history": [got_ph, want_ph]})
+        jl = [json.loads(l) for l in open(OUT / f"journal_{res['run_id']}.jsonl")]
+        committed = {j["offer_id"] for j in jl if j["status"] == "committed"}
+        if committed != set(done_ids) or len({j["offer_id"] for j in jl if j["status"] == "intent"} - committed) != 0:
+            fails.append({"journal": [len(committed), len(done_ids)]})
+        bad_skip = [s for s in res["skipped"] if not (s["reason"].startswith("guard:") or "could not obtain lock" in s["reason"])]
+        if bad_skip:
+            fails.append({"non_guard_skips": bad_skip})
+        ph = [x["offer_id"] for x in (res["done"] + res["skipped"])]
+        others = [x for x in rows if x["offer_id"] not in set(ph)]
+        ost = await verify(others, conn) if (a.phase_check == "canary") else {}
+        if any(v == "VERIFIED_REPAIRED" for v in ost.values()):
+            fails.append({"rest_scope_touched": [k for k, v in ost.items() if v == "VERIFIED_REPAIRED"]})
+        info = {"applied": len(done_ids), "skipped": [(s["offer_id"][:8], s["reason"][:40]) for s in res["skipped"]], "price_history": got_ph,
+                "journal_committed": len(committed), "fulldiff_changed_columns": fd["changed_column_counts"], "rest_scope_states": dict(
+                    __import__("collections").Counter(ost.values()))}
+    finally:
+        await conn.close()
+    print(json.dumps({"ACCEPT": not fails, "fails": fails, **info}))
+    if fails:
+        raise SystemExit(1)
 
 
 async def cmd_verify(a):
@@ -433,7 +488,7 @@ async def cmd_verify(a):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
-    for k in ("verify", "apply", "rollback", "rebase", "fulldiff", "rollback_rebase"):
+    for k in ("verify", "apply", "rollback", "rebase", "fulldiff", "rollback_rebase", "accept"):
         g.add_argument("--" + k.replace("_", "-"), dest=k, action="store_true")
     ap.add_argument("--phase", choices=["canary", "rest"])
     ap.add_argument("--manifest")
@@ -443,6 +498,8 @@ def main(argv=None):
     ap.add_argument("--accept-canary-skips", action="store_true")
     ap.add_argument("--result")
     ap.add_argument("--journal")
+    ap.add_argument("--phase-check", choices=["canary", "rest"], default="rest")
+    ap.add_argument("--usd-to-ils", type=float)
     ap.add_argument("--also-result", action="append")
     ap.add_argument("--exclude-offer", action="append")
     ap.add_argument("--prior-rebase", nargs="*")
@@ -453,10 +510,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.apply and not a.phase:
         raise SystemExit("REFUSED: --phase canary|rest required")
-    if (a.apply or a.verify or a.fulldiff) and not (a.manifest and a.expect_sha256):
+    if (a.apply or a.verify or a.fulldiff or a.accept) and not (a.manifest and a.expect_sha256):
         raise SystemExit("REFUSED: --manifest and --expect-sha256 required")
     fn = {"verify": cmd_verify, "apply": cmd_apply, "rollback": cmd_rollback, "rebase": cmd_rebase, "fulldiff": cmd_fulldiff,
-          "rollback_rebase": cmd_rollback_rebase}[[k for k in ("verify", "apply", "rollback", "rebase", "fulldiff", "rollback_rebase") if getattr(a, k)][0]]
+          "rollback_rebase": cmd_rollback_rebase, "accept": cmd_accept}[[k for k in ("verify", "apply", "rollback", "rebase", "fulldiff", "rollback_rebase", "accept") if getattr(a, k)][0]]
     asyncio.run(fn(a))
 
 
