@@ -46,15 +46,14 @@ def part_sku(make_prefix: str, article: str, brand: Optional[str], existing_bran
 def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str], bare_exists: bool, same_url: bool = False) -> Optional[str]:
     """None = skip the offer write (owner of the bare key cannot be identified).
     same_url: the incoming product page IS the page the existing bare offer was harvested from - the same listing,
-    whatever the brand text says (evidence that keeps price updates flowing to offers whose holder brand is unresolved)."""
+    whatever the brand text says (evidence that keeps price updates flowing ONLY to offers whose holder brand is unresolved: a listing page shows several
+    brands, so with a RESOLVED holder brand the same page proves nothing - 2026-11-15 reviewer finding, 59008Set)."""
     if not brand:
         return None
     if not bare_exists:
         return article
-    if same_url:
-        return article
     if bare_owner_brand is None:
-        return None
+        return article if same_url else None
     return article if bare_owner_brand == brand else f"{_tok(brand)}{SEP}{article}"
 
 

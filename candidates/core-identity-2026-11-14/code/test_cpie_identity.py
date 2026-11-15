@@ -49,3 +49,6 @@ def test_brand_resolution_uses_identity_vocabulary_not_vehicle_make():
 def test_same_listing_url_keeps_the_bare_key_even_if_holder_brand_unresolved():
     assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True) == "1"
     assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=False) == "FAE~1"
+    # same listing page but the holder brand is RESOLVED and different: never overwrite the holder (59008Set regression)
+    assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=True) == "FAE~1"
+    assert ci.offer_key("1", "MAPCO", "MAPCO", bare_exists=True, same_url=True) == "1"
