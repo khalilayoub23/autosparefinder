@@ -59,6 +59,10 @@ def _handle_sigterm(signum, frame):
     print("[car_parts_ie_import] SIGTERM received — will checkpoint after current part and exit")
 
 
+class _SkipOffer(Exception):
+    """Internal: the offer write is skipped on purpose (reason already counted)."""
+
+
 DB_DSN = (
     f"postgresql://autospare:{_DB_PW}"
     "@postgres_catalog:5432/autospare"
@@ -68,6 +72,7 @@ _SKIP_LOG_LIMIT = 5          # skipped supplier_parts rows logged per run (all o
 SUPPLIER_URL = "https://www.car-parts.ie"
 
 from car_brand_resolver import resolve_source_brand
+import cpie_identity
 
 from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
 from warranty_policy import resolve as _warranty_resolve
@@ -231,7 +236,18 @@ async def import_file(
                 url = _clean(product.get("product_url") or "")
                 sku_raw = "CP-" + hashlib.sha1(url.encode()).hexdigest()[:10].upper()
 
-            sku = f"{sku_prefix}-{sku_raw}"
+            # WORKSTREAM C (2026-11-15): a car-parts.ie article number is unique only within a BRAND. The part key and the
+            # offer key are brand-aware through cpie_identity; an unresolvable brand HOLDS the row (counted, never guessed).
+            _name0 = _clean(product.get("name") or sku_raw)
+            _brand = cpie_identity.brand_of(_name0, sku_raw)
+            _legacy = f"{sku_prefix}-{sku_raw}"
+            _ex = await conn.fetchrow("SELECT name FROM parts_catalog WHERE sku=$1", _legacy)
+            sku = cpie_identity.part_sku(sku_prefix, sku_raw, _brand, cpie_identity.brand_of(_ex["name"], sku_raw) if _ex else None, _ex is not None)
+            if sku is None:
+                parts_skipped += 1
+                _why = "brand_unresolved" if not _brand else "existing_row_brand_unresolved"
+                skip_reasons[_why] = skip_reasons.get(_why, 0) + 1
+                continue
             # RULE 7: an SKU is an identifier, not a name — flag the row.
             name_missing = not _clean(product.get("name") or "")
             name = _clean(product.get("name") or sku_raw)
@@ -394,9 +410,18 @@ async def import_file(
             try:
                 _wmonths, _wsource = _warranty_resolve(None)
                 # OFFER_DEDUPLICATION_POLICY class C: a price change of an existing offer must leave a price_history row.
+                _own = await conn.fetchrow(
+                    "SELECT p.name, sp.supplier_url FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
+                    supplier_id, sku_raw)
+                _same_url = bool(_own and url and (_own["supplier_url"] or "").strip().lower() == url.strip().lower())
+                offer_sku = cpie_identity.offer_key(sku_raw, _brand, cpie_identity.brand_of(_own["name"], sku_raw) if _own else None, _own is not None, _same_url)
+                if offer_sku is None:  # owner of the bare key cannot be identified: no offer write (counted); the image/fitment work below still runs
+                    supplier_skipped += 1
+                    skip_reasons["offer_owner_brand_unresolved"] = skip_reasons.get("offer_owner_brand_unresolved", 0) + 1
+                    raise _SkipOffer()
                 _old_offer = await conn.fetchrow(
                     "SELECT id, price_ils, price_usd FROM supplier_parts WHERE supplier_id=$1::uuid AND supplier_sku=$2",
-                    supplier_id, sku_raw,
+                    supplier_id, offer_sku,
                 )
                 await conn.execute(
                     """
@@ -418,10 +443,12 @@ async def import_file(
                         supplier_url=EXCLUDED.supplier_url,
                         updated_at=NOW()
                     """,
-                    supplier_id, part_id, sku_raw, price_ils, _wmonths, _wsource, url,
+                    supplier_id, part_id, offer_sku, price_ils, _wmonths, _wsource, url,
                 )
                 supplier_rows += 1
                 await _record_price_change(conn, _old_offer, price_ils, "car_parts_ie_import")
+            except _SkipOffer:
+                pass
             except Exception as e:
                 # Data behaviour unchanged (the offer is skipped, autocommit leaves nothing half-written); the skip is now
                 # counted and the first few are logged with their reason (e.g. a unique/variant clash on the part+supplier).
