@@ -1,0 +1,10 @@
+--- backend/offer_policy.py	2026-11-14 07:47:28.463313055 +0100
++++ candidates/core-identity-2026-11-14/code/offer_policy.py	2026-11-15 06:35:54.876966115 +0100
+@@ -42,6 +42,7 @@
+     "maintenance/quarantine_motorstore_offers_129.py",
+     "maintenance/restore_merged_offers_133.py",
+     "maintenance/remove_placeholder_offers_149.py",   # owner-authorised removal of provably fabricated sentinel offers (archived)
++    "maintenance/cpie_offer_ownership.py",            # re-points a car-parts.ie offer to the part its own URL proves (no delete/price change)
+     "maintenance/unmerge_distinct_articles.py",       # moves an offer BACK to the part it was wrongly merged away from (no delete/price change)
+ )
+ 

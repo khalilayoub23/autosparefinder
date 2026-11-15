@@ -4,9 +4,13 @@ Purpose: Workstream C (Option 1). For every car-parts.ie article carried by >=2 
          single existing offer row (supplier Car-Parts.ie, supplier_sku = bare article) really belongs to, using the
          offer's own supplier_url as evidence, and write a manifest: KEEP (holder already right), MOVE (re-point the
          offer to the proven part) or HOLD (evidence not unique -> untouched, reported).
-Process:  `--manifest` (READ-ONLY, deterministic, sha256-stamped). Apply is a separate step (not in this file yet):
-         it must go through offer_policy.gate_or_exit and the harvester stand-down.
-Data Imported/Modified: none (manifest only).
+Process:  default run = build the manifest (READ-ONLY, sha256-stamped).
+         `--apply --manifest M --expect-sha256 H --approval-ref R`: gate_or_exit (offer policy), then ONLY the MOVE
+         rows, one transaction each: both parts locked NOWAIT, the offer must still be on `from_part` with the recorded
+         url+price, the target part must hold no Car-Parts.ie offer; the offer's part_id is changed - nothing is
+         deleted, no price or url is touched. The previous part_id of every moved offer is written to the result file.
+         Run only with the harvester stopped (approved operation) and the actor listed in offer_policy.POLICY_BOUND_ACTORS.
+Data Imported/Modified: supplier_parts.part_id of MOVE rows only (apply); nothing in manifest mode.
 Data Sources: parts_catalog (specifications.product_url, name), supplier_parts, part_identity brand vocabulary.
 Missing Data Delegation: parts of the other brands get no offer here (their real prices were overwritten); the importer
          creates them under a brand-qualified key on the next harvest.
@@ -102,6 +106,54 @@ async def build() -> Path:
     return p
 
 
+ACTOR = "maintenance/cpie_offer_ownership.py"
+
+
+async def apply(path: Path, ref: str) -> None:
+    man = json.load(open(path))
+    conn = await asyncpg.connect(DB)
+    done, skipped = [], []
+    try:
+        for it in man["items"]:
+            if it.get("action") != "MOVE":
+                continue
+            try:
+                async with conn.transaction():
+                    got = await conn.fetch("SELECT id FROM parts_catalog WHERE id = ANY($1::uuid[]) FOR UPDATE NOWAIT",
+                                           [it["from_part"], it["to_part"]])
+                    off = await conn.fetchrow("SELECT part_id::text pid, supplier_url, price_ils::float price FROM supplier_parts "
+                                              "WHERE id=$1::uuid FOR UPDATE NOWAIT", it["offer"])
+                    if len(got) != 2 or off is None or off["pid"] != it["from_part"] or off["supplier_url"] != it["url"] \
+                            or abs((off["price"] or 0) - (it["price"] or 0)) > 1e-9:
+                        raise RuntimeError("precondition: offer or parts changed since the manifest")
+                    if await conn.fetchval("SELECT 1 FROM supplier_parts WHERE part_id=$1::uuid AND supplier_id=$2::uuid LIMIT 1", it["to_part"], SUP):
+                        raise RuntimeError("precondition: target part already holds a Car-Parts.ie offer")
+                    await conn.execute("UPDATE supplier_parts SET part_id=$2::uuid, updated_at=NOW() WHERE id=$1::uuid", it["offer"], it["to_part"])
+                    done.append({"offer": it["offer"], "previous_part_id": it["from_part"], "new_part_id": it["to_part"], "article": it["article"]})
+            except Exception as exc:  # noqa: BLE001 - one row's failure must not stop the others; it is reported
+                skipped.append({"offer": it.get("offer"), "article": it.get("article"), "reason": str(exc)[:200]})
+    finally:
+        await conn.close()
+    res = OUT / f"cpie_ownership_result_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
+    res.write_text(json.dumps({"manifest": str(path), "manifest_sha256": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                               "approval_ref": ref, "applied": len(done), "skipped": len(skipped), "done": done, "skipped_rows": skipped}))
+    print(json.dumps({"result": str(res), "applied": len(done), "skipped": len(skipped)}))
+
+
 if __name__ == "__main__":
-    argparse.ArgumentParser().parse_args()
-    asyncio.run(build())
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--manifest")
+    ap.add_argument("--expect-sha256")
+    ap.add_argument("--approval-ref")
+    a = ap.parse_args()
+    if not a.apply:
+        asyncio.run(build())
+    else:
+        import offer_policy
+        offer_policy.gate_or_exit(ACTOR, False)
+        mp = Path(a.manifest)
+        if not a.expect_sha256 or hashlib.sha256(mp.read_bytes()).hexdigest() != a.expect_sha256 or not a.approval_ref:
+            print("REFUSED: --expect-sha256 must equal the manifest hash and --approval-ref is required")
+            raise SystemExit(3)
+        asyncio.run(apply(mp, a.approval_ref))
