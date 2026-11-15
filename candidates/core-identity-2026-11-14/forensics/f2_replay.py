@@ -23,6 +23,16 @@ for l in open("/tmp/f/bk14_offers.tsv"):
     i, pid, sku, pr, url, up = l.rstrip("\n").split("\t"); BK[sku] = (i, pid, pr, url, up)   # replay start state (11-14 snapshot), keyed by bare sku
 for l in open("/tmp/f/bk_offers.tsv"):
     i, pid, sku, pr, url, up = l.rstrip("\n").split("\t"); BK15[sku] = (i, pid, pr, url, up)
+import gzip, csv
+PREMOVE = {}   # article -> pre-move updated_at (epoch): the 06:40-06:45Z moves reset supplier_parts.updated_at
+try:
+    _res = []
+    for _f in sorted(glob.glob("/app/state/cpie_ownership/cpie_ownership_result_*.json")): _res += json.load(open(_f))["done"]
+    _moved = {x["offer"] for x in _res}
+    for _r in csv.DictReader(gzip.open("/app/state/cpie_ownership/pre_apply_supplier_parts_20261115.csv.gz", "rt")):
+        if _r["id"] in _moved and _r["updated_at"]:
+            PREMOVE[_r["supplier_sku"]] = dt.datetime.fromisoformat(_r["updated_at"]).replace(tzinfo=UTC).timestamp()
+except Exception as _e: print("premove map unavailable", _e, file=sys.stderr)
 def ts(p): return os.path.getmtime(p)
 def num(x):
     try: return None if x in (None, "", "None", "\\N") else round(float(x), 2)
@@ -104,11 +114,11 @@ async def main():
                 if (st[0], st[1]) == act: match.append(st)
             else:
                 b = binfo[st[2][0]]
-                if (st[0], st[1]) == act and b["payload_mtime"] - 2 <= upd <= b["import_end"] + 2: match.append(st)
+                if (st[0], st[1]) == act and (b["payload_mtime"] - 2 <= upd <= b["import_end"] + 2 or (art in PREMOVE and b["payload_mtime"] - 2 <= PREMOVE[art] <= b["import_end"] + 2)): match.append(st)
         rec = {"article": art, "offer": o["oid"], "part": o["pid"], "part_sku": o["psku"], "part_name": o["pname"], "owner_brand": X,
                "actual": {"price": act[0], "url": act[1], "updated_at": o["updated_at"].isoformat()},
                "backup": {"price": init[0], "url": init[1]} if b0 else None, "backup15": ({"price": num(BK15[art][2]), "url": BK15[art][3]} if art in BK15 else None), "rows_after_snapshot": sum(1 for r in rs if binfo[r[0]]["import_end"] > SNAP),
-               "brands_in_rows": sorted({r[2] for r in rs if r[2]}), "matched": bool(match), "cross_brand_write_events": [{"file": binfo[b]["file"], "row": r_, "brand": y, "mode": m} for (b, r_, y, m) in events],
+               "brands_in_rows": sorted({r[2] for r in rs if r[2]}), "matched": bool(match), "moved_offer_premove_timestamp_used": art in PREMOVE, "cross_brand_write_events": [{"file": binfo[b]["file"], "row": r_, "brand": y, "mode": m} for (b, r_, y, m) in events],
                "snapshot15_check": (None if art not in BK15 else ((num(BK15[art][2]), BK15[art][3]) in snap15)), "replay_start_backup": "20261114"}
         def wr(st):
             if st[2] is None: return None

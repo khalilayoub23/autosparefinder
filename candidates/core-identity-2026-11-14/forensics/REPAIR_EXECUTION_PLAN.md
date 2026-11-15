@@ -1,6 +1,6 @@
 # Repair execution plan — cross-brand offer overwrites (NOT EXECUTED; design only, 2026-11-15)
 
-Scope: only offers classified **VERIFIED_WRONG** in `repair_manifest.json` AND repair-ready (`repair.target_source = owner_brand_payload_row`, or `backup_snapshot_value` with `price_history_old_price_corroborates = true`). Everything else (AMBIGUOUS, MISSING_EVIDENCE, backup-only uncorroborated, VERIFIED_CORRECT) is untouched. Creating the missing brand offers is a SEPARATE step (policy-gated INSERT, see §5).
+Scope: only offers classified **VERIFIED_WRONG** in `repair_manifest.json` AND repair-ready with `repair.readiness = READY` (93 rows: owner-brand payload row strictly earlier than the foreign writer). The 36 `UNDO_CANDIDATE_NEEDS_SEPARATE_APPROVAL` rows (buggy-window undo to the pre-defect value) need their own owner decision; the 1,070 `NOT_READY` rows are never written. Everything else (AMBIGUOUS, MISSING_EVIDENCE, backup-only uncorroborated, VERIFIED_CORRECT) is untouched. Creating the missing brand offers is a SEPARATE step (policy-gated INSERT, see §5).
 
 ## 0. Preconditions (all must hold, else stop)
 1. Owner approval of this plan + the exact manifest sha256 (`SHA256SUMS`). Not granted yet.
