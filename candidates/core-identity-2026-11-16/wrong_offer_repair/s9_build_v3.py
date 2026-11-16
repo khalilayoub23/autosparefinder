@@ -36,6 +36,8 @@ async def main():
             out.append(d); cnt['H:part_level_decision'] += 1; continue
         if not h:
             d['v3_note'] = 'no owner page fetched yet'; out.append(d); cnt['H:not_fetched'] += 1; continue
+        if h['verified'] and (h.get('parsed') or {}).get('kind') != 'product_page':
+            d['v3_note'] = 'owner evidence is a listing row (weaker identity proof) - not repaired this round'; out.append(d); cnt['H:listing_row_evidence_only'] += 1; continue
         if not h['verified']:
             d['v3_note'] = 'owner page not usable: ' + h['reason']; d['harvest_attempt'] = {k: h.get(k) for k in ('page_url', 'fetched_at', 'reason', 'fetched')}
             out.append(d); cnt['H:owner_page_unverified'] += 1; continue

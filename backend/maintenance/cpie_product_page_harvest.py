@@ -85,10 +85,20 @@ async def _product_urls(part_ids):
     c = await asyncpg.connect(dsn)
     try:
         await c.execute("SET default_transaction_read_only=on")
-        rs = await c.fetch("SELECT id::text id, specifications->>'product_url' u FROM parts_catalog WHERE id=ANY($1::uuid[])", part_ids)
+        rs = await c.fetch("SELECT id::text id, specifications->>'product_url' u, specifications->>'image_url' i "
+                           "FROM parts_catalog WHERE id=ANY($1::uuid[])", part_ids)
     finally:
         await c.close()
-    return {r["id"]: r["u"] for r in rs}
+    return {r["id"]: (r["u"], r["i"]) for r in rs}
+
+
+def derived_product_url(owner_brand, image_url):
+    """Pure. A part created from the owner's own product page carries that product's id in its image URL
+    (`thumb?id=13308135` <-> `/car-parts/ossca/p-13308135`). Returns the product-page URL or None. It is only a FETCH hint:
+    the page must still verify (JSON-LD brand == owner brand AND sku == article) before anything is trusted."""
+    m = re.search(r"[?&]id=(\d+)", image_url or "")
+    slug = re.sub(r"[^a-z0-9]+", "-", (owner_brand or "").lower()).strip("-")
+    return f"https://www.car-parts.ie/car-parts/{slug}/p-{m.group(1)}" if m and slug else None
 
 
 def main():
@@ -97,6 +107,8 @@ def main():
     ap.add_argument("--out", required=True, help="JSONL, resumable")
     ap.add_argument("--groups", default=OWNER_GROUP_PREFIX, help="consultant_group prefix to fetch")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--derive-from-image", action="store_true", help="for owner parts whose stored page is a listing, derive the /p-<id> page from the creation image id")
+    ap.add_argument("--only-unverified-from", help="JSONL of an earlier run: retry only its unverified offers")
     ap.add_argument("--sleep", type=float, default=0.6)
     ap.add_argument("--max-consecutive-fail", type=int, default=8)
     a = ap.parse_args()
@@ -108,6 +120,9 @@ def main():
     if os.path.exists(a.out):
         done = {json.loads(l)["offer_id"] for l in open(a.out) if l.strip()}
     todo = [r for r in rows if r["offer_id"] not in done]
+    if a.only_unverified_from:
+        _bad = {json.loads(l)["offer_id"] for l in open(a.only_unverified_from) if not json.loads(l).get("verified")}
+        todo = [r for r in todo if r["offer_id"] in _bad]
     if a.limit:
         todo = todo[: a.limit]
     urls = asyncio.run(_product_urls(list({r["part_id"] for r in todo})))
@@ -117,9 +132,14 @@ def main():
     fails = 0
     with open(a.out, "a") as out:
         for i, r in enumerate(todo, 1):
-            url = urls.get(r["part_id"])
+            url, image_url = urls.get(r["part_id"], (None, None))
             rec = {"offer_id": r["offer_id"], "part_id": r["part_id"], "article": r["article"], "owner_brand": r["owner_brand"],
                    "page_url": url, "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            if a.derive_from_image and (not url or not re.search(r"/p-\d+", url)):
+                _d = derived_product_url(r["owner_brand"], image_url)
+                if _d:
+                    rec["page_url_original"] = url
+                    url = rec["page_url"] = _d
             if not url or "car-parts.ie" not in url:
                 rec.update(fetched=False, verified=False, reason="owner_part_has_no_product_url")
             else:

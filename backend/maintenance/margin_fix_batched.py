@@ -3,6 +3,9 @@
 Fix base_price for parts where base_price != round(importer_price_ils * 1.45, 2).
 Policy: UNIFORM 45% margin. base_price = cost * 1.45. No exceptions.
 """
+import sys
+sys.exit("DEPRECATED: margin_fix_batched.py rewrites base_price = importer_price_ils x 1.45 across the whole catalogue, which recreates the legacy signature (2026-11-16 RCA). Use db_update_agent.apply_base_price_rule / base_price_rule.py.")
+
 import asyncio, asyncpg, os, time
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")

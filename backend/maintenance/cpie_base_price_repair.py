@@ -59,9 +59,11 @@ async def build(a):
     counts, rows, last, scanned = {}, [], "00000000-0000-0000-0000-000000000000", 0
     try:
         while True:
-            ids = [r["id"] for r in await c.fetch(
-                "SELECT id::text id FROM parts_catalog WHERE is_active AND id > $1::uuid AND specifications->>'source'="
-                "(SELECT name FROM suppliers WHERE id=$2::uuid) ORDER BY id LIMIT $3", last, CPIE, a.batch)]
+            # ORDER BY the uuid column itself (pc.id), NOT the text alias: sorting by `id::text` forced a parallel seq scan + sort of
+            # ~1.2M rows per batch (consultant EXPLAIN 2026-11-16); the PK index serves this keyset scan.
+            ids = [str(r["id"]) for r in await c.fetch(
+                "SELECT pc.id FROM parts_catalog pc WHERE pc.is_active AND pc.id > $1::uuid AND pc.specifications->>'source'="
+                "(SELECT name FROM suppliers WHERE id=$2::uuid) ORDER BY pc.id LIMIT $3", last, CPIE, a.batch)]
             if not ids:
                 break
             last = ids[-1]
