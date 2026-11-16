@@ -1,0 +1,10 @@
+{
+ "cpie_offers_total": 797525,
+ "cpie_offers_qualified(~)": 2538,
+ "cpie_offers_bare": 794987,
+ "articles_with_>=2_resolved_brands_among_parts": 9436,
+ "multi_brand_articles_with_a_bare_offer": 9435,
+ "manifest_exposed_offers": 7240,
+ "multi_brand_bare_offers_NOT_in_manifest(no payload row since 2026-11-14 03:00 UTC -> state predates evidence)": 3961,
+ "manifest_offers_whose_article_is_not_multi_brand_by_parts(foreign brand seen only in payload rows)": 1766
+}

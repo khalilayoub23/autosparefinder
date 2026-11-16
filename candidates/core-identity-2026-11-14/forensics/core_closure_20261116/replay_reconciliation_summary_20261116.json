@@ -1,0 +1,79 @@
+{
+ "run_utc": "2026-11-16T05:2x-05:50",
+ "input_hashes": {
+  "payload_archive_20261115.tar.gz": "436cdc86e551d090319acd3c279e1522721c18c3a69d6ab9ad28f43319a1331d",
+  "bk14_offers.tsv": "4b281c225357492e41670ee38f7caa1f6fb86007c3c0a5d843cfdb1f28d4ea8f",
+  "bk_offers.tsv": "eb2b89f9e7a3cb27651ff0efd211b9e0e04fb83823090af5cfc5d89cfb3ed27e",
+  "f2_replay.py": "bb3fd9bd6647ac65ee8fef9e0948d1934de482873ea5b78097e44b370dde835f",
+  "f3_classify.py": "b969ee2c6678dac1b81fd7838b83b3d9c8033b3775ce1f847ef18cd4857b1b91",
+  "f4_reconcile.py": "3269321606aa403a93b9ab893f3c859b8b32c094be42febf31321b6709608557"
+ },
+ "archived_payload_files_identical_now": "6968/6968",
+ "batches_total": 4934,
+ "batch_modes": {
+  "old": 2294,
+  "buggy": 1146,
+  "fixed": 1491,
+  "buggy+fixed(straddling)": 3
+ },
+ "replay_t_read_utc": "2026-11-16T05:32:45.961438",
+ "replay_from_20261114_backup": {
+  "offers_replayed": 206481,
+  "explained_by_replay": 181952,
+  "explained_pct": 88.12,
+  "reproduces_20261115_backup": "180308/180529 = 99.88%"
+ },
+ "classification_new": {
+  "not_exposed(no_other_brand_part_or_row)": 199241,
+  "VERIFIED_CORRECT": 3240,
+  "VERIFIED_WRONG": 1043,
+  "MISSING_EVIDENCE": 1780,
+  "AMBIGUOUS": 1177,
+  "repair_NOT_READY": 1007,
+  "wrong_price_reconstructable_from_owner_row": 3,
+  "wrong_price_from_backup_only": 1040,
+  "wrong_price_differs": 734,
+  "repair_UNDO_CANDIDATE_NEEDS_SEPARATE_APPROVAL": 36,
+  "missing_pair_VERIFIED_CORRECT_old": 617,
+  "missing_pair_VERIFIED_WRONG_old": 1242,
+  "missing_pair_VERIFIED_CORRECT_buggy": 77,
+  "missing_pair_VERIFIED_WRONG_buggy": 31,
+  "missing_pair_MISSING_EVIDENCE_old": 89,
+  "missing_pair_MISSING_EVIDENCE_buggy": 2
+ },
+ "classification_old(2026-11-15)": {
+  "VERIFIED_WRONG": 1199,
+  "VERIFIED_CORRECT": 2596,
+  "AMBIGUOUS": 1279,
+  "MISSING_EVIDENCE": 764,
+  "READY": 93,
+  "NOT_READY": 1070,
+  "UNDO": 36
+ },
+ "old_VERIFIED_WRONG_fate": {
+  "still_wrong_NOT_READY": 1007,
+  "still_wrong_UNDO": 36,
+  "READY->VERIFIED_CORRECT(owner rewrote)": 18,
+  "READY->MISSING_EVIDENCE(live equals repair journal after, 75)": 75,
+  "NOT_READY->VERIFIED_CORRECT(healed by owner write)": 59,
+  "NOT_READY->MISSING_EVIDENCE": 4
+ },
+ "newly_verified_wrong": 0,
+ "post_fix_period": {
+  "batches_fixed_mode": 1491,
+  "writes_by_fixed_batches": 77086,
+  "foreign_brand_writers_in_fixed_only_batches": 0,
+  "fixed_mode_events_with_unresolved_holder_brand": 5,
+  "note_on_5": "holder brand unresolved (owner None) and same URL: the documented same_url rule for unresolved holders; the holder already carried the other brand data (URL is the other brand listing) so these are not new proven cross-brand overwrites; stay AMBIGUOUS"
+ },
+ "unexplained_exposed_offers": {
+  "MISSING_EVIDENCE_total": 1780,
+  "explained_by_repair_journal": 75,
+  "rest(1705)": "live updated_at predates the evidence window (2026-09-10, 11-01) or move-reset timestamps; 1645 have no price_history row at all"
+ },
+ "limitations": [
+  "payloads kept only in /tmp of the backend container (4,934 batches); a container recreate loses them",
+  "replay explain rate 88.1% (was 93.2%): exposed-population growth + unexplained = state predates evidence",
+  "4,590->3,961 multi-brand bare offers have no payload row since 2026-11-14 03:00 UTC"
+ ]
+}
