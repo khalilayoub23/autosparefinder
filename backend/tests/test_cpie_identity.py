@@ -46,8 +46,10 @@ def test_brand_resolution_uses_identity_vocabulary_not_vehicle_make():
     assert ci.brand_of("Honda CRX fuel filter", "62505") is None
 
 
-def test_same_listing_url_keeps_the_bare_key_even_if_holder_brand_unresolved():
-    assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True) == "1"
+def test_same_listing_url_alone_never_proves_identity_when_holder_brand_unresolved():
+    assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True) is None                      # same page alone: fail closed
+    assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True, same_part=False) is None
+    assert ci.offer_key("1", "FAE", None, bare_exists=True, same_url=True, same_part=True) == "1"       # the holder's own part row
     assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=False) == "FAE~1"
     # same listing page but the holder brand is RESOLVED and different: never overwrite the holder (59008Set regression)
     assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=True) == "FAE~1"

@@ -411,10 +411,11 @@ async def import_file(
                 _wmonths, _wsource = _warranty_resolve(None)
                 # OFFER_DEDUPLICATION_POLICY class C: a price change of an existing offer must leave a price_history row.
                 _own = await conn.fetchrow(
-                    "SELECT p.name, sp.supplier_url FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
+                    "SELECT p.name, sp.supplier_url, sp.part_id::text AS part_id FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
                     supplier_id, sku_raw)
                 _same_url = bool(_own and url and (_own["supplier_url"] or "").strip().lower() == url.strip().lower())
-                offer_sku = cpie_identity.offer_key(sku_raw, _brand, cpie_identity.brand_of(_own["name"], sku_raw) if _own else None, _own is not None, _same_url)
+                offer_sku = cpie_identity.offer_key(sku_raw, _brand, cpie_identity.brand_of(_own["name"], sku_raw) if _own else None, _own is not None, _same_url,
+                                                   same_part=bool(_own and str(_own["part_id"]) == str(part_id)))
                 if offer_sku is None:  # owner of the bare key cannot be identified: no offer write (counted); the image/fitment work below still runs
                     supplier_skipped += 1
                     skip_reasons["offer_owner_brand_unresolved"] = skip_reasons.get("offer_owner_brand_unresolved", 0) + 1

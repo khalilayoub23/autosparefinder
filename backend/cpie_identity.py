@@ -43,17 +43,21 @@ def part_sku(make_prefix: str, article: str, brand: Optional[str], existing_bran
     return legacy if existing_brand == brand else f"{make_prefix}-{_tok(brand)}{SEP}{article}"
 
 
-def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str], bare_exists: bool, same_url: bool = False) -> Optional[str]:
+def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str], bare_exists: bool, same_url: bool = False,
+              same_part: bool = False) -> Optional[str]:
     """None = skip the offer write (owner of the bare key cannot be identified).
     same_url: the incoming product page IS the page the existing bare offer was harvested from - the same listing,
     whatever the brand text says (evidence that keeps price updates flowing ONLY to offers whose holder brand is unresolved: a listing page shows several
-    brands, so with a RESOLVED holder brand the same page proves nothing - 2026-11-15 reviewer finding, 59008Set)."""
+    brands, so with a RESOLVED holder brand the same page proves nothing - 2026-11-15 reviewer finding, 59008Set).
+    same_part (2026-11-16, independent review): with an UNRESOLVED holder brand the bare key may still be written only by the
+    HOLDER'S OWN part row. A same listing page alone is not identity (a listing shows several brands: ORIGINAL IMPERIUM's
+    strut-mount price was written into part "Coil spring SUPLEX 35573" that way) -> fail closed, counted as a skip."""
     if not brand:
         return None
     if not bare_exists:
         return article
     if bare_owner_brand is None:
-        return article if same_url else None
+        return article if (same_url and same_part) else None
     return article if bare_owner_brand == brand else f"{_tok(brand)}{SEP}{article}"
 
 
