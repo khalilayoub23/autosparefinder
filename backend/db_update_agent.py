@@ -1286,48 +1286,7 @@ async def normalize_availability(db: AsyncSession) -> Dict[str, Any]:
 BASE_PRICE_SCOPES = ("offer", "estimate", "all")
 
 
-def _base_price_inputs_sql(only_ids: bool) -> str:
-    import price_policy as pp
-    from offer_classification import class_rank_sql
-    rank = class_rank_sql("sp.part_type", "pc.part_type")
-    cost = pp.offer_cost_sql(":rate")
-    where = "pc.id = ANY(CAST(:ids AS uuid[]))" if only_ids else "pc.id > CAST(:after AS uuid)"
-    return f"""
-        SELECT pc.id::text AS id, pc.base_price, pc.importer_price_ils, pc.max_price_ils, pc.online_price_ils,
-               bo.price_ils AS offer_ils, bo.price_usd AS offer_usd,
-               bo.name AS offer_supplier, bo.country AS offer_country,
-               EXISTS (SELECT 1 FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
-                       WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0) AS has_visible,
-               (EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} <> 0)
-                AND NOT EXISTS (SELECT 1 FROM supplier_parts sp
-                                WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} = 0)) AS other_class_only
-        FROM parts_catalog pc
-        LEFT JOIN LATERAL (
-            SELECT sp.price_ils, sp.price_usd, s.name, s.country
-            FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
-            WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0 AND {rank} = 0
-            ORDER BY {pp.price_basis_order_sql("pc.part_type", ":rate")}
-            LIMIT 1) bo ON TRUE
-        WHERE pc.is_active AND {where}
-        ORDER BY pc.id
-        {"" if only_ids else "LIMIT :batch"}"""
-
-
-def base_price_target(row: Any, usd_to_ils: float) -> Tuple[Optional[float], str]:
-    """(new base_price, source) for one part under the ownership rule; source is offer | estimate |
-    other_class_only | no_basis. Pure: the same function the tests and the tasks use."""
-    import price_policy as pp
-    if row.offer_ils is not None or row.offer_usd is not None:
-        u = pp.unit_price(pp.offer_cost_ils(row.offer_ils, row.offer_usd, usd_to_ils),
-                          getattr(row, "offer_supplier", None), getattr(row, "offer_country", None))  # supplier VAT basis (#129)
-        if u is not None:
-            return u.net, "offer"
-    if row.has_visible or row.other_class_only:
-        return None, "other_class_only"
-    est = pp.catalog_estimate_price(row.importer_price_ils, row.max_price_ils, row.online_price_ils)
-    if est is not None:
-        return est.net, "estimate"
-    return None, "no_basis"
+from base_price_rule import inputs_sql as _base_price_inputs_sql, target as base_price_target  # ONE rule, shared with asyncpg writers (2026-11-16)
 
 
 def _new_counters() -> Dict[str, Any]:

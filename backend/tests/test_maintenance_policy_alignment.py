@@ -467,3 +467,27 @@ def test_ford_extractor_has_no_make_prefix_and_no_connection_false_positive():
     assert dua._ford_fitment_from_name("CONNECTION", "# מחבר ליציאת מים ריינג'ר")[0] == [("Ford", "Ranger", 1983, 2026, "extracted:name_he")]
     assert dua._ford_fitment_from_name("CONNECTOR ASY", "")[0] == []
     assert all(not f[1].startswith("Ford ") for p, *_ in dua._FORD_MODEL_PATTERNS for f in dua._ford_fitment_from_name(p, "")[0])
+
+
+# ── ONE rule for asyncpg writers (2026-11-16): base_price_rule.apply_to_parts == db_update_agent.apply_base_price_rule ──────
+async def _raw(db):
+    return (await (await db.connection()).get_raw_connection()).driver_connection
+
+
+async def test_asyncpg_writer_matches_the_maintenance_rule_for_every_basis(db):
+    import base_price_rule as bpr
+    # offer basis (foreign 0% VAT supplier), estimate basis (no offer), stale value, other-class-only (must stay untouched)
+    cases = {}
+    for tag in ("A", "B"):
+        o = await part(db, base=999); await offer(db, o, ils=100, country="IE")
+        e = await part(db, importer=80)
+        x = await part(db, "oem", base=7); await offer(db, x, ils=20, klass="aftermarket")
+        cases[tag] = (o, e, x)
+    await dua.apply_base_price_rule(db, scope="all", part_ids=list(cases["A"]), usd_to_ils=RATE)
+    res = await bpr.apply_to_parts(await _raw(db), cases["B"], usd_to_ils=RATE)
+    for a, b in zip(cases["A"], cases["B"]):
+        assert await base_of(db, a) == await base_of(db, b)
+    assert await base_of(db, cases["B"][0]) == 145.0 and await base_of(db, cases["B"][2]) == 7.0
+    assert res["updated"] == 2 and res["reasons"].get("other_class_only") == 1
+    again = await bpr.apply_to_parts(await _raw(db), cases["B"], usd_to_ils=RATE)
+    assert again["updated"] == 0 and again["unchanged"] == 2        # idempotent

@@ -98,12 +98,15 @@ MAINTENANCE = [
     'maintenance/merge_master_parts.py',
     'maintenance/price_audit_fix.py',
     'maintenance/vat_fix_batched.py',
+    'maintenance/cpie_overwrite_repair.py',      # pinned-manifest repair; max_price_ils only via the policy function (--refresh-minmax) / rollback
+    'maintenance/restore_estimate_fields.py',    # evidence-backed restore of merge-copied estimate fields, manifest + dry-run
     'scripts/import_merged_catalog.py',
 ]
 # mention the column only to read it / describe it
 READERS = [
     'BACKEND_DATABASE_MODELS.py',
     'routes/parts.py',
+    'base_price_rule.py',   # reads max_price_ils as a catalog-estimate INPUT; writes only base_price
 ]
 
 

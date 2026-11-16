@@ -531,6 +531,45 @@ def _write_fs_health(consecutive_fails: int) -> None:
         pass
 
 
+# ── Shared on-disk clearance cache (2026-11-16, harvester RCA) ───────────────────────────
+# Minting a cf_clearance cookie costs a real FlareSolverr Chrome solve and, measured 2026-11-16, only ~1 in 3-4
+# solves succeeds (the rest time out at maxTimeout and answer HTTP 500). A cookie lives ~30 min, so a restart (or a
+# second process such as maintenance/cpie_product_page_harvest.py) must REUSE a still-fresh cookie instead of paying
+# another solve. The cache holds the cookie + the UA that earned it (Cloudflare binds them), mode 0600.
+_CLEARANCE_CACHE_FILE = _BASE_DIR / "state" / "cpie_clearance.json"
+CLEARANCE_MAX_TIMEOUT_S = int(os.environ.get("HARVESTER_CLEARANCE_MAX_TIMEOUT_S", "60"))
+
+
+def _save_clearance_cache() -> None:
+    try:
+        with _CLEARANCE_LOCK:
+            blob = {"cookie": _CLEARANCE["cookie"], "ua": _CLEARANCE["ua"], "ts": _CLEARANCE["ts"]}
+        tmp = _CLEARANCE_CACHE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(blob))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, _CLEARANCE_CACHE_FILE)
+    except Exception as e:  # cache is an optimisation, never a failure
+        log.debug(f"clearance cache not saved: {e}")
+
+
+def _load_clearance_cache(reject_cookie: str = "") -> bool:
+    """Adopt a still-fresh cookie another process (or a previous run) minted. Returns True if adopted.
+    `reject_cookie` = the cookie that just failed (a 403 forced this refresh): never re-adopt it."""
+    try:
+        blob = json.loads(_CLEARANCE_CACHE_FILE.read_text())
+        ck, ua, ts = blob.get("cookie") or "", blob.get("ua") or _DEFAULT_UA, float(blob.get("ts") or 0)
+    except Exception:
+        return False
+    if not ck or "cf_clearance=" not in ck or time.time() - ts >= CLEARANCE_TTL_S or ck == reject_cookie:
+        return False
+    with _CLEARANCE_LOCK:
+        if _CLEARANCE["ts"] >= ts and _CLEARANCE["cookie"]:
+            return False
+        _CLEARANCE.update({"cookie": ck, "ua": ua, "ts": ts, "session_id": None, "mode": "cookie"})
+    log.info(f"cf_clearance reused from cache (age {int(time.time() - ts)}s)")
+    return True
+
+
 def _solve_clearance() -> bool:
     """Mint a fresh cf_clearance cookie (cookie mode) OR establish a persistent FlareSolverr
     session (session mode) when Cloudflare does not issue a challenge to Chrome.
@@ -551,7 +590,7 @@ def _solve_clearance() -> bool:
     for host in (FLARESOLVERR_2, FLARESOLVERR):   # prefer the 2nd instance if configured
         if not host:
             continue
-        r = _fs_call(host, {"cmd": "request.get", "url": BASE + "/", "maxTimeout": 60000})
+        r = _fs_call(host, {"cmd": "request.get", "url": BASE + "/", "maxTimeout": CLEARANCE_MAX_TIMEOUT_S * 1000})
         if r.get("status") == "error":
             # Chrome crashed (OOM) or FlareSolverr internal error
             log.warning(f"FlareSolverr error solving clearance on {host}: {r.get('message','')[:120]}")
@@ -570,6 +609,9 @@ def _solve_clearance() -> bool:
                 _CLEARANCE["mode"] = "cookie"
             log.info(f"cf_clearance minted via {host.split('//')[-1].split(':')[0]} "
                      f"({len(cookies)} cookies, sessionless)")
+            if "cf_clearance=" not in ck:
+                log.warning("minted cookie set has NO cf_clearance cookie - page fetches will likely 403")
+            _save_clearance_cache()
             return True
         elif sol_status == 200:
             # ── Session mode fallback ─────────────────────────────────────────────
@@ -617,6 +659,11 @@ def ensure_clearance(force: bool = False) -> bool:
                          and _CLEARANCE.get("mode") == "session")
         fresh = cookie_fresh or session_fresh
     if fresh and not force:
+        return True
+    with _CLEARANCE_LOCK:
+        _failed_cookie = _CLEARANCE["cookie"] if force else ""
+    if _load_clearance_cache(reject_cookie=_failed_cookie):          # another process / a previous run already paid for a fresh cookie
+        _CLEARANCE_FAILED_TS = 0.0
         return True
     # If FlareSolverr is known broken (failed recently), fail fast — don't retry 6×70s
     # for every http_get() call. Without this, each page fetch in harvest_model() hangs
@@ -666,6 +713,18 @@ def _fs_get_via_session(url: str, session_id: str, timeout_s: int) -> str:
     return ""
 
 
+_FETCH_FAIL_COUNTS: dict = {}
+
+
+def _log_fetch_failure(url: str, why: str) -> None:
+    """A failed fetch used to return "" with NO trace (an empty body is indistinguishable from an empty page, which
+    is how 'cookie minted, body empty' went undiagnosed). Count every failure by reason and log the first of each
+    reason + every 50th, so a systematic block is visible without flooding the log."""
+    n = _FETCH_FAIL_COUNTS[why] = _FETCH_FAIL_COUNTS.get(why, 0) + 1
+    if n == 1 or n % 50 == 0:
+        log.warning(f"fetch failed: {why} (x{n}) {url[:120]}")
+
+
 def http_get(url: str, timeout_s: int = 40) -> str:
     """Fetch a car-parts.ie page. Cookie mode: plain urllib + cf_clearance (fast, <1s/page).
     Session mode: FlareSolverr persistent session (slow, ~3-5s/page — fallback when
@@ -706,9 +765,12 @@ def http_get(url: str, timeout_s: int = 40) -> str:
             if e.code in (403, 503, 429) and attempt == 0:   # cookie expired / challenged
                 ensure_clearance(force=True)
                 continue
+            _log_fetch_failure(url, f"HTTP {e.code}")
             return ""
-        except Exception:
+        except Exception as e:
+            _log_fetch_failure(url, type(e).__name__)
             return ""
+    _log_fetch_failure(url, "HTTP 403/503/429 after clearance refresh")
     return ""
 
 
@@ -939,12 +1001,7 @@ def main():
         _status_write(force=True, state="working", cycle=state["cycles"], rest_until=None,
                       last_progress_at=time.time(), since=time.time())
 
-        # Keep the cf_clearance cookie fresh (re-mint when older than CLEARANCE_TTL_S).
-        # This is the ONLY FlareSolverr browser use now — a couple of solves per hour.
-        try:
-            ensure_clearance()
-        except Exception as e:
-            log.error(f"clearance refresh failed (FlareSolverr may be down): {e}")
+        # (clearance is refreshed below, only when there is work - see "pending > 0")
 
         # Periodic stale-reclaim (fix 2026-07-08): startup-only reclaim missed
         # orphans on a long-running harvester — the top-3 models sat stuck
@@ -971,6 +1028,15 @@ def main():
             f"({prog['brands_done']}/{prog['brands_total']} brands), pending={pending} ═══"
         )
 
+        # Keep the cf_clearance cookie fresh (re-mint when older than CLEARANCE_TTL_S) - ONLY when there is work.
+        # 2026-11-16 RCA: this ran at every cycle start even with a drained queue, so an idle harvester kept
+        # paying FlareSolverr Chrome solves (2 of 3 time out) for nothing and competed with every other solver.
+        if pending > 0:
+            try:
+                ensure_clearance()
+            except Exception as e:
+                log.error(f"clearance refresh failed (FlareSolverr may be down): {e}")
+
         # Guard: do NOT start workers when clearance is unavailable. Without this,
         # workers claim models (set in_progress) then fail every page with "", marking
         # models "empty" permanently — burning the entire queue with false-empty status.
@@ -979,7 +1045,7 @@ def main():
         with _CLEARANCE_LOCK:
             have_clearance = bool(_CLEARANCE["cookie"]) or (
                 _CLEARANCE.get("mode") == "session" and bool(_CLEARANCE.get("session_id")))
-        if not have_clearance:
+        if pending > 0 and not have_clearance:
             log.warning("No valid cf_clearance/session — skipping worker cycle to avoid false-empty "
                         "queue burn. Sleeping 60s before retry.")
             _rest(60, "waiting_clearance")

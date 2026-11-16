@@ -73,6 +73,7 @@ SUPPLIER_URL = "https://www.car-parts.ie"
 
 from car_brand_resolver import resolve_source_brand
 import cpie_identity
+import base_price_rule
 
 from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
 from warranty_policy import resolve as _warranty_resolve
@@ -217,6 +218,7 @@ async def import_file(
         if _res.action in ("created", "alias"):
             print(f"  [brand] {maker_key!r} -> {_res.name} ({_res.action}: {_res.reason})", flush=True)
         inserted = updated = fitment_rows = supplier_rows = image_rows = supplier_skipped = 0
+        touched_part_ids: list[str] = []
         parts_skipped = fitment_skipped = image_skipped = 0
         skip_reasons: dict = {}      # 'ErrorClass: first line' -> count (parts_catalog rows that could not be written)
         checkpoint_at: int | None = None
@@ -281,7 +283,10 @@ async def import_file(
             # LOCAL estimate inputs (18% VAT, price_policy.catalog_estimate), so they are never written from
             # here: the foreign cost goes to online_price_ils (the estimate's 0%-VAT foreign input) and
             # min_price_ils only. The importer cost of a part is left NULL on insert and untouched on update.
-            base_price_ils = round(price_ils * 1.45, 2) if price_ils else None
+            # base_price is NOT written here (2026-11-16 RCA): the importer used to write `price_ils x 1.45` on every re-harvest,
+            # a second formula next to the ownership rule, and ~41% of a 6,054-part sample diverged from it (the part's
+            # price-basis offer can belong to another supplier/class). The touched parts are passed to
+            # base_price_rule.apply_to_parts after the loop - the same code the maintenance tasks use.
 
             # Build compatible_vehicles from top-level model OR per-part fitment array
             compatible_vehicles = []
@@ -319,16 +324,16 @@ async def import_file(
                         manufacturer, manufacturer_id,
                         category, description, specifications, compatible_vehicles,
                         part_type, part_condition, aftermarket_tier,
-                        importer_price_ils, base_price, online_price_ils, min_price_ils, max_price_ils,
+                        importer_price_ils, online_price_ils, min_price_ils, max_price_ils,
                         is_safety_critical, needs_oem_lookup, master_enriched,
                         is_active, created_at, updated_at
                     ) VALUES(
                         gen_random_uuid(), $1, $2, $3, $3,
                         $4, $5::uuid,
-                        $6, $11, $7::jsonb, $8::jsonb,
+                        $6, $10, $7::jsonb, $8::jsonb,
                         'aftermarket', 'new', 'OE_equivalent',
-                        NULL, $10, $9, $9, NULL,
-                        FALSE, $12, FALSE,
+                        NULL, $9, $9, NULL,
+                        FALSE, $11, FALSE,
                         TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -340,9 +345,6 @@ async def import_file(
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
                             THEN EXCLUDED.importer_price_ils
                             ELSE parts_catalog.importer_price_ils END,
-                        base_price = CASE WHEN EXCLUDED.base_price > 0
-                            THEN EXCLUDED.base_price
-                            ELSE parts_catalog.base_price END,
                         updated_at = NOW()
                     RETURNING id, (xmax = 0) AS is_insert
                     """,
@@ -358,9 +360,9 @@ async def import_file(
                         "in_stock": in_stock,
                     }),
                     json.dumps(compatible_vehicles),
-                    price_ils, base_price_ils,
+                    price_ils,
                     description_text or None,
-                    name_missing,   # $12 -> needs_oem_lookup (RULE 7)
+                    name_missing,   # $11 -> needs_oem_lookup (RULE 7)
                 )
             except Exception as e:
                 parts_skipped += 1
@@ -370,6 +372,7 @@ async def import_file(
                 continue
 
             part_id = str(row["id"])
+            touched_part_ids.append(part_id)
             if row["is_insert"]:
                 inserted += 1
             else:
@@ -483,6 +486,12 @@ async def import_file(
                     if image_skipped <= _SKIP_LOG_LIMIT:
                         print(f"  [warn] image skip {sku_raw}: {type(_ie).__name__}: {str(_ie)[:120].replace(chr(10), ' ').replace('{', '(').replace('}', ')')}", flush=True)
 
+        try:   # ONE base_price rule (base_price_rule.py == the maintenance tasks); a failure is loud, never silent
+            bp = await base_price_rule.apply_to_parts(conn, touched_part_ids)
+        except Exception as _be:
+            bp = {"error": f"{type(_be).__name__}: {str(_be)[:160]}"}
+            print(f"ERROR car_parts_ie_import: base_price rule failed for {len(touched_part_ids)} parts: {bp['error']}", file=sys.stderr, flush=True)
+
         if parts_skipped:
             # LOUD, data behaviour unchanged (exit code stays 0, queue status untouched): a model whose parts could not be written
             # used to look like a clean "done". One ERROR line + a persistent record that health checks / people can grep.
@@ -514,6 +523,7 @@ async def import_file(
             "image_skipped": image_skipped,
             "checkpoint_at": checkpoint_at,
             "brand_resolution": _res.action,
+            "base_price": bp,
         }
     finally:
         await conn.close()
