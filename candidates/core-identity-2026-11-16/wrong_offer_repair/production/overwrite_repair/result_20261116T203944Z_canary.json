@@ -1,0 +1,61 @@
+{
+ "minmax_refresh": [
+  {
+   "part_id": "27fa7744-5af4-47c7-9bcb-0e5ac4ec1a6a",
+   "before": "242.14",
+   "after": "585.75"
+  },
+  {
+   "part_id": "78786006-6848-418b-b13d-4c1561fc81be",
+   "before": "635.48",
+   "after": "267.02"
+  }
+ ],
+ "manifest_sha256": "01bb5c65916b2248b133279a497842e53b8e40b23520d4bcad98b19e1ff7d35a",
+ "approval_ref": "owner-mission-brief-2026-11-16 s8 batch 2/3 after canary accept",
+ "run_id": "20261116T203944Z_canary",
+ "phase": "canary",
+ "pre_apply_backup": "/app/state/cpie_ownership/overwrite_repair/pre_apply_20261116T203944Z_canary.json",
+ "pre_apply_backup_sha256": "b8e5d95eb19f9a9bc5f9255f76221718f20148e1031da49df431f0360602f26e",
+ "done": [
+  {
+   "offer_id": "b1b5e079-635b-4ce8-8d74-0779806c33dd",
+   "part_id": "27fa7744-5af4-47c7-9bcb-0e5ac4ec1a6a",
+   "supplier_sku": "ZR CT728 R",
+   "before": {
+    "price_ils": "242.14",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c3-pluriel-hb/window-regulator",
+    "updated_at": "2026-11-15T12:20:59.861898"
+   },
+   "after": {
+    "price_ils": "585.75",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c3-pluriel-hb/window-regulator",
+    "updated_at": "2026-11-16T20:39:44.499554"
+   },
+   "price_history_id": "4696b353-deac-41bd-b1be-97b3eb0e5c92",
+   "run_id": "20261116T203944Z_canary",
+   "phase": "canary"
+  },
+  {
+   "offer_id": "10d88c3d-b1e5-4543-8d84-9b897616f297",
+   "part_id": "78786006-6848-418b-b13d-4c1561fc81be",
+   "supplier_sku": "ZR PG57 L",
+   "before": {
+    "price_ils": "635.48",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c1-ii/window-regulator",
+    "updated_at": "2026-11-15T12:13:12.890454"
+   },
+   "after": {
+    "price_ils": "267.02",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/c1-ii/window-regulator",
+    "updated_at": "2026-11-16T20:39:44.712920"
+   },
+   "price_history_id": "ddb6962c-bfd7-4d20-a392-afc00bdd24ec",
+   "run_id": "20261116T203944Z_canary",
+   "phase": "canary"
+  }
+ ],
+ "skipped": [],
+ "applied": 2,
+ "skipped_count": 0
+}

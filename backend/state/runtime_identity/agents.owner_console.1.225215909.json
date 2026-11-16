@@ -1,0 +1,14 @@
+{
+ "module": "agents.owner_console",
+ "path": "/app/agents/owner_console.py",
+ "sha256": "f4c4713894295edc356f35c73d5bab91abf9a04f3a4a2b7a9d02ae85ad10c8b1",
+ "size": 124070,
+ "via": "source_compiled_by_runtime_identity",
+ "pid": 1,
+ "process_start_ticks": "225215909",
+ "boot_id": "b37ec165-b802-4dbd-8aec-2be78fa20365",
+ "hostname": "ebd62affd652",
+ "argv0": "__main__.py",
+ "loaded_utc": "2026-11-13T15:17:42+00:00",
+ "load_count": 1
+}

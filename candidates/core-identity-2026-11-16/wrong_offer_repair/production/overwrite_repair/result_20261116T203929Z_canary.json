@@ -1,0 +1,38 @@
+{
+ "minmax_refresh": [
+  {
+   "part_id": "98bedcae-a725-4791-ad90-2babe9ac78f3",
+   "before": "54.91",
+   "after": "149.67"
+  }
+ ],
+ "manifest_sha256": "01bb5c65916b2248b133279a497842e53b8e40b23520d4bcad98b19e1ff7d35a",
+ "approval_ref": "owner-mission-brief-2026-11-16 s8 canary 1/3",
+ "run_id": "20261116T203929Z_canary",
+ "phase": "canary",
+ "pre_apply_backup": "/app/state/cpie_ownership/overwrite_repair/pre_apply_20261116T203929Z_canary.json",
+ "pre_apply_backup_sha256": "07e4e91a1e120b4d41d4824c604cc156a138f888325d88fad6197787320a03e9",
+ "done": [
+  {
+   "offer_id": "35d2d2e7-e7de-4d7e-afb1-a2320162ba2f",
+   "part_id": "98bedcae-a725-4791-ad90-2babe9ac78f3",
+   "supplier_sku": "PT155",
+   "before": {
+    "price_ils": "54.91",
+    "supplier_url": "https://www.car-parts.ie/car-parts/daihatsu/wildcat-rocky-f70/ignition-system-auto",
+    "updated_at": "2026-11-15T13:53:28.250470"
+   },
+   "after": {
+    "price_ils": "149.67",
+    "supplier_url": "https://www.car-parts.ie/car-parts/daihatsu/wildcat-rocky-f70/ignition-system-auto",
+    "updated_at": "2026-11-16T20:39:29.663076"
+   },
+   "price_history_id": "5fa2e903-73a5-4f9a-b000-a779beec6d38",
+   "run_id": "20261116T203929Z_canary",
+   "phase": "canary"
+  }
+ ],
+ "skipped": [],
+ "applied": 1,
+ "skipped_count": 0
+}

@@ -82,6 +82,8 @@ async def main():
     ok("foreign qualified offers untouched", await snap(qual) == qseed)
     fd = last_json(run("--fulldiff", "--result", r["result"], *a))
     ok("fulldiff: only price_ils/supplier_url/updated_at (offers) changed", not fd["rows_with_unexpected_changes"] and set(k for k in fd["changed_column_counts"] if k.startswith("offer.")) <= {"offer.price_ils", "offer.supplier_url", "offer.updated_at"}, fd)
+    ac = last_json(run("--accept", "--result", r["result"], "--phase-check", "canary", *a))
+    ok("accept: passes on the 3-row run", not ac.get("fails"), ac)
     r2 = last_json(run("--apply", "--phase", "canary", *a, "--approval-ref", "sandbox-wo"))
     ok("idempotent: second apply writes nothing (guard skip)", r2["applied"] == 0 and r2["skipped"] == 3, r2)
     # newer legitimate write on one row -> rollback skips it (exit 2), restores the others
@@ -92,6 +94,10 @@ async def main():
     now = await snap(ids)
     ok("rollback: newer legitimate write kept, other 2 restored", now[nv] == held and all(now[i]["p"] == seed[i]["p"] and now[i]["url"] == seed[i]["url"] for i in ids[1:]), (now, seed))
     ok("rollback: foreign qualified offers untouched", await snap(qual) == qseed)
+    mins2 = {r_["id"]: r_["m"] for r_ in await c.fetch("select id::text id,min_price_ils::text m from parts_catalog where id=any($1::uuid[])", [x["current_part_id"] for x in offers])}
+    ok("rollback: min_price_ils restored to the restored offer price (policy refresh)", all(R.D(mins2[x["current_part_id"]]) == R.D(seed[x["offer_id"]]["p"]) for x in offers[1:]), (mins2, seed))
+    run("--apply", "--phase", "canary", *a, "--approval-ref", "t", "--refresh-minmax", "--dsn", "postgresql://other/x", expect_rc=1)
+    ok("refresh-minmax with a foreign --dsn refused", True)
     print(f"ALL {len(OK)} CHECKS PASSED")
     await c.close()
 

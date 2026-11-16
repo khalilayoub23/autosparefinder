@@ -545,6 +545,8 @@ def main(argv=None):
     ap.add_argument("--expect-count", type=int, help="number of READY rows the pinned manifest must hold (default 93)")
     ap.add_argument("--refresh-minmax", action="store_true", help="after apply/rollback refresh min/max price of the touched parts (policy function)")
     a = ap.parse_args(argv)
+    if getattr(a, "refresh_minmax", False) and a.dsn and a.dsn != DB:
+        raise SystemExit("REFUSED: --refresh-minmax writes through DATABASE_URL; --dsn differs (offers and min/max would hit two databases)")
     if a.apply and not a.phase:
         raise SystemExit("REFUSED: --phase canary|rest required")
     if (a.apply or a.verify or a.fulldiff or a.accept) and not (a.manifest and a.expect_sha256):
