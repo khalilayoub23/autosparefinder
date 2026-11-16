@@ -68,6 +68,16 @@ def _mask_supplier(name: str) -> str:
     return f"ספק #{num}"
 
 
+def display_supplier_sku(sku):
+    """Customer-facing supplier SKU. A brand-qualified car-parts.ie offer key ('BRAND~article', workstream C) is OUR
+    disambiguator, never the supplier's number: customers and supplier messages see the bare article only.
+    ONE function for every customer surface (cpie_identity.article_of is the single parser)."""
+    if not sku or "~" not in str(sku):
+        return sku
+    import cpie_identity
+    return cpie_identity.article_of(str(sku))[1] or sku
+
+
 def _normalize_base_url(raw: str) -> str | None:
     """Return normalized scheme://host[:port] or None for invalid input."""
     if not raw:

@@ -1,4 +1,5 @@
 import logging
+from routes.utils import display_supplier_sku
 from typing import Optional
 from sqlalchemy import text
 from services.suppliers.base_supplier import BaseSupplier, PartResult
@@ -96,7 +97,7 @@ class LocalDBSupplier(BaseSupplier):
                 results.append(PartResult(
                     supplier=f"local_db:{row.supplier_name}",
                     item_id=row.item_id,
-                    title=f"{row.title} ({row.supplier_sku})",
+                    title=f"{row.title} ({display_supplier_sku(row.supplier_sku)})",
                     price=float(row.price_usd or 0),
                     currency="USD",
                     shipping_cost=float(row.shipping_cost_usd or 0),

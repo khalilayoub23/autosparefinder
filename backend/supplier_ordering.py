@@ -53,6 +53,13 @@ class AmbiguousSubmission(Exception):
     """The supplier may or may not have received the order: reconcile, never resubmit blindly."""
 
 
+
+def _bare_article(sku):
+    """A brand-qualified car-parts.ie offer key ('BRAND~article', workstream C) is OUR disambiguator: the supplier is
+    ordered with the bare article number it knows."""
+    import cpie_identity
+    return cpie_identity.article_of(sku)[1] or None
+
 def auto_order_enabled() -> bool:
     import supplier_flags
     return supplier_flags.enabled("SUPPLIER_AUTO_ORDER_ENABLED")
@@ -361,7 +368,7 @@ def render_purchase_order(row: Dict[str, Any], offers: Dict[str, Dict[str, Any]]
     lines = []
     for it in row["items"]:
         o = offers.get(it["supplier_part_id"]) or {}
-        lines.append(f"- Your SKU {o.get('supplier_sku') or '?'} x {int(it['quantity'])} at {it['unit_cost']} {it['currency']} each")
+        lines.append(f"- Your SKU {_bare_article(o.get('supplier_sku')) or '?'} x {int(it['quantity'])} at {it['unit_cost']} {it['currency']} each")
     ref = f"ASF-PO-{row['id'][:8].upper()}"
     ship = (row.get("terms") or {}).get("shipping") or {}
     cost = ship.get("cost")

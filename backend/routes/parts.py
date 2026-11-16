@@ -41,7 +41,7 @@ from BACKEND_AUTH_SECURITY import (
 from currency_rate import get_usd_to_ils_rate
 from BACKEND_AI_AGENTS import get_agent, resolve_customer_shipping_fee as _resolve_ship_fee, get_supplier_vat_rate
 from resilience import retry_with_backoff
-from routes.utils import _mask_supplier
+from routes.utils import _mask_supplier, display_supplier_sku
 from offer_classification import class_rank_sql, offer_label
 from manufacturer_normalization import (
     canonicalize_vehicle_model_for_manufacturer,
@@ -1874,7 +1874,7 @@ async def search_parts(
                 "supplier_part_id":      str(sp[0]),
                 "supplier_name":         _mask_supplier(sp[1]),
                 "supplier_country":      sp[2] or "",
-                "supplier_sku":          sp[3],
+                "supplier_sku":          display_supplier_sku(sp[3]),
                 # product class of THIS offer (OEM / oe_equivalent / aftermarket): its own label, else the part's
                 "part_type":             offer_label(part_row[6], sp[19] if len(sp) > 19 else None),
                 "source":                supplier_source,
@@ -1996,7 +1996,7 @@ async def search_parts(
                         "supplier_part_id":        bsp[1],
                         "supplier_name":           _mask_supplier(bsp[2]),
                         "supplier_country":        bsp[3] or "",
-                        "supplier_sku":            bsp[4],
+                        "supplier_sku":            display_supplier_sku(bsp[4]),
                         "part_type":               offer_label(extra_dict.get("part_type"), bsp[20] if len(bsp) > 20 else None),
                         "source":                  b_supplier_source,
                         "price_usd":               None,  # raw supplier cost in USD is internal — never exposed (2026-09-21)
@@ -3732,7 +3732,7 @@ async def get_part_suppliers(
             "supplier_country":        r[2] or "",
             # supplier_website and supplier_url intentionally OMITTED from response
             # — exposing these lets customers bypass us and order directly
-            "supplier_sku":            r[4],
+            "supplier_sku":            display_supplier_sku(r[4]),
             "price_usd":               None,  # raw supplier cost in USD is internal — never exposed (2026-09-21)
             # price_ils = CUSTOMER sell price (cost×1.45), never raw supplier
             # cost — this endpoint used to leak our purchase cost (2026-07-05)
@@ -3771,7 +3771,7 @@ async def get_part_suppliers(
                 "supplier_country":       "IL" if _est[1] == "il" else "",
                 "supplier_website":       "https://autosparefinder.co.il",
                 "supplier_logo":          None,
-                "supplier_sku":           part_row[4],
+                "supplier_sku":           display_supplier_sku(part_row[4]),
                 "price_usd":              None,
                 **_offer_price_fields(_cf),
                 "customer_total_ils":     round(_cf["customer_total_ils"] + _ship, 2),
