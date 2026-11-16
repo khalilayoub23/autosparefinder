@@ -22,7 +22,7 @@ Data Imported/Modified: supplier_parts.price_ils/supplier_url/updated_at (93 REA
          parts_catalog.updated_at (+ base_price in --rebase).
 Data Sources: forensics manifest (sha256 pinned by --expect-sha256).
 Missing Data Delegation: n/a (missing brand offers are created by the fixed importer / a separate gated step).
-Last Updated: 2026-11-15
+Last Updated: 2026-11-16 (--expect-count, --refresh-minmax)
 """
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def load_ready(path, expect_sha, expect_count=EXPECTED_READY):
 
 def scope_rows(a):
     """The pinned READY set minus the explicitly excluded offers (a row legitimately rewritten after the manifest)."""
-    rows = load_ready(a.manifest, a.expect_sha256)
+    rows = load_ready(a.manifest, a.expect_sha256, getattr(a, "expect_count", None) or EXPECTED_READY)
     ex = set(a.exclude_offer or [])
     if ex - {x["offer_id"] for x in rows}:
         raise SystemExit("REFUSED: --exclude-offer id is not in the READY manifest set")
@@ -179,6 +179,31 @@ async def apply_rows(rows, conn, run_id, journal, only_phase) -> dict:
     return {"done": done, "skipped": skipped}
 
 
+async def refresh_minmax(part_ids) -> list:
+    """parts_catalog.min_price_ils/max_price_ils of the touched parts through THE one policy implementation
+    (db_update_agent.refresh_min_max_for_parts), one transaction per part. The 2026-11-15 repair left min_price_ils on the
+    foreign price for ~11.5 h (48 of 90 parts) until the scheduled batch ran; the tool now closes that gap itself.
+    Returns [{part_id, before, after}] (min_price_ils) for the result file."""
+    from sqlalchemy import text
+    from BACKEND_DATABASE_MODELS import async_session_factory
+    import db_update_agent as d
+    out = []
+    async with async_session_factory() as db:
+        rate = await d.get_usd_to_ils_rate(db)
+    for pid in sorted(set(part_ids)):
+        try:
+            async with async_session_factory() as db:
+                async with db.begin():
+                    q = text("SELECT min_price_ils FROM parts_catalog WHERE id=CAST(:i AS uuid) FOR UPDATE NOWAIT")
+                    before = (await db.execute(q, {"i": pid})).scalar()
+                    await d.refresh_min_max_for_parts(db, [pid], rate)
+                    after = (await db.execute(text("SELECT min_price_ils FROM parts_catalog WHERE id=CAST(:i AS uuid)"), {"i": pid})).scalar()
+            out.append({"part_id": pid, "before": None if before is None else str(before), "after": None if after is None else str(after)})
+        except Exception as exc:  # noqa: BLE001 - reported, never fatal: the scheduled refresh stays the safety net
+            out.append({"part_id": pid, "error": str(exc)[:160]})
+    return out
+
+
 async def backup_rows(rows, conn, run_id) -> tuple:
     """Full-row (to_jsonb) copy of the target offers AND their parts, taken BEFORE the first write."""
     ids = [x["offer_id"] for x in rows]
@@ -191,7 +216,7 @@ async def backup_rows(rows, conn, run_id) -> tuple:
 
 
 OFFER_ALLOWED = {"price_ils", "supplier_url", "updated_at"}
-PART_ALLOWED = {"updated_at", "base_price"}
+PART_ALLOWED = {"updated_at", "base_price", "min_price_ils", "max_price_ils"}  # min/max: --refresh-minmax (policy function)
 
 
 async def fulldiff(backup_path, rows, conn) -> dict:
@@ -260,7 +285,8 @@ async def cmd_apply(a):
         res = await apply_rows(target, conn, run_id, journal, a.phase)
     finally:
         await conn.close()
-    result = {"manifest_sha256": a.expect_sha256, "approval_ref": a.approval_ref, "run_id": run_id, "phase": a.phase,
+    minmax = await refresh_minmax([d["part_id"] for d in res["done"]]) if getattr(a, "refresh_minmax", False) else []
+    result = {"minmax_refresh": minmax, "manifest_sha256": a.expect_sha256, "approval_ref": a.approval_ref, "run_id": run_id, "phase": a.phase,
               "pre_apply_backup": str(pre), "pre_apply_backup_sha256": pre_sha, **res,
               "applied": len(res["done"]), "skipped_count": len(res["skipped"])}
     rp = OUT / f"result_{run_id}.json"
@@ -325,9 +351,10 @@ async def cmd_rollback(a):
         out = await rollback_rows(res["done"], conn)
     finally:
         await conn.close()
+    mm = await refresh_minmax([d["part_id"] for d in res["done"] if d["offer_id"] in set(out["restored"])]) if getattr(a, "refresh_minmax", False) else []
     OUT.mkdir(parents=True, exist_ok=True)
     rp = OUT / f"rollback_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
-    rp.write_text(json.dumps({"result": str(a.result or a.journal), "approval_ref": a.approval_ref, "restored": len(out["restored"]), **out}, indent=1))
+    rp.write_text(json.dumps({"result": str(a.result or a.journal), "approval_ref": a.approval_ref, "restored": len(out["restored"]), "minmax_refresh": mm, **out}, indent=1))
     hard = [s for s in out["skipped"] if s["reason"] != "already_rolled_back"]
     print(json.dumps({"rollback": str(rp), "restored": len(out["restored"]), "skipped": len(out["skipped"]), "hard_skips": len(hard)}))
     if hard:
@@ -515,6 +542,8 @@ def main(argv=None):
     ap.add_argument("--expect-result-sha256")
     ap.add_argument("--dsn")
     ap.add_argument("--rows", action="store_true")
+    ap.add_argument("--expect-count", type=int, help="number of READY rows the pinned manifest must hold (default 93)")
+    ap.add_argument("--refresh-minmax", action="store_true", help="after apply/rollback refresh min/max price of the touched parts (policy function)")
     a = ap.parse_args(argv)
     if a.apply and not a.phase:
         raise SystemExit("REFUSED: --phase canary|rest required")
