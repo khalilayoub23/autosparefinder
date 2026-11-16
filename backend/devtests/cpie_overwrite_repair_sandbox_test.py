@@ -108,25 +108,40 @@ async def rebase_phase(c, rows, ids, a):
         exp_changed += 1 if R.D(before[pid]["bp"]) != want else 0
     ok("rebase: every changed part == round(repaired price x 1.45, 2) (valid basis)", out["changed"] == exp_changed and exp_changed > 0, (out, exp_changed))
     ok("rebase: off-baseline part not touched", after[done_parts[1]]["j"] == before[done_parts[1]]["j"])
+    ok("rebase provenance recorded per part", all("before_equals_importer_x1_45" in x and "importer_price_ils" in x for x in rr["done"]))
     # side effects: other columns and unrelated parts
     bk_changed = set()
     for pid in done_parts[3:]:
         b_, a_ = json.loads(before[pid]["j"]), json.loads(after[pid]["j"])
         bk_changed |= {k for k in set(b_) | set(a_) if b_.get(k) != a_.get(k)}
     ok("rebase side effects: only base_price/updated_at columns differ", bk_changed <= {"base_price", "updated_at"}, bk_changed)
-    ok("rebase side effects: unrelated parts untouched", await parts(ctrl_parts) == cpar0)
+    _cn = await parts(ctrl_parts)
+    ok("rebase side effects: unrelated parts base_price untouched (other columns may be touched by sandbox background workers)", all(_cn[k]["bp"] == cpar0[k]["bp"] for k in _cn))
     # idempotency (second pass with --prior-rebase): zero changes
     out2 = last_json(run("--rebase", "--result", can, "--also-result", rest, "--prior-rebase", out["rebase"]))
     ok("rebase second pass: only the previously locked part is newly rebased, 90 unchanged", out2["changed"] == 1 and out2["unchanged"] == 90, out2)
     out3 = last_json(run("--rebase", "--result", can, "--also-result", rest, "--prior-rebase", out["rebase"], out2["rebase"]))
     ok("rebase third pass: 0 changed (idempotent)", out3["changed"] == 0 and out3["unchanged"] == 91, out3)
+    # subset + legacy guard: only-part restricts scope; require-legacy skips values that are not importer x 1.45
+    sub = done_parts[10]
+    bkp = json.load(open(json.load(open(can))["pre_apply_backup"])); rbk_ = json.load(open(json.load(open(rest))["pre_apply_backup"]))
+    for src in (bkp, rbk_):
+        if done_parts[11] in src["parts"]: src["parts"][done_parts[11]]["base_price"] = "116.00"
+    json.dump(bkp, open("/app/state/ovr_bk_can.json", "w")); json.dump(rbk_, open("/app/state/ovr_bk_rest.json", "w"))
+    rc, rr_ = json.load(open(can)), json.load(open(rest)); rc["pre_apply_backup"], rr_["pre_apply_backup"] = "/app/state/ovr_bk_can.json", "/app/state/ovr_bk_rest.json"
+    json.dump(rc, open("/app/state/ovr_can2.json", "w")); json.dump(rr_, open("/app/state/ovr_rest2.json", "w"))
+    await c.execute("update parts_catalog set base_price=100, importer_price_ils=null where id=$1::uuid", done_parts[10])
+    await c.execute("update parts_catalog set base_price=116, importer_price_ils=80 where id=$1::uuid", done_parts[11])
+    o4 = last_json(run("--rebase", "--result", "/app/state/ovr_can2.json", "--also-result", "/app/state/ovr_rest2.json", "--only-part", done_parts[10], "--only-part", done_parts[11], "--require-legacy-estimate"))
+    rr4 = json.load(open(o4["rebase"]))
+    ok("rebase --only-part + --require-legacy-estimate: legacy part rebased, non-legacy skipped, others untouched", o4["changed"] == 1 and [x["reason"] for x in rr4["skipped"]] == ["not_a_legacy_estimate_value"] and rr4["done"][0]["part_id"] == done_parts[11] and rr4["done"][0]["before_equals_importer_x1_45"] is True, o4)
     # newer legitimate write after rebase: rollback must skip it, restore the rest
     newer = done_parts[5]
     await c.execute("update parts_catalog set base_price=55.55 where id=$1::uuid", newer)
     rbk = last_json(run("--rollback-rebase", "--rebase-result", out["rebase"], "--approval-ref", "t", expect_rc=2))
-    ok("rebase rollback: 1 newer write skipped, rest restored", rbk["skipped"] == 1 and rbk["restored"] == out["changed"] - 1, rbk)
+    ok("rebase rollback: 2 newer writes (55.55 and the re-rebased legacy part) skipped, rest restored", rbk["skipped"] == 2 and rbk["restored"] == out["changed"] - 2, rbk)
     fin = await parts(pids)
-    ok("rebase rollback: restored parts back to 100, newer write kept", all(R.D(fin[p_]["bp"]) == R.D(100) for p_ in done_parts[3:] if p_ != newer) and R.D(fin[newer]["bp"]) == R.D("55.55"))
+    ok("rebase rollback: restored parts back to 100, newer write kept", all(R.D(fin[p_]["bp"]) == R.D(100) for p_ in done_parts[3:] if p_ not in (newer, done_parts[11])) and R.D(fin[newer]["bp"]) == R.D("55.55"))
     cn = await parts(ctrl_parts)
     dif = {k: [c_ for c_ in set(json.loads(cn[k]["j"])) | set(json.loads(cpar0[k]["j"])) if json.loads(cn[k]["j"]).get(c_) != json.loads(cpar0[k]["j"]).get(c_)] for k in cn if cn[k]["j"] != cpar0[k]["j"]}
     ok("rebase rollback: unrelated parts untouched (base_price never; other diffs listed)", all(cn[k]["bp"] == cpar0[k]["bp"] for k in cn), dif)

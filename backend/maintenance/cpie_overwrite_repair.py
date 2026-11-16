@@ -335,7 +335,7 @@ async def cmd_rollback(a):
     return out
 
 
-async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, run_id, rate=None) -> dict:
+async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, run_id, rate=None, only_parts=None, require_legacy=False) -> dict:
     """base_price of the repaired parts through the ONE ownership rule (`rule` = db_update_agent.apply_base_price_rule),
     one transaction per part with the part row locked FOR UPDATE NOWAIT for the whole read->write, so a concurrent writer
     can neither be overwritten nor race the rule. A part is touched only if its current base_price is the value from the
@@ -346,23 +346,28 @@ async def rebase_parts(res, backup_paths, prior_after, session_factory, rule, ru
     for bp in backup_paths:
         bk.update(json.load(open(bp))["parts"])
     done, skipped, unchanged = [], [], 0
-    for pid in sorted({d["part_id"] for d in res["done"]}):
+    wanted = sorted({d["part_id"] for d in res["done"]} & set(only_parts)) if only_parts else sorted({d["part_id"] for d in res["done"]})
+    for pid in wanted:
         try:
             async with session_factory() as db:
                 async with db.begin():
-                    row = (await db.execute(text("SELECT base_price FROM parts_catalog WHERE id=CAST(:i AS uuid) FOR UPDATE NOWAIT"), {"i": pid})).fetchone()
+                    row = (await db.execute(text("SELECT base_price, importer_price_ils FROM parts_catalog WHERE id=CAST(:i AS uuid) FOR UPDATE NOWAIT"), {"i": pid})).fetchone()
                     if row is None:
                         raise RuntimeError("part_missing")
                     cur = D(row[0])
                     ok_vals = {D(bk[pid].get("base_price")) if pid in bk else None, prior_after.get(pid)}
                     if cur not in ok_vals:
                         raise RuntimeError("base_price_changed_since_backup")
+                    legacy = row[1] is not None and D(Decimal(str(row[1])) * Decimal("1.45")) == cur   # stored == importer_price_ils x 1.45 (legacy estimate)
+                    if require_legacy and not legacy:
+                        raise RuntimeError("not_a_legacy_estimate_value")
                     await rule(db, scope="all", part_ids=[pid], usd_to_ils=rate)
                     new = D((await db.execute(text("SELECT base_price FROM parts_catalog WHERE id=CAST(:i AS uuid)"), {"i": pid})).scalar())
                     if new == cur:
                         unchanged += 1
                     else:
-                        done.append({"part_id": pid, "before": str(cur) if cur is not None else None, "after": str(new)})
+                        done.append({"part_id": pid, "before": str(cur) if cur is not None else None, "after": str(new),
+                                     "importer_price_ils": str(row[1]) if row[1] is not None else None, "before_equals_importer_x1_45": legacy})
         except Exception as exc:  # noqa: BLE001
             skipped.append({"part_id": pid, "reason": "locked_by_other_writer" if "could not obtain lock" in str(exc) else str(exc)[:200]})
     return {"run_id": run_id, "changed": len(done), "unchanged": unchanged, "skipped_count": len(skipped), "done": done, "skipped": skipped}
@@ -400,7 +405,8 @@ async def cmd_rebase(a):
     if rate is None:  # fetched ONCE so a rate change between passes cannot make a second pass non-zero
         async with async_session_factory() as db:
             rate = await d.get_usd_to_ils_rate(db)
-    out = await rebase_parts(res, [r["pre_apply_backup"] for r in results], prior, async_session_factory, d.apply_base_price_rule, res["run_id"], rate)
+    out = await rebase_parts(res, [r["pre_apply_backup"] for r in results], prior, async_session_factory, d.apply_base_price_rule, res["run_id"], rate,
+                             only_parts=a.only_part, require_legacy=a.require_legacy_estimate)
     out["usd_to_ils"] = rate
     rp = OUT / f"rebase_{res['run_id']}_{time.strftime('%H%M%S', time.gmtime())}.json"
     rp.write_text(json.dumps(out, indent=1))
@@ -498,6 +504,8 @@ def main(argv=None):
     ap.add_argument("--accept-canary-skips", action="store_true")
     ap.add_argument("--result")
     ap.add_argument("--journal")
+    ap.add_argument("--only-part", action="append")
+    ap.add_argument("--require-legacy-estimate", action="store_true")
     ap.add_argument("--phase-check", choices=["canary", "rest"], default="rest")
     ap.add_argument("--usd-to-ils", type=float)
     ap.add_argument("--also-result", action="append")
