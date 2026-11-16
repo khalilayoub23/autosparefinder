@@ -574,3 +574,95 @@ Is the correction unnecessary or harmful? **Not harmful** - the values are right
 | Evidence durability, missing brand offers | Unchanged; `core_closure_20261116/` is still untracked with no `SHA256SUMS` |
 
 **Overall verdict: PARTIALLY VERIFIED.** The repair of the 90 offers is verified, and the importer now stops cross-brand overwrites for both resolved and unresolved holders. It is not a closure of the identity problem: one fix is still not running in production, and the known wrong offers outside the 90 are still shown to customers.
+
+---
+
+# Final check after guarded restart 2026-11-16
+
+Read at 16:08-16:19 UTC (18:08-18:19 IL). Read-only; four unauthenticated GETs per part to the backend on localhost; container scratch removed.
+
+| Check | Verdict |
+|---|---|
+| 1. Restart, health, logs | **CONFIRMED WITH CORRECTION** (restart was at 18:06:35 IL, not 17:06 IL) |
+| 2. Running process loaded the fixed modules | **CONFIRMED BY INFERENCE** - the identity tool does not watch these modules |
+| 3. Live API returns the bare article | **CONFIRMED** |
+| 4. Importer writes normally; 90 + 3 untouched by the restart | **CONFIRMED** |
+
+## 1. Restart and health
+
+| | Result |
+|---|---|
+| Container `StartedAt` / PID 1 start | 2026-11-16 16:06:35 UTC = **18:06:35 IL** |
+| Container created | 2026-11-14 05:51:33 UTC (a restart, not a recreate; `/tmp` payloads kept, 6,109 files) |
+| Docker health | `healthy`, restart count 0 |
+| `Traceback` in `docker logs --since 40m` (2,842 lines) and again `--since 15m` | 0 and 0 |
+| Harvester | relaunched 16:07 UTC, state `working` |
+
+Correction: 17:06 is the CET time. In Israel time the restart ran at 18:06:35. My re-review statement that PID 1 still dated from 2026-11-14 was read at 17:20 IL, before this restart, and was correct then.
+
+## 2. Loaded modules
+
+`runtime_identity_check.py --pid 1` exits 0 but reports only `agents.owner_console: LOADED_MATCH` - that is the single module it watches. It cannot report on `supplier_ordering`, `routes.parts`, `routes.utils` or `cpie_identity`, and `--expect` does not add modules.
+
+What I can show instead:
+
+| Module | Disk sha256 (container == git HEAD) | File mtime (UTC) | Before process start 16:06:35? |
+|---|---|---|---|
+| `supplier_ordering.py` | 116a90f5... | 05:37:26 | yes |
+| `routes/parts.py` | cd8ba4de... | 05:37:41 | yes |
+| `routes/utils.py` | 60eb553e... | 05:37:41 | yes |
+| `cpie_identity.py` | cde55ab3... | 06:26:58 | yes |
+
+A process started after the last change of a file can only have compiled the bytes now on disk. For `routes.parts` and `routes.utils` this is also proven by behaviour (check 3). For `supplier_ordering` it is inference only: no purchase order exists to observe.
+
+## 3. Live API
+
+Part 4b2b5b26 plus three more qualified offers chosen by `order by md5(id::text||'final') limit 3`:
+
+| Offer key in DB | `/api/v1/parts/<id>/suppliers` returns | `~` anywhere in `/suppliers` or `/api/v1/parts/<id>` body |
+|---|---|---|
+| `A-B-S~38203` | `38203` | no |
+| `NRF~58409` | `58409` | no |
+| `A-B-S~31242` | `31242` | no |
+| `OSSCA~44163` | `44163` | no |
+
+All eight responses HTTP 200. Before the restart the first one returned `A-B-S~38203`.
+
+## 4. Importer and the repaired rows
+
+Import reports from batches whose payload arrived after the restart (5 complete at 16:19 UTC): 1,962 rows scanned, 1,944 offer rows written (99.1%), 3 `offer_owner_brand_unresolved` skips, 15 brand holds, 0 Tracebacks, 0 batches without offer writes. Small sample, but normal.
+
+The 93 READY offers at 16:10 UTC:
+
+| | First review (05:57 UTC) | Now |
+|---|---|---|
+| Identity (part, SKU) and owner brand intact | 90 / 90 | 90 / 90 |
+| Equal to journal `after` exactly | 74 | 56 |
+| Rewritten since | 16 | 34 |
+| Writer of every rewrite is the owner brand | 16 / 16 | 34 / 34 |
+| Price differs from the repaired price | 0 | 3 |
+| Stamped after the restart | - | 0 |
+
+The three price changes are owner-brand re-harvests with their own `car_parts_ie_import` history row: 28058 FEBI BILSTEIN 56.90 -> 56.72, 30633 FEBI BILSTEIN 158.86 -> 154.93, 46106 FEBI BILSTEIN 101.65 -> 100.64. The 3 preserved rows keep their identity and their last writer is the owner brand (NRF, FEBI BILSTEIN, KAMOKA). `cpie_overwrite_repair` history rows: still 90. Car-Parts.ie parts with more than one offer: 0.
+
+## Overall verdict on the CORE criteria
+
+I was not given a written list of acceptance criteria, so this is against the ten claims and the fixes reviewed.
+
+Met and verified:
+- The 90 offers are repaired, with journal, backup and guarded rollback; the 3 preserved rows are legitimate.
+- The 3,858 moves are intact; no part holds two Car-Parts.ie offers.
+- No customer reference touches any affected offer or part.
+- The importer blocks cross-brand overwrites for resolved holders (since 2026-11-15) and for unresolved holders (since 08:26:58 IL today); no such write found since.
+- The display / purchase-order fix is now running; customer payloads show the bare article.
+- The 14 `base_price` rows equal the policy target.
+
+Not met, or not verifiable:
+1. **1,043 known wrong offers outside the 90 are still shown to customers** (1,007 NOT_READY + 36 UNDO), and that count is a lower bound.
+2. **The five contaminated unresolved-holder offers are not repaired**, and the 6,361 unresolved-holder offers are now frozen with an unknown share of foreign data.
+3. **Brands whose writes are now skipped or were displaced have no offer** (about 1,270 brand/article pairs in the replay summary).
+4. **Purchase-order text with a bare article is not observed in production** (tested in sandbox, loaded by inference).
+5. **Evidence durability**: payloads live only in the container's `/tmp` and survive a restart but not a recreate.
+6. **No recorded approval reference** in the `base_price` rebase result files.
+
+**Verdict: the repair mission for the 90 READY offers and the importer protections is complete and verified. The identity problem as a whole is not closed** - items 1 to 3 are open customer-facing data defects that this work documented but did not fix.

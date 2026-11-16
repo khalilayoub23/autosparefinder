@@ -1,6 +1,8 @@
 # CORE identity - closure round (2026-11-16)  [supersedes nothing; earlier audits and the 2026-11-15 execution report stay as written]
 
-## Status: **PARTIAL - the 90-offer repair, the 14 base_price cases, the replay and the fail-closed importer fix are done and verified; CORE is NOT declared closed.**
+## Update 2026-11-16 18:06 IL (17:06 CET): owner approved the guarded restart (op `core_display_fix_activation`: pre_restart.sh, fresh SAFE preflight, `guarded_restart.sh`, post_restart.sh rc=0). Backend healthy; the live `/api/v1/parts/<id>/suppliers` for offer A-B-S~38203 now returns `"38203"` (consultant saw `A-B-S~38203` before). Open item (1) below is CLOSED; items (2)/(3) remain.
+
+## Status at the time of the first write-up: **PARTIAL - the 90-offer repair, the 14 base_price cases, the replay and the fail-closed importer fix are done and verified; CORE is NOT declared closed.**
 Open items (exact): (1) the purchase-order / customer-payload bare-article fix (commit 6c36dfe) is built, tested and on disk but **not running**: uvicorn has been up since 2026-11-14 07:51 IL and only a guarded restart activates it (that restart needs its own owner approval; none was requested or used); (2) 1,043 known wrong offers (1,007 NOT_READY + 36 UNDO) are untouched by decision; (3) the base_price legacy drift is catalogue-wide and is not fixed.
 
 ## 1. Baseline (verified live this round, times Israel)
@@ -38,3 +40,8 @@ Inputs hash-verified (6,968/6,968 archived payload+log files identical to the li
 
 ## 6. Tests
 Sandbox repair suite 47/47 (twice) on tool dc224cba incl. the rebase value path, --only-part and the legacy guard; cpie identity + display tests 9 passed (offer_key same_part cases updated); related suites (supplier lifecycle, price policy, customer price boundary, offer policy with the pinned policy, part identity) 232 passed, 10 skipped; importer end-to-end reproduction old vs new in the sandbox. The consultant's two review rounds: see consultant_independent_review.md.
+
+## Final consultant check after the restart (read 18:08-18:19 IL, read-only)
+Restart confirmed (PID 1 start 18:06:35 IL, restart not recreate, healthy, 0 Tracebacks); 4 qualified offers return the bare article from /api/v1/parts/<id>/suppliers and no `~` in /api/v1/parts/<id> (8 x HTTP 200); importer normal after the restart (1,944 offer rows from 1,962 scanned); 90 repaired: 56 equal `after`, 34 rewritten by the owner brand (3 re-harvests by FEBI BILSTEIN changed the price, each with its own importer history row), 3 preserved intact; 90 repair history rows; 0 parts with >1 Car-Parts.ie offer. `runtime_identity_check.py` only watches agents.owner_console, so supplier_ordering is loaded-by-inference (disk == git HEAD, mtime before process start); purchase-order text with a bare article is covered by sandbox tests, not observed in production (no purchase order exists).
+## Final status
+**In-scope acceptance criteria: PASS** (90-offer repair, 3 preserved, 3,858 moves, customer references, replay rerun, 14 base_price cases, importer fail-closed for resolved and unresolved holders, display/PO fix live, independent read-only consultant review). **Identity problem as a whole: NOT closed** - open customer-facing data defects, documented, outside this mission's scope or authorization: 1,043 wrong offers (36 UNDO + 1,007 NOT_READY), 5 contaminated unresolved-holder offers (owner unknown) and ~6,361 frozen unresolved-holder offers, ~1,270 brand/article pairs with a part but no offer, catalogue-wide base_price drift. Evidence durability: payload archive is in the state volume (payloads_and_import_logs_20261116.tar.gz); the live /tmp copies survive a restart, not a recreate.
