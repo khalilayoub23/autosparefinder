@@ -61,9 +61,39 @@ def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str
     return article if bare_owner_brand == brand else f"{_tok(brand)}{SEP}{article}"
 
 
+PART_SEP = "@"  # part-scoped offer key: `<MAKE5>@<offer key>` (one article, one brand, one offer per make-specific part row)
+
+
+async def choose_offer_key(article: str, brand: Optional[str], make: str, part_id: str, fetch_holder, url: Optional[str] = None) -> Optional[str]:
+    """Offer key for THIS part row, or None = skip the write (fail closed).
+    fetch_holder(key) -> None | {"name","supplier_url","part_id"}: who holds that supplier_sku today.
+    2026-11-17 (bare-key identity): parts_catalog keeps one row per vehicle make for ONE physical article, but
+    (supplier, sku) is unique, so the first make's part kept the offer and every later make's row of the same
+    brand+article had none (371/806 Renault items). Same brand + same article held by ANOTHER part row is therefore
+    given its own part-scoped key; a holder of a different or unresolved brand is never written (fail closed)."""
+    if not brand:
+        return None
+    h0 = await fetch_holder(article)
+    k1 = offer_key(article, brand, brand_of(h0["name"], article) if h0 else None, h0 is not None,
+                   bool(h0 and url and (h0.get("supplier_url") or "").strip().lower() == url.strip().lower()), same_part=bool(h0 and str(h0["part_id"]) == str(part_id)))
+    if k1 is None:
+        return None
+    h1 = h0 if k1 == article else await fetch_holder(k1)
+    if h1 is None or str(h1["part_id"]) == str(part_id):
+        return k1
+    if brand_of(h1["name"], article) != brand:
+        return None  # key held by a part of another/unresolved brand
+    k2 = f"{make}{PART_SEP}{k1}"
+    h2 = await fetch_holder(k2)
+    return k2 if (h2 is None or str(h2["part_id"]) == str(part_id)) else None
+
+
 def article_of(key: Optional[str]) -> Tuple[Optional[str], str]:
-    """(brand token or None, bare article). A bare article containing '~' is not produced by car-parts.ie."""
+    """(brand token or None, bare article). A bare article containing '~' is not produced by car-parts.ie.
+    A part-scope prefix `<MAKE5>@` is stripped first (internal only: never shown, never used to order)."""
     k = key or ""
+    if PART_SEP in k:
+        k = k.split(PART_SEP, 1)[1]
     if SEP in k:
         b, a = k.split(SEP, 1)
         return b, a

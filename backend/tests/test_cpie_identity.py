@@ -54,3 +54,43 @@ def test_same_listing_url_alone_never_proves_identity_when_holder_brand_unresolv
     # same listing page but the holder brand is RESOLVED and different: never overwrite the holder (59008Set regression)
     assert ci.offer_key("1", "FAE", "MAPCO", bare_exists=True, same_url=True) == "FAE~1"
     assert ci.offer_key("1", "MAPCO", "MAPCO", bare_exists=True, same_url=True) == "1"
+
+
+# ---- 2026-11-17 bare-key identity: one offer per make-specific part row, never another part's / brand's ----
+import asyncio
+
+
+def _choose(holders, art, brand, make, pid, url=None):
+    async def f(k):
+        return holders.get(k)
+    return asyncio.run(ci.choose_offer_key(art, brand, make, pid, f, url))
+
+
+def test_same_brand_other_make_part_gets_its_own_scoped_offer():
+    holders = {"7O0005": {"name": "RIDEX 7O0005 oil filter", "supplier_url": "u", "part_id": "P-OPEL"}}
+    k = _choose(holders, "7O0005", "RIDEX", "BYD", "P-BYD")
+    assert k == "BYD@7O0005" and ci.article_of(k) == (None, "7O0005")   # orders still use the bare article
+
+
+def test_own_part_and_first_writer_keep_bare_key_and_rerun_is_idempotent():
+    assert _choose({}, "1", "RIDEX", "OPEL", "P1") == "1"
+    h = {"1": {"name": "RIDEX 1 filter", "supplier_url": "u", "part_id": "P1"}}
+    assert _choose(h, "1", "RIDEX", "OPEL", "P1") == "1"
+    h["BYD@1"] = {"name": "RIDEX 1 filter", "supplier_url": "u", "part_id": "P2"}
+    assert _choose(h, "1", "RIDEX", "BYD", "P2") == "BYD@1"        # re-harvest lands on the same scoped row
+
+
+def test_scoped_key_held_by_a_third_part_fails_closed():
+    h = {"1": {"name": "RIDEX 1 f", "supplier_url": "u", "part_id": "PA"}, "BYD@1": {"name": "RIDEX 1 f", "supplier_url": "u", "part_id": "PX"}}
+    assert _choose(h, "1", "RIDEX", "BYD", "PB") is None
+
+
+def test_keyed_holder_of_other_or_unresolved_brand_is_never_written():
+    h = {"1": {"name": "MAPCO 1 f", "supplier_url": "u", "part_id": "PA"},
+         "FAE~1": {"name": "Coil spring 1", "supplier_url": "u", "part_id": "PB"}}      # holder brand unresolved
+    assert _choose(h, "1", "FAE", "BMW", "PC") is None
+    assert _choose({}, "1", None, "BMW", "PC") is None
+
+
+def test_article_of_strips_scope_then_brand():
+    assert ci.article_of("BYD@FAE~62505") == ("FAE", "62505")
