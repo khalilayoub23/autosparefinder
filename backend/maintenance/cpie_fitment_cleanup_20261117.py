@@ -54,15 +54,24 @@ async def plan(rows_file, out):
     print("parts", len(compat_plan), "compat elements to remove", sum(v["removed"] for v in compat_plan.values()))
 
 
-async def apply(out, exp_manifest, exp_backup):
+async def apply(out, exp_manifest, exp_backup, exp_compat=None, exp_rows=None, dry_run=False):
     out = Path(out)
     assert sha((out / "manifest.json").read_bytes()) == exp_manifest, "manifest hash mismatch"
     assert sha((out / "backup_pvf.json").read_bytes()) == exp_backup, "backup hash mismatch"
+    if exp_compat:
+        assert sha((out / "backup_compat.json").read_bytes()) == exp_compat, "compat backup hash mismatch"
     pvf = json.loads((out / "backup_pvf.json").read_text()); compat = json.loads((out / "backup_compat.json").read_text())
+    man = json.loads((out / "manifest.json").read_text())
+    # the DELETE id set comes from the backup: it must be exactly the manifest's id set, every action a DELETE
+    assert {m["fitment_id"] for m in man} == set(pvf) and len(man) == len(pvf), "manifest and backup id sets differ"
+    assert all(m["action"] == "DELETE_FITMENT_ROW" for m in man), "unexpected manifest action"
+    if exp_rows is not None:
+        assert len(pvf) == exp_rows, f"expected {exp_rows} rows, backup has {len(pvf)}"
     c = await asyncpg.connect(DB)
     async with c.transaction():
-        live = {str(r["id"]): r for r in await c.fetch("SELECT id, part_id::text pid, manufacturer, model FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))}
-        assert len(live) == len(pvf) and all(live[i]["pid"] == pvf[i]["part_id"] and live[i]["model"] == pvf[i]["model"] for i in pvf), "rows changed since the backup"
+        live = {str(r["id"]): {k: (str(v) if v is not None else None) for k, v in dict(r).items()}
+                for r in await c.fetch("SELECT * FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))}
+        assert live == pvf, "rows changed since the backup (full-row comparison)"
         n_c = 0
         for pid, v in compat.items():
             if v["removed"]:
@@ -72,6 +81,8 @@ async def apply(out, exp_manifest, exp_backup):
                 n_c += 1
         tag = await c.execute("DELETE FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))
         assert tag == f"DELETE {len(pvf)}", tag
+        if dry_run:
+            raise RuntimeError(f"DRY-RUN ok: would delete {len(pvf)} rows, update {n_c} parts; transaction rolled back")
     left = await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))
     print("APPLIED: pvf deleted", len(pvf), ", parts compat updated", n_c, "remaining of manifest:", left)
 
@@ -81,8 +92,9 @@ if __name__ == "__main__":
     ap.add_argument("--plan", metavar="ROWS_JSON"); ap.add_argument("--apply", action="store_true")
     ap.add_argument("--out", default="/app/state/cpie_fitment_cleanup_20261117")
     ap.add_argument("--expect-manifest-sha256"); ap.add_argument("--expect-backup-sha256")
+    ap.add_argument("--expect-compat-sha256"); ap.add_argument("--expect-rows", type=int); ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if a.plan:
         asyncio.run(plan(a.plan, a.out))
     elif a.apply:
-        asyncio.run(apply(a.out, a.expect_manifest_sha256, a.expect_backup_sha256))
+        asyncio.run(apply(a.out, a.expect_manifest_sha256, a.expect_backup_sha256, a.expect_compat_sha256, a.expect_rows, a.dry_run))
