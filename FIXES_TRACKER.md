@@ -10362,5 +10362,5 @@ Commits (local, unpushed): 8da31d9 (scoped offer key), 05c4e85 (consultant fixes
 - P1 stays OPEN until: restart done, API re-checked (`supplier_sku` bare), Consultant verification of the repair evidence.
 
 ## 2026-11-17 — P4: 89 preserved (G) offers re-checked read-only (p2/g89_analysis.py, p2/g89_result.json)
-- 68 unchanged since the snapshot. 21 changed (importer 11-15/16): each new price equals the offer's own OWNER brand's harvested payload price (EUR x 3.48) - 20 with the brand resolved in the payload title, 1 (article 21001, MPM) whose payload title brand is unresolved -> kept as UNVERIFIED-leaning. 0 changed to a foreign-brand price. Verdict: legitimate newer owner-brand updates, NOT reversed; no write.
+- 68 unchanged since the snapshot. 21 changed (importer 11-15/16): each new price equals the offer's own OWNER brand's harvested payload price (EUR x 3.48), each with at least one payload row whose title brand resolves to that owner brand (article 21001/MPM also has extra brand-unresolved rows at the same price). 0 changed to a foreign-brand price. Verdict: legitimate newer owner-brand updates, NOT reversed; no write.
 - The 116 unrepaired offers (115 UNVERIFIED, 1 VERIFIED) unchanged; owner-brand price retrieval not repeated this session.
