@@ -197,3 +197,13 @@ async def _isolate_shared_db_pools():
     yield
     for eng in _shared_engines():          # engines first imported during the test are included
         await eng.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _reset_vat_basis_registry():
+    """base_price_rule.ensure_vat_registry loads the supplier VAT-basis registry into the PROCESS when none is loaded (subprocess
+    writers); inside a test session that would leak into every later test, so each test starts - and ends - unloaded."""
+    import price_policy
+    price_policy.load_vat_bases(None)
+    yield
+    price_policy.load_vat_bases(None)

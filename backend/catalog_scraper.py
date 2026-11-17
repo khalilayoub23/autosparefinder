@@ -1370,7 +1370,7 @@ async def resolve_aftermarket_brand(
 
 async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer: str,
                           category: str, part_type: str = "aftermarket",
-                          base_price: float = 0.0, description: str = "",
+                          description: str = "",
                           compatible_vehicles: list = None,
                           aftermarket_brand_id: Optional[uuid.UUID] = None,
                           aftermarket_tier: Optional[str] = None,
@@ -1380,6 +1380,10 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
     """
     Insert or update a parts_catalog row.
     Returns (part_id, was_created).
+
+    base_price is NOT written here (2026-11-17): this function used to store the source's raw USD price in it (a second,
+    unit-wrong writer; an UPDATE even overwrote the rule's value). It is owned by base_price_rule (the price policy's net of
+    the part's offer / catalog estimate) - a new part starts at 0.0 and callers apply the rule once its offer exists.
     """
     from variant_identity import catalog_part_type
     part_type = catalog_part_type(part_type)       # ONE vocabulary: "OEM Original" -> oem; unknown label -> NULL, never stored raw
@@ -1392,7 +1396,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
             text("""
                 UPDATE parts_catalog SET
                     name = :name, manufacturer = :manufacturer, category = :category,
-                    part_type = COALESCE(:part_type, part_type), base_price = :base_price,
+                    part_type = COALESCE(:part_type, part_type),
                     description = :description,
                     part_condition = CASE
                         WHEN :is_oem_source THEN 'OEM'
@@ -1420,7 +1424,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
                 WHERE sku = :sku
             """),
             {"name": name, "manufacturer": manufacturer, "category": category,
-             "part_type": part_type, "base_price": base_price,
+             "part_type": part_type,
              "description": description, "sku": sku,
              "is_oem_source": is_oem_source,
              "apply_aftermarket": apply_aftermarket,
@@ -1432,7 +1436,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
         asyncio.create_task(_meili_sync_part(
             str(existing[0]),
             {"sku": sku, "name": name, "manufacturer": manufacturer,
-             "category": category, "part_type": part_type, "base_price": base_price},
+             "category": category, "part_type": part_type},
         ))
         try:
             await db.execute(
@@ -1467,7 +1471,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
                  oem_number, needs_oem_lookup,
                  is_active, created_at, updated_at)
             VALUES
-                (:id, :sku, :name, :manufacturer, :category, :part_type, :base_price,
+                (:id, :sku, :name, :manufacturer, :category, :part_type, 0.0,
                  :description, '{}', :compat,
                  :part_condition, :aftermarket_tier, CAST(:aftermarket_brand_id AS uuid),
                  :oem_number, :needs_oem_lookup,
@@ -1476,7 +1480,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
         {
             "id": part_id, "sku": sku, "name": name,
             "manufacturer": manufacturer, "category": category,
-            "part_type": part_type, "base_price": base_price,
+            "part_type": part_type,
             "description": description,
             "compat": json.dumps(compatible_vehicles or []),
             "part_condition": insert_part_condition,
@@ -1490,7 +1494,7 @@ async def db_upsert_part(db: AsyncSession, *, sku: str, name: str, manufacturer:
     asyncio.create_task(_meili_sync_part(
         part_id,
         {"sku": sku, "name": name, "manufacturer": manufacturer,
-         "category": category, "part_type": part_type, "base_price": base_price,
+         "category": category, "part_type": part_type,
          "is_active": True},
     ))
     try:
@@ -3615,7 +3619,6 @@ async def run_brand_discovery(
                                 manufacturer=part["manufacturer"],
                                 category=part["category"],
                                 part_type=part["part_type"],
-                                base_price=part["price_usd"],
                                 description=_specs_json,
                                 aftermarket_brand_id=resolved_aftermarket_brand_id,
                                 aftermarket_tier=resolved_aftermarket_tier,
@@ -3696,6 +3699,13 @@ async def run_brand_discovery(
                                     except Exception:
                                         pass
                                 await db.commit()
+                                try:   # base_price = ONE ownership rule (price policy net of the new offer), never the raw source price
+                                    from db_update_agent import apply_base_price_rule
+                                    await apply_base_price_rule(db, scope="all", part_ids=[part_id])
+                                    await db.commit()
+                                except Exception as _bp_exc:
+                                    await db.rollback()
+                                    print(f"[catalog_scraper] base_price rule FAILED for {part_id}: {_bp_exc}")
                                 b_report["inserted"] += 1
                             elif not created:
                                 b_report["skipped_dup"] += 1
@@ -4039,7 +4049,6 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                         manufacturer=manufacturer,
                                         category=category_slug,
                                         part_type=part.get("part_type") or "aftermarket",
-                                        base_price=float(part.get("price_usd") or 0),
                                         description=(
                                             f"{category_he} discovered for {manufacturer}. "
                                             f"Query: {query}. Source: multisource (febest/rockauto/ebay)."

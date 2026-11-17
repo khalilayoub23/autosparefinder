@@ -14,7 +14,7 @@ Process:  --build      read-only keyset scan -> sha256-pinned manifest (jsonl.gz
 Data Imported/Modified: parts_catalog.base_price / updated_at of manifest parts ONLY. No offer, no price_ils, no visibility.
 Data Sources: parts_catalog, supplier_parts, suppliers, system_settings (rate).
 Missing Data Delegation: parts with no basis (no_basis / other_class_only) are never written, only counted.
-Last Updated: 2026-11-16
+Last Updated: 2026-11-17 (evidence_class: only REPAIRABLE rows are applied; registry loaded in _connect)
 """
 from __future__ import annotations
 
@@ -35,6 +35,20 @@ STOP_FILE = STATE / "STOP"
 BUSY_JOBS = ("run_all_tasks", "night_pipeline")
 
 
+STALE_BEFORE = "2026-10-01"   # a basis offer last touched before this is a STALE source (the ~224K old-key offers): reported, never repaired
+
+
+def evidence_class(src, offer_updated_at, stale_before=STALE_BEFORE):
+    """Pure. How well established is the target? REPAIRABLE = the rule's basis is a fresh, customer-visible offer (the same offer
+    the customer price comes from); STALE_SOURCE = that offer is older than `stale_before`; ESTIMATE_AMBIGUOUS = no visible offer,
+    the target rests on importer/max/online inputs that legacy rows derived from a different VAT basis - needs evidence first."""
+    if src == "offer":
+        if offer_updated_at is None or str(offer_updated_at)[:10] < stale_before:
+            return "STALE_SOURCE"
+        return "REPAIRABLE"
+    return "ESTIMATE_AMBIGUOUS"
+
+
 def classify(row, rate):
     """Pure. -> (cls, target, source). cls: correct | divergent | no_target."""
     tgt, src = bpr.target(row, rate)
@@ -49,6 +63,7 @@ async def _connect(write: bool):
     if not write:
         await c.execute("SET default_transaction_read_only=on")
     await c.execute("SET statement_timeout='120s'")
+    await bpr.ensure_vat_registry(conn=c)   # same supplier VAT basis as uvicorn (a bare subprocess starts with none)
     return c
 
 
@@ -74,7 +89,11 @@ async def build(a):
                 counts[k] = counts.get(k, 0) + 1
                 scanned += 1
                 if cls == "divergent":
-                    rows.append({"part_id": row.id, "current": None if row.base_price is None else str(row.base_price), "target": f"{tgt:.2f}",
+                    ec = evidence_class(src, getattr(row, "offer_updated_at", None), getattr(a, "stale_before", STALE_BEFORE))
+                    counts["class:" + ec] = counts.get("class:" + ec, 0) + 1
+                    rows.append({"evidence_class": ec, "offer_id": getattr(row, "offer_id", None),
+                                 "offer_updated_at": None if getattr(row, "offer_updated_at", None) is None else str(row.offer_updated_at),
+                                 "part_id": row.id, "current": None if row.base_price is None else str(row.base_price), "target": f"{tgt:.2f}",
                                  "source": src, "offer_ils": None if row.offer_ils is None else str(row.offer_ils), "offer_supplier": row.offer_supplier,
                                  "importer_price_ils": None if row.importer_price_ils is None else str(row.importer_price_ils),
                                  "online_price_ils": None if row.online_price_ils is None else str(row.online_price_ils)})
@@ -100,9 +119,12 @@ def _load_manifest(path, expect_sha, expect_count):
     raw = open(path, "rb").read()
     if hashlib.sha256(raw).hexdigest() != expect_sha:
         raise SystemExit("REFUSED: manifest sha256 mismatch")
-    rows = [json.loads(l) for l in gzip.open(path, "rt")]
+    allrows = [json.loads(l) for l in gzip.open(path, "rt")]
+    if any("evidence_class" not in r for r in allrows):
+        raise SystemExit("REFUSED: manifest has no evidence_class (rebuild with the current tool)")
+    rows = [r for r in allrows if r["evidence_class"] == "REPAIRABLE"]   # only established rows are ever written
     if expect_count is not None and len(rows) != expect_count:
-        raise SystemExit(f"REFUSED: manifest has {len(rows)} rows, expected {expect_count}")
+        raise SystemExit(f"REFUSED: manifest has {len(rows)} REPAIRABLE rows, expected {expect_count}")
     return rows
 
 
@@ -217,7 +239,7 @@ def main():
     ap.add_argument("--out"); ap.add_argument("--manifest"); ap.add_argument("--expect-sha256"); ap.add_argument("--expect-count", type=int)
     ap.add_argument("--approval-ref"); ap.add_argument("--journal")
     ap.add_argument("--batch", type=int, default=500); ap.add_argument("--max-batches", type=int, default=0)
-    ap.add_argument("--limit", type=int, default=0); ap.add_argument("--sleep", type=float, default=0.5)
+    ap.add_argument("--stale-before", default=STALE_BEFORE); ap.add_argument("--limit", type=int, default=0); ap.add_argument("--sleep", type=float, default=0.5)
     a = ap.parse_args()
     if a.mode == "apply" and not (a.manifest and a.expect_sha256):
         raise SystemExit("REFUSED: --manifest and --expect-sha256 required")

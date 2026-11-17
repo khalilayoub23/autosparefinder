@@ -1302,6 +1302,8 @@ async def apply_base_price_rule(db: AsyncSession, *, scope: str = "all", part_id
     are skipped (SKIP LOCKED) and counted. Does not commit. Returns counters + last_id (None = end of catalogue)."""
     if scope not in BASE_PRICE_SCOPES:
         raise ValueError(f"scope must be one of {BASE_PRICE_SCOPES}")
+    from base_price_rule import ensure_vat_registry
+    await ensure_vat_registry(db=db)   # a subprocess caller (maintenance script) must price from the same VAT basis as uvicorn
     rate = usd_to_ils if usd_to_ils is not None else await get_usd_to_ils_rate(db)
     only = part_ids is not None
     params: Dict[str, Any] = {"rate": rate}

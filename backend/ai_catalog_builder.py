@@ -187,7 +187,14 @@ async def ask_gpt4o(brand: str, prompt: str) -> list:
 
 async def insert_parts(conn, supplier_id, brand: str, parts: list,
                        existing_skus: set, dry_run: bool, now: datetime):
-    """Insert parts into parts_catalog + supplier_parts. Returns (cat_ins, sp_ins, errors)."""
+    """Insert parts into parts_catalog + supplier_parts. Returns (cat_ins, sp_ins, errors).
+
+    HARD-DISABLED for writes (2026-11-17): the price here is an LLM's "realistic Israeli price" (default 100) and was stored as
+    parts_catalog.base_price AND as a supplier offer - a fabricated price, the same defect as the removed populate_supplier_parts
+    (#136). An offer is only ever a supplier's real commercial offer. Only dry_run (no DB write) remains."""
+    if not dry_run:
+        raise RuntimeError("ai_catalog_builder.insert_parts is disabled: it fabricates prices (base_price/supplier_parts); "
+                           "see FIXES_TRACKER 2026-11-17 base_price writer inventory")
     cat_ins = sp_ins = errors = 0
     for i, part in enumerate(parts):
         try:

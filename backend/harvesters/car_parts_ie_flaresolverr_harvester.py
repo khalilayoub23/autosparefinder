@@ -90,6 +90,17 @@ def _db_conn():
     import psycopg2
     return psycopg2.connect(_DB_URL)
 
+_RELEASED_AT: dict = {}            # qid -> time.time() of a failed-collection release (this process only)
+RELEASE_COOLDOWN_S = int(os.environ.get("HARVESTER_RELEASE_COOLDOWN_S", "1800"))
+
+
+def _cooling_ids() -> list:
+    now = time.time()
+    for k in [k for k, t in _RELEASED_AT.items() if now - t >= RELEASE_COOLDOWN_S]:
+        _RELEASED_AT.pop(k, None)
+    return list(_RELEASED_AT)
+
+
 def claim_next_model() -> "tuple[str,str] | None":
     """Atomically claim the highest-priority pending model (FOR UPDATE SKIP
     LOCKED so parallel workers never grab the same one). Returns (id, slug)."""
@@ -99,9 +110,10 @@ def claim_next_model() -> "tuple[str,str] | None":
             cur.execute("""
                 SELECT id, model_slug FROM harvest_queue
                 WHERE status = 'pending' AND model_slug IS NOT NULL
+                  AND id <> ALL(%s::uuid[])
                 ORDER BY priority_rank ASC NULLS LAST
                 LIMIT 1 FOR UPDATE SKIP LOCKED
-            """)
+            """, (_cooling_ids(),))
             row = cur.fetchone()
             if not row:
                 conn.commit(); conn.close(); return None
@@ -129,6 +141,24 @@ def complete_model(qid: str, parts_found: int) -> None:
         conn.close()
     except Exception as e:
         log.error(f"complete_model failed: {e}")
+
+class HarvestFetchFailed(Exception):
+    """Every page of a model failed at the transport/Cloudflare level (403/503/429, timeout, no cookie): the model was
+    NOT harvested and must be retried - never recorded as an 'empty' (nonexistent) model."""
+
+
+def release_model(qid: str) -> None:
+    """Return a claimed model to 'pending' (a failed collection is not an empty result). The model is skipped by THIS process's
+    claims for RELEASE_COOLDOWN_S so one always-failing model cannot be re-claimed first every cycle and starve the queue."""
+    _RELEASED_AT[qid] = time.time()
+    try:
+        conn = _db_conn(); conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("UPDATE harvest_queue SET status='pending', updated_at=NOW() WHERE id=%s AND status='in_progress'", (qid,))
+        conn.close()
+    except Exception as e:
+        log.error(f"release_model failed: {e}")
+
 
 def _queue_pending_count() -> int:
     try:
@@ -544,9 +574,10 @@ def _save_clearance_cache() -> None:
     try:
         with _CLEARANCE_LOCK:
             blob = {"cookie": _CLEARANCE["cookie"], "ua": _CLEARANCE["ua"], "ts": _CLEARANCE["ts"]}
-        tmp = _CLEARANCE_CACHE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(blob))
-        os.chmod(tmp, 0o600)
+        tmp = _CLEARANCE_CACHE_FILE.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")   # unique per writer
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)                        # 0600 from creation
+        with os.fdopen(fd, "w") as fh:
+            fh.write(json.dumps(blob))
         os.replace(tmp, _CLEARANCE_CACHE_FILE)
     except Exception as e:  # cache is an optimisation, never a failure
         log.debug(f"clearance cache not saved: {e}")
@@ -670,18 +701,49 @@ def ensure_clearance(force: bool = False) -> bool:
     # for ~7 min, stalling a 30-page model for 3+ hours (exceeds the 45-min reclaim threshold).
     if not force and _CLEARANCE_FAILED_TS and (time.time() - _CLEARANCE_FAILED_TS < CLEARANCE_FAIL_BACKOFF_S):
         return False
-    for _ in range(3):  # reduced from 6 — failure is faster with back-off in place
-        if _solve_clearance():
-            _CLEARANCE_FAILED_TS = 0.0  # clear failure state on success
-            _FS_CONSECUTIVE_FAILS = 0
-            _write_fs_health(0)
+    # One mint at a time ACROSS PROCESSES (harvester + maintenance/cpie_product_page_harvest.py): the loser waits for the
+    # winner's cookie and adopts it from the shared cache instead of paying its own FlareSolverr solve.
+    import fcntl
+    lockf = None
+    try:
+        lockf = open(_CLEARANCE_CACHE_FILE.with_suffix(".lock"), "a")
+        deadline = time.time() + 3 * CLEARANCE_MAX_TIMEOUT_S + 30
+        while True:
+            try:
+                fcntl.flock(lockf, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+            except OSError:
+                if time.time() > deadline:
+                    break                       # never wait forever: fall through and solve anyway
+                time.sleep(2)
+        if _load_clearance_cache(reject_cookie=_failed_cookie):      # the lock holder just minted one
+            _CLEARANCE_FAILED_TS = 0.0
             return True
-        time.sleep(6)
+        for _ in range(3):  # reduced from 6 — failure is faster with back-off in place
+            if _solve_clearance():
+                _CLEARANCE_FAILED_TS = 0.0  # clear failure state on success
+                _FS_CONSECUTIVE_FAILS = 0
+                _write_fs_health(0)
+                return True
+            time.sleep(6)
+    finally:
+        if lockf is not None:
+            try:
+                lockf.close()                   # closing releases the flock
+            except Exception:
+                pass
     log.error("could not mint cf_clearance cookie after retries")
     _CLEARANCE_FAILED_TS = time.time()  # record failure so next call skips the 3×70s attempt
     _FS_CONSECUTIVE_FAILS += 1
     _write_fs_health(_FS_CONSECUTIVE_FAILS)
     return False
+
+
+def maybe_mint(pending: int) -> bool:
+    """Ensure a cf_clearance cookie ONLY when there is queued work (an idle harvester must never pay a solve).
+    Returns True when no mint was needed or a valid cookie is held."""
+    if pending <= 0:
+        return True
+    return ensure_clearance()
 
 
 def _fs_get_via_session(url: str, session_id: str, timeout_s: int) -> str:
@@ -714,6 +776,14 @@ def _fs_get_via_session(url: str, session_id: str, timeout_s: int) -> str:
 
 
 _FETCH_FAIL_COUNTS: dict = {}
+_FETCH_TL = threading.local()   # per worker thread: outcome counts of the model being harvested
+
+
+def _fetch_outcome(kind: str) -> None:
+    """kind: 'ok' (page or definitive 404/410 answer) or 'blocked' (403/503/429, timeout, no cookie, transport error)."""
+    c = getattr(_FETCH_TL, "c", None)
+    if c is not None:
+        c[kind] = c.get(kind, 0) + 1
 
 
 def _log_fetch_failure(url: str, why: str) -> None:
@@ -741,7 +811,9 @@ def http_get(url: str, timeout_s: int = 40) -> str:
                 session_id = _CLEARANCE.get("session_id")
             if not session_id:
                 return ""
-        return _fs_get_via_session(url, session_id, timeout_s)
+        _body = _fs_get_via_session(url, session_id, timeout_s)
+        _fetch_outcome("ok" if _body else "blocked")   # session mode cannot tell 404 from a block: an empty body counts as blocked
+        return _body
 
     # ── Cookie mode: plain urllib + cf_clearance ──────────────────────────────────
     for attempt in range(2):
@@ -752,6 +824,7 @@ def http_get(url: str, timeout_s: int = 40) -> str:
             with _CLEARANCE_LOCK:
                 ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
             if not ck:
+                _fetch_outcome("blocked")
                 return ""
         try:
             req = urllib.request.Request(url, headers={
@@ -760,17 +833,22 @@ def http_get(url: str, timeout_s: int = 40) -> str:
                 "Accept": "text/html,application/xhtml+xml",
                 "Referer": BASE + "/"})
             with urllib.request.urlopen(req, timeout=timeout_s) as r:
-                return r.read().decode("utf-8", "replace")
+                body = r.read().decode("utf-8", "replace")
+            _fetch_outcome("ok")
+            return body
         except urllib.error.HTTPError as e:
             if e.code in (403, 503, 429) and attempt == 0:   # cookie expired / challenged
                 ensure_clearance(force=True)
                 continue
             _log_fetch_failure(url, f"HTTP {e.code}")
+            _fetch_outcome("ok" if e.code in (404, 410) else "blocked")   # 404/410 = the site's definitive "no such page"
             return ""
         except Exception as e:
             _log_fetch_failure(url, type(e).__name__)
+            _fetch_outcome("blocked")
             return ""
     _log_fetch_failure(url, "HTTP 403/503/429 after clearance refresh")
+    _fetch_outcome("blocked")
     return ""
 
 
@@ -877,6 +955,7 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     brand, model = vehicle.split("/", 1)
     log.info(f"▶ {vehicle}")
     _note_progress(vehicle)
+    _FETCH_TL.c = {"ok": 0, "blocked": 0}
 
     # Phase 1: Get additional slugs from model page
     model_html = fs_get(f"{BASE}/car-brands/{brand}/{model}-parts", session_id)
@@ -924,6 +1003,14 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
         if post_relay(vehicle, batch):
             sent += len(batch)
 
+    _c = _FETCH_TL.c
+    if sent == 0 and (_c["blocked"] > 0 or batch):
+        # nothing was delivered AND something failed (a page blocked by Cloudflare/transport, or collected parts the relay did
+        # not accept): NOT an empty model - the worker releases it for a retry
+        raise HarvestFetchFailed(f"{vehicle}: nothing delivered; {_c['blocked']} blocked fetches, {len(batch)} undelivered parts, {_c['ok']} ok")
+    if _c["blocked"]:
+        log.warning(f"  {vehicle}: {_c['blocked']} page fetch(es) failed, {_c['ok']} ok - partial collection")
+
     post_relay(vehicle, [], done=True)
     log.info(f"✓ {vehicle}: {sent} parts")
     return sent
@@ -954,9 +1041,14 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
                 state["runs"] = state["runs"][-200:]
                 save_state(state)
             log.info(f"Worker {worker_id}: {vehicle} → {n} parts")
+        except HarvestFetchFailed as e:
+            log.error(f"Worker {worker_id}: collection FAILED (not empty) - {e}; model returned to pending")
+            release_model(qid)
+            break   # the cycle rests; the next cycle re-checks the clearance before claiming again
         except Exception as e:
             log.error(f"Worker {worker_id} error on {vehicle}: {e}")
-            complete_model(qid, 0)  # mark empty so we don't wedge on it
+            release_model(qid)   # an error is not an empty result; reclaim/attempts bound the retries
+            break
         done += 1
         _note_progress()
         time.sleep(INTER_MODEL)
@@ -986,7 +1078,9 @@ def main():
     except Exception as e:
         log.warning(f"session cleanup skipped: {e}")
 
-    if not ensure_clearance(force=True):
+    # Mint at startup ONLY when there is queued work (adopts a fresh shared-cache cookie first); the cycle below
+    # re-checks before every claim, so an idle harvester never pays a FlareSolverr solve.
+    if not maybe_mint(_queue_pending_count()):
         log.error("FlareSolverr could not mint an initial cf_clearance cookie — retrying in-loop")
 
     # Reclaim any models left 'in_progress' by a previous run killed mid-model,
@@ -1033,7 +1127,7 @@ def main():
         # paying FlareSolverr Chrome solves (2 of 3 time out) for nothing and competed with every other solver.
         if pending > 0:
             try:
-                ensure_clearance()
+                maybe_mint(pending)
             except Exception as e:
                 log.error(f"clearance refresh failed (FlareSolverr may be down): {e}")
 

@@ -21,6 +21,16 @@ import db_cleanup_agent as cleanup
 import db_update_agent as updater
 from BACKEND_DATABASE_MODELS import engine
 from catalog_population import seed_population  # noqa: E402  (tests/ on sys.path via conftest)
+import price_policy as _pp
+
+
+@pytest.fixture(autouse=True)
+def _fresh_vat_registry():
+    """apply_base_price_rule now loads the supplier VAT-basis registry itself when the process has none (2026-11-17); a
+    registry loaded by an earlier test would not know this test's freshly created suppliers, so every test starts unloaded."""
+    _pp.load_vat_bases(None)
+    yield
+    _pp.load_vat_bases(None)
 import isolated_db_guard  # noqa: E402
 
 
@@ -64,6 +74,7 @@ async def _offer(db, pid, cost, klass, country="IL"):
     sup = (await db.execute(sa.text("""INSERT INTO suppliers (id, name, country, is_active, vat_price_basis)
         VALUES (gen_random_uuid(), :n, :c, TRUE, :b) RETURNING id::text"""),
         {"n": f"BPT supplier {uuid.uuid4().hex[:10]}", "c": country, "b": "exclusive" if country == "IL" else None})).scalar_one()
+    _pp.load_vat_bases(None)   # a new supplier exists: the next rule call reloads the registry (as the uvicorn refresh loop would)
     await db.execute(sa.text("""INSERT INTO supplier_parts (id, supplier_id, part_id, supplier_sku, price_ils, price_usd, is_available, availability, part_type, supplier_url, updated_at, created_at)
         VALUES (gen_random_uuid(), CAST(:s AS uuid), CAST(:p AS uuid), :sku, :c, :u, TRUE, 'in_stock', :t, 'https://fixture.invalid/bpt', NOW(), NOW())"""),
         {"s": sup, "p": pid, "sku": f"BPT-{uuid.uuid4().hex[:10]}", "c": cost, "u": cost / 3.0, "t": klass})

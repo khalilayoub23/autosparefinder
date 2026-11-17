@@ -54,3 +54,11 @@ def test_clearance_cache_rejects_stale_failed_and_cookieless(tmp_path):
     write(); assert h._load_clearance_cache(reject_cookie="cf_clearance=abc; x=1") is False          # the cookie that just 403'd
     write(); assert h._load_clearance_cache() is True and h._CLEARANCE["ua"] == "UA"                  # fresh -> adopted
     h._CLEARANCE.update(cookie="", ts=0.0)
+
+
+def test_derived_product_url_is_a_fetch_hint_only():
+    assert ph.derived_product_url("OSSCA", "https://cdn.autoteile-meile.de/thumb?id=13308135&m=1&n=0") == "https://www.car-parts.ie/car-parts/ossca/p-13308135"
+    assert ph.derived_product_url("A.B.S.", "https://x/thumb?m=1&id=77") == "https://www.car-parts.ie/car-parts/a-b-s/p-77"
+    assert ph.derived_product_url("OSSCA", "https://x/img.jpg") is None and ph.derived_product_url("", "thumb?id=1") is None
+    # a derived page of ANOTHER brand is still rejected by verify()
+    assert ph.verify({"owner_brand": "OSSCA", "article": "00251"}, ph.parse_product_page(LD.replace('"name":"OSSCA"', '"name":"AMIO"')))[0] is False

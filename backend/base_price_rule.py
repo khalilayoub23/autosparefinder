@@ -11,7 +11,7 @@ Data Imported/Modified: apply_to_parts() UPDATEs parts_catalog.base_price (+ upd
          parts only, FOR UPDATE SKIP LOCKED, only rows whose value changes.
 Data Sources: parts_catalog, supplier_parts, suppliers, system_settings (USD/ILS rate).
 Missing Data Delegation: no basis (no visible offer of the part's class, no estimate input) -> the row is skipped and counted, never defaulted.
-Last Updated: 2026-11-16
+Last Updated: 2026-11-17 (ensure_vat_registry: subprocess writers load the supplier VAT-basis registry)
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ def inputs_sql(only_ids: bool) -> str:
         SELECT pc.id::text AS id, pc.base_price, pc.importer_price_ils, pc.max_price_ils, pc.online_price_ils,
                bo.price_ils AS offer_ils, bo.price_usd AS offer_usd,
                bo.name AS offer_supplier, bo.country AS offer_country,
+               bo.offer_id AS offer_id, bo.offer_updated_at AS offer_updated_at,
                EXISTS (SELECT 1 FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
                        WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0) AS has_visible,
                (EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} <> 0)
@@ -39,7 +40,7 @@ def inputs_sql(only_ids: bool) -> str:
                                 WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND {rank} = 0)) AS other_class_only
         FROM parts_catalog pc
         LEFT JOIN LATERAL (
-            SELECT sp.price_ils, sp.price_usd, s.name, s.country
+            SELECT sp.price_ils, sp.price_usd, s.name, s.country, sp.id::text AS offer_id, sp.updated_at AS offer_updated_at
             FROM supplier_parts sp JOIN suppliers s ON s.id = sp.supplier_id
             WHERE sp.part_id = pc.id AND {pp.VISIBLE_OFFER_SQL} AND {cost} > 0 AND {rank} = 0
             ORDER BY {pp.price_basis_order_sql("pc.part_type", ":rate")}
@@ -64,6 +65,41 @@ def target(row: Any, usd_to_ils: float) -> Tuple[Optional[float], str]:
     if est is not None:
         return est.net, "estimate"
     return None, "no_basis"
+
+
+VAT_REGISTRY_SQL = "SELECT name, vat_price_basis FROM suppliers"
+
+
+def vat_registry_loaded() -> bool:
+    import price_policy as pp
+    return pp._BASIS_REGISTRY is not None
+
+
+async def ensure_vat_registry(conn=None, db=None) -> bool:
+    """Make sure THIS process prices from the supplier VAT-basis registry (suppliers.vat_price_basis), exactly like the
+    uvicorn process (BACKEND_API_ROUTES._vat_basis_refresh_once). A subprocess writer (importer, maintenance script) starts
+    with the registry UNLOADED, where a local supplier silently reads as 'exclusive' and an 'inclusive' supplier's base_price
+    comes out 18% high (2026-11-17 RCA). Pass an asyncpg `conn` or a SQLAlchemy `db`. Returns True when loaded; on failure it
+    is logged loudly and False is returned - the caller must not pretend the basis was applied."""
+    import logging
+    import price_policy as pp
+    if pp._BASIS_REGISTRY is not None:
+        return True
+    try:
+        if conn is not None:
+            rows = [(r["name"], r["vat_price_basis"]) for r in await conn.fetch(VAT_REGISTRY_SQL)]
+        elif db is not None:
+            from sqlalchemy import text
+            async with db.begin_nested():     # a failed load must not abort the caller's transaction
+                rows = [(r[0], r[1]) for r in (await db.execute(text(VAT_REGISTRY_SQL))).all()]
+        else:
+            return False
+        pp.load_vat_bases(dict(rows))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).error("[vat_basis] registry load FAILED in a subprocess writer (legacy exclusive reading "
+                                          "applies to local suppliers): %s", exc)
+        return False
 
 
 def _asyncpg_sql(sql: str) -> str:
@@ -91,9 +127,10 @@ async def apply_to_parts(conn, part_ids: Iterable[str], usd_to_ils: Optional[flo
     """Apply the rule to exactly these parts on an asyncpg connection (own statements, caller owns the transaction).
     Returns counters; reasons explain every skip. Never raises for an individual part."""
     ids = list(dict.fromkeys(str(i) for i in part_ids))
+    registry_ok = await ensure_vat_registry(conn=conn)
     rate = usd_to_ils if usd_to_ils is not None else await get_rate(conn)
     sql = _asyncpg_sql(inputs_sql(True))
-    c = {"scanned": 0, "updated": 0, "unchanged": 0, "skipped": 0, "reasons": {}}
+    c = {"scanned": 0, "updated": 0, "unchanged": 0, "skipped": 0, "reasons": {}, "vat_registry_loaded": registry_ok}
     for i in range(0, len(ids), chunk):
         writes: Dict[str, Decimal] = {}
         for r in await conn.fetch(sql, ids[i:i + chunk], rate):
