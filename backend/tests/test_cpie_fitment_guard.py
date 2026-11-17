@@ -18,8 +18,8 @@ def test_small_payload_never_creates_fitment_even_for_in_category_items():
     assert g.fitment_allowed(23, "Brake pad set (BOSCH, 0 986 494 000)", "brake-pads") is False
 
 
-def test_full_size_payload_is_unchanged():
-    for name, slug in BLOCK:
+def test_full_size_payload_without_block_shape_is_unchanged():
+    for name, slug in (("Brake pad set BOSCH 0 986 494 000", "brake-pads"), ("BMW X5 Spark plug NGK 1234", "brake-pads")):
         assert g.fitment_allowed(400, name, slug) is True
 
 
@@ -34,3 +34,19 @@ def test_full_size_payload_keeps_the_established_category_rule():
     n = "Windshield wiper blade (BOSCH, 3 397 118 900)"
     assert g.category_for(n, "", "https://www.car-parts.ie/car-parts/x/y/wiper-blades", payload_size=400) == \
         categorize_on_ingest(name=n, url="https://www.car-parts.ie/car-parts/x/y/wiper-blades", extra="")
+
+
+def test_block_item_in_a_full_size_payload_gets_no_fitment():
+    # consultant 2026-11-17: block titles ride on timing-belt/clutch/alternator pages of full-size EV payloads
+    assert g.fitment_allowed(400, "Spark plug (RIDEX, 686S0003)", "timing-belt") is False
+    assert g.fitment_allowed(400, "Oil filter (RIDEX, 7O0005)", "clutch") is False
+
+
+def test_in_category_or_vehicle_named_items_in_full_size_payloads_keep_fitment():
+    assert g.fitment_allowed(400, "Oil filter (RIDEX, 7O0005)", "oil-filter") is True
+    assert g.fitment_allowed(400, "BYD Yuan Plus Glow plug BERU GE133", "glow-plugs") is True   # vehicle-named: not block-shaped
+    assert g.fitment_allowed(400, "Spark plug (RIDEX, 686S0003)", "") is True                    # no slug: unchanged behaviour
+
+
+def test_slug_of():
+    assert g.slug_of("https://www.car-parts.ie/car-parts/byd/seal/timing-belt?x=1") == "timing-belt"

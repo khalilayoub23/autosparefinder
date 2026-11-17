@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import httpx
 
+import ebay_api_watch
+
 # Max 3 concurrent eBay calls — stays well under their 5,000 calls/day / burst limit
 _EBAY_SEMAPHORE = asyncio.Semaphore(3)
 # Minimum gap between eBay search calls (seconds)
@@ -278,6 +280,7 @@ class EbaySupplier(BaseSupplier):
                 try:
                     async with httpx.AsyncClient(timeout=20.0) as client:
                         response = await client.get(url, headers=headers, params=params)
+                        await ebay_api_watch.check("browse/item_summary/search", response)
                         if response.status_code == 429:
                             _ebay_consecutive_429s += 1
                             retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))
@@ -380,6 +383,7 @@ class EbaySupplier(BaseSupplier):
                 try:
                     async with httpx.AsyncClient(timeout=20.0) as client:
                         response = await client.get(url, headers=headers)
+                        await ebay_api_watch.check("browse/item", response)
                         if response.status_code == 429:
                             _ebay_consecutive_429s += 1
                             retry_after = int(response.headers.get("Retry-After", 2 ** (attempt + 1)))

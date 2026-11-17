@@ -2095,6 +2095,7 @@ async def create_whatsapp_checkout(
     except ValueError as e:
         return {"ok": False, "error": f"Invalid UUID: {e}"}
 
+    import price_policy as _pp_orderable
     # ── 1. Resolve cheapest supplier part + part metadata (catalog DB) ────────
     try:
         async with async_session_factory() as db_cat:
@@ -2104,6 +2105,8 @@ async def create_whatsapp_checkout(
                 .join(Supplier, SupplierPart.supplier_id == Supplier.id)
                 .where(SupplierPart.part_id == part_uuid)
                 .where(SupplierPart.is_available == True)
+                .where(Supplier.is_active == True)                       # an inactive supplier's offer is not orderable
+                .where(Supplier.name.notin_(_pp_orderable.NON_ORDERABLE_SUPPLIER_NAMES))
                 # class-compatible offers first (an aftermarket offer is never silently substituted for an OEM
                 # part), then cheapest — see offer_classification.py
                 .order_by(text(class_rank_sql("supplier_parts.part_type", "parts_catalog.part_type")),

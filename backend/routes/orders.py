@@ -224,6 +224,9 @@ async def create_order(
             if not row:
                 raise HTTPException(status_code=404, detail=f"חלק {item.supplier_part_id} לא נמצא. נסה לרענן את הדף ולהוסיף את החלק מחדש לסל.")
             sp, part, supplier_rec = row
+            import price_policy as _pp_o
+            if not _pp_o.offer_is_orderable(sp.is_available, supplier_rec.is_active, supplier_rec.name):
+                raise HTTPException(status_code=409, detail="ההצעה הזו אינה זמינה להזמנה. רענן את הדף ובחר הצעה אחרת.")
             unit_price, vat, delivery_fee = _order_line_pricing(sp, supplier_rec, usd_to_ils_rate)
             # one delivery fee per supplier (the order ships once from each supplier)
             _sk = str(supplier_rec.id)

@@ -28,7 +28,7 @@ async def plan(rows_file, out):
     ids = [r["fid"] for r in rows]
     pvf = {str(r["id"]): {k: (str(v) if v is not None else None) for k, v in dict(r).items()}
            for r in await c.fetch("SELECT * FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", ids)}
-    assert len(pvf) == len(ids) == 246
+    assert len(pvf) == len(ids) > 0
     pids = sorted({r["pid"] for r in rows})
     compat = {str(r["id"]): r["compatible_vehicles"] for r in await c.fetch(
         "SELECT id, compatible_vehicles::text FROM parts_catalog WHERE id = ANY($1::uuid[])", pids)}
@@ -62,7 +62,7 @@ async def apply(out, exp_manifest, exp_backup):
     c = await asyncpg.connect(DB)
     async with c.transaction():
         live = {str(r["id"]): r for r in await c.fetch("SELECT id, part_id::text pid, manufacturer, model FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))}
-        assert len(live) == 246 and all(live[i]["pid"] == pvf[i]["part_id"] and live[i]["model"] == pvf[i]["model"] for i in pvf), "rows changed since the backup"
+        assert len(live) == len(pvf) and all(live[i]["pid"] == pvf[i]["part_id"] and live[i]["model"] == pvf[i]["model"] for i in pvf), "rows changed since the backup"
         n_c = 0
         for pid, v in compat.items():
             if v["removed"]:
@@ -71,9 +71,9 @@ async def apply(out, exp_manifest, exp_backup):
                 assert tag.endswith(" 1"), f"compatible_vehicles changed under us for {pid}"
                 n_c += 1
         tag = await c.execute("DELETE FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))
-        assert tag == "DELETE 246", tag
+        assert tag == f"DELETE {len(pvf)}", tag
     left = await c.fetchval("SELECT count(*) FROM part_vehicle_fitment WHERE id = ANY($1::uuid[])", list(pvf))
-    print("APPLIED: pvf deleted 246, parts compat updated", n_c, "remaining of manifest:", left)
+    print("APPLIED: pvf deleted", len(pvf), ", parts compat updated", n_c, "remaining of manifest:", left)
 
 
 if __name__ == "__main__":

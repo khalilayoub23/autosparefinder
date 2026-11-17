@@ -223,8 +223,15 @@ def agorot(amount_ils: Any) -> int:
 # website search's own predicate since 2026-09-21). Among them the PRICE-BASIS offer is the one whose product
 # class is compatible with the part (offer_classification.class_rank_sql), then the lowest cost.
 # Aliases: sp = supplier_parts, s = suppliers.
+NON_ORDERABLE_SUPPLIER_NAMES = ("Official Manufacturer Sites", "Sandbox Supplier QA")
 ORDERABLE_OFFER_SQL = ("sp.is_available = TRUE AND s.is_active = TRUE "
-                       "AND s.name NOT IN ('Official Manufacturer Sites', 'Sandbox Supplier QA')")
+                       "AND s.name NOT IN ('" + "', '".join(NON_ORDERABLE_SUPPLIER_NAMES) + "')")
+
+
+def offer_is_orderable(available, supplier_active, supplier_name) -> bool:
+    """Python twin of ORDERABLE_OFFER_SQL for the ORM order paths (cart add, create_order, WhatsApp checkout): an offer of an
+    INACTIVE supplier (e.g. ASAP Network, 1,336 parts the site shows only as estimates) is never orderable (2026-11-17)."""
+    return bool(available) and bool(supplier_active) and supplier_name not in NON_ORDERABLE_SUPPLIER_NAMES
 # the offer that sets a part's ADVERTISED price must also be listed (search hides URL-less price-list offers); an
 # offer the customer CHOSE (compare page lists every orderable offer) is re-priced with ORDERABLE_OFFER_SQL.
 VISIBLE_OFFER_SQL = ORDERABLE_OFFER_SQL + " AND NULLIF(BTRIM(sp.supplier_url), '') IS NOT NULL"

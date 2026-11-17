@@ -223,7 +223,9 @@ async def add_cart_item(
         select(SupplierPart, SupplierModel, PartsCatalog.part_type)
         .join(SupplierModel, SupplierPart.supplier_id == SupplierModel.id)
         .join(PartsCatalog, SupplierPart.part_id == PartsCatalog.id)
-        .where(and_(SupplierPart.part_id == data.part_id, SupplierPart.is_available == True))
+        .where(and_(SupplierPart.part_id == data.part_id, SupplierPart.is_available == True,
+                    SupplierModel.is_active == True,                      # an inactive supplier's offer is not orderable
+                    SupplierModel.name.notin_(_pp.NON_ORDERABLE_SUPPLIER_NAMES)))
     )
     if data.supplier_part_id:
         _stmt = _stmt.where(SupplierPart.id == data.supplier_part_id)
