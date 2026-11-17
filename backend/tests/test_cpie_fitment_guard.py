@@ -13,8 +13,9 @@ def test_small_payload_out_of_category_items_get_no_fitment():
         assert g.fitment_allowed(23, name, slug) is False, name
 
 
-def test_small_payload_in_category_item_is_not_blocked():
-    assert g.fitment_allowed(23, "Brake pad set (BOSCH, 0 986 494 000)", "brake-pads") is True
+def test_small_payload_never_creates_fitment_even_for_in_category_items():
+    # consultant 2026-11-17: no vehicle-specific evidence exists in a page-wide block, in-category or not
+    assert g.fitment_allowed(23, "Brake pad set (BOSCH, 0 986 494 000)", "brake-pads") is False
 
 
 def test_full_size_payload_is_unchanged():
@@ -22,15 +23,14 @@ def test_full_size_payload_is_unchanged():
         assert g.fitment_allowed(400, name, slug) is True
 
 
-def test_unknown_name_in_small_payload_fails_closed():
-    assert g.fitment_allowed(23, "Zzzq 123", "brake-pads") is False
+def test_small_payload_category_comes_from_the_name_not_the_page_slug():
+    assert g.category_for("Glow plug (RIDEX, 243G0006)", "brake-pads", payload_size=23) != "brakes"
+    assert g.category_for("Oil filter (RIDEX, 7O0005)", "brake-pads", payload_size=23) == "filters"
+    assert g.category_for("Zzzq 123", "brake-pads", payload_size=23) == "brakes"      # slug only as fallback
 
 
-def test_category_comes_from_the_name_not_the_page_slug():
-    assert g.category_for("Glow plug (RIDEX, 243G0006)", "brake-pads") != "brakes"
-    assert g.category_for("Oil filter (RIDEX, 7O0005)", "brake-pads") == "filters"
-    assert g.category_for("Brake pad set (BOSCH, 0 986 494 000)", "brake-pads") == "brakes"
-
-
-def test_slug_is_only_a_fallback_for_an_uninformative_name():
-    assert g.category_for("Zzzq 123", "brake-pads") == "brakes"
+def test_full_size_payload_keeps_the_established_category_rule():
+    from category_map import categorize_on_ingest
+    n = "Windshield wiper blade (BOSCH, 3 397 118 900)"
+    assert g.category_for(n, "", "https://www.car-parts.ie/car-parts/x/y/wiper-blades", payload_size=400) == \
+        categorize_on_ingest(name=n, url="https://www.car-parts.ie/car-parts/x/y/wiper-blades", extra="")

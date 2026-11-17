@@ -21,8 +21,13 @@ SMALL_PAYLOAD = 100          # 10 of 6,497 payload files are < 100 items and all
 CATCH_ALL = "כללי"
 
 
-def category_for(name: str, slug: str, url: str = "", extra: str = "", by_name: str | None = None) -> str:
-    """Product identity first (name), listing-page taxonomy only when the name is uninformative."""
+def category_for(name: str, slug: str, url: str = "", extra: str = "", by_name: str | None = None,
+                 payload_size: int = 10**6) -> str:
+    """Full-size payloads keep the long-standing rule (categorize_on_ingest over name+URL: consultant sample 2026-11-17 found
+    name-first WORSE there, e.g. windshield wipers / 'Hatchback' radiators). A SMALL (page-wide block) payload takes the product's
+    own NAME first - its listing page says nothing about the item - and the page slug only when the name is uninformative."""
+    if payload_size >= SMALL_PAYLOAD:
+        return categorize_on_ingest(name=name, url=url, extra=extra)
     by_name = by_name or categorize_on_ingest(name=name, url="", extra=extra)
     if by_name != CATCH_ALL:
         return by_name
@@ -30,9 +35,7 @@ def category_for(name: str, slug: str, url: str = "", extra: str = "", by_name: 
     return by_slug if by_slug != CATCH_ALL else categorize_on_ingest(name=name, url=url, extra=extra)
 
 
-def fitment_allowed(payload_size: int, name: str, slug: str, extra: str = "") -> bool:
-    if payload_size >= SMALL_PAYLOAD:
-        return True
-    slug_cat = categorize_slug(slug or "")
-    name_cat = categorize_on_ingest(name=name, url="", extra=extra)
-    return slug_cat != CATCH_ALL and name_cat != CATCH_ALL and slug_cat == name_cat
+def fitment_allowed(payload_size: int, name: str = "", slug: str = "", extra: str = "") -> bool:
+    """A payload under SMALL_PAYLOAD items is a page-wide 'popular parts' block (10 of 6,497 files, all confirmed generic):
+    it carries no vehicle-specific evidence at all, so it creates no positive fitment. Full-size payloads are unchanged."""
+    return payload_size >= SMALL_PAYLOAD
