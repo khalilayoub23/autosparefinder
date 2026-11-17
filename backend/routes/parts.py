@@ -3752,45 +3752,27 @@ async def get_part_suppliers(
             "source":                  _supplier_source_tag(r[1], r[3]),
         })
 
-    # Fallback: a catalog-only part (no live offer) - an ESTIMATE priced by the policy from the importer cost
-    # (price_policy.catalog_estimate_price), never from base_price + a flat 18% (2026-10-29), and never
-    # claimed "in stock" / 3 days: nothing confirms stock or delivery for a part without an offer.
+    # A catalog-only part (no live offer) has an ESTIMATE priced by the policy from the importer cost
+    # (price_policy.catalog_estimate_price). It is NOT a supplier offer (2026-11-17): it is never put in `suppliers`,
+    # has no supplier_part_id, cannot be added to a cart or ordered, and claims no stock, supplier or delivery.
+    # Customers see it only as `catalog_estimate` (informational, orderable=False).
+    catalog_estimate = None
     if not suppliers:
         part_row = (await db.execute(
-            text("SELECT importer_price_ils, max_price_ils, online_price_ils, part_condition, sku, part_type "
-                 "FROM parts_catalog WHERE id = :pid AND is_active"),
+            text("SELECT importer_price_ils, max_price_ils, online_price_ils FROM parts_catalog WHERE id = :pid AND is_active"),
             {"pid": part_id}
         )).fetchone()
         _est = _pp.catalog_estimate(part_row[0], part_row[1], part_row[2]) if part_row else None
         if _est is not None:
             _cf = _pp.customer_fields(_est[0], 0, supplier_country=_est[1])
-            _ship = _pp.delivery_fee(supplier_country=_est[1])
-            suppliers.append({
-                "supplier_part_id":       None,
-                "supplier_name":          "AutoSpareFinder",
-                "supplier_country":       "IL" if _est[1] == "il" else "",
-                "supplier_website":       "https://autosparefinder.co.il",
-                "supplier_logo":          None,
-                "supplier_sku":           display_supplier_sku(part_row[4]),
-                "price_usd":              None,
-                **_offer_price_fields(_cf),
-                "customer_total_ils":     round(_cf["customer_total_ils"] + _ship, 2),
-                "shipping_cost_ils":      _ship,
-                "availability":           "on_order",
-                "stock_quantity":         None,
-                "warranty_months":        12,
-                "estimated_delivery_days": 14,
-                "supplier_url":           f"https://autosparefinder.co.il/parts/{part_id}",
-                "express_available":      False,
-                "express_price_ils":      None,
-                "express_delivery_days":  None,
-                "last_checked_at":        None,
-                "part_condition":         part_row[3] or "new",
-                "part_type":              offer_label(part_row[5], None),
-                "total_cost_ils":         round(_cf["customer_total_ils"] + _ship, 2),
-                "is_base_price_fallback": True,      # = catalog estimate (key the website reads)
-                "source":                 "autosparefinder",
-            })
+            catalog_estimate = {
+                "is_estimate": True,
+                "orderable": False,
+                "customer_price_ils": _cf["customer_price_ils"],
+                "customer_vat_ils": _cf["customer_vat_ils"],
+                "customer_total_ils": _cf["customer_total_ils"],
+                "currency": "ILS",
+            }
 
     # what the CUSTOMER pays decides the order of the list (it was raw cost + raw shipping, 2026-10-29)
     suppliers.sort(key=lambda o: (o.get("customer_total_ils") is None, o.get("customer_total_ils") or 0))
@@ -3799,6 +3781,7 @@ async def get_part_suppliers(
         "supplier_count": len(suppliers),
         "cheapest_ils":   suppliers[0]["price_ils"] if suppliers else None,
         "suppliers":      suppliers,
+        "catalog_estimate": catalog_estimate,
     }
 
 

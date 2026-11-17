@@ -3023,28 +3023,22 @@ NEVER:
                 pricing["estimated_delivery"] = f"{estimated_delivery_days}–{estimated_delivery_days + 7} ימים"
                 suppliers.append(pricing)
 
-            # Fallback: a catalog-only part (no live offer). price_policy.catalog_estimate_price - the importer
-            # cost under the SAME rule as every offer (cost x 1.45 + conditional VAT); base_price is never used
-            # (2026-10-29: it used to set total = base_price + a default fee, inconsistent with its own net/VAT).
-            bp = float(part.base_price) if part.base_price else 0.0
+            # A catalog-only part (no live offer) has an ESTIMATE (price_policy.catalog_estimate: importer cost under the
+            # SAME rule as every offer). It is NOT a supplier offer (2026-11-17): never in `suppliers`, no supplier_part_id,
+            # not orderable, no stock/delivery claim. It travels as `catalog_estimate` (orderable=False) so an agent can
+            # quote it as "an estimate, no supplier offer yet" and can never create an order line from it.
             _est = None if suppliers else _pp.catalog_estimate(part.importer_price_ils, part.max_price_ils,
                                                                part.online_price_ils)
+            catalog_estimate = None
             if _est is not None:
                 _u = _pp.unit_price(_est[0], supplier_country=_est[1])
-                shipping = _pp.delivery_fee(supplier_country=_est[1])
-                suppliers = [{
+                catalog_estimate = {
                     "price_no_vat": _u.net,
                     "vat": _u.vat,
-                    "shipping": shipping,
-                    "total": round(_u.total + shipping, 2),
-                    "availability": "on_order",
-                    "warranty_months": 12,
-                    "estimated_delivery_days": 14,
-                    "supplier_part_id": None,
-                    "part_type": _oc.offer_label(part.part_type, None),
-                    "estimated_delivery": "14\u201321 \u05d9\u05de\u05d9\u05dd",
-                    "is_base_price_fallback": True,      # = catalog estimate (key kept for consumers)
-                }]
+                    "total": _u.total,
+                    "is_estimate": True,
+                    "orderable": False,
+                }
 
             # Best option = first supplier (in_stock best price)
             best = suppliers[0] if suppliers else None
@@ -3060,7 +3054,8 @@ NEVER:
                 "sku": part.sku,
                 "compatible_vehicles": part.compatible_vehicles or [],
                 "pricing": best,           # kept for backward compat
-                "suppliers": suppliers,    # all options (up to 3)
+                "suppliers": suppliers,    # all REAL offers (up to 3); an estimate is never one
+                "catalog_estimate": catalog_estimate,
                 "warranty_months": rows[0].warranty_months if rows else 12,
             })
 
