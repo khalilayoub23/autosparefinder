@@ -1,0 +1,2115 @@
+[
+ {
+  "offer_id": "823c39a1-1b7f-47ac-b915-36e022cac1f3",
+  "article": "02024",
+  "owner_brand": "METALCAUCHO",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 1.39,
+  "live_price": 1.39,
+  "live_sku": "02024",
+  "updated_at": "2026-11-16 14:28:26.742167"
+ },
+ {
+  "offer_id": "cb90b41b-e4b5-437b-9967-6f141f9cd562",
+  "article": "103054",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "DOGA"
+  ],
+  "changed": true,
+  "snap_price": 271.75,
+  "live_price": 70.4,
+  "live_sku": "103054",
+  "updated_at": "2026-11-16 19:56:45.530730",
+  "payload_matches": [
+   [
+    "FEBI BILSTEIN",
+    70.4,
+    "renault__renault_espace-v_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "FEBI BILSTEIN",
+    70.4,
+    "renault__renault_espace-v_cpie.json"
+   ],
+   [
+    "DOGA",
+    271.75,
+    "audi__audi_a4-allroad-8wh-b9_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "0446e840-8a88-4c87-a861-66f101dbffa7",
+  "article": "10320",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "GEBA"
+  ],
+  "changed": true,
+  "snap_price": 276.87,
+  "live_price": 57.25,
+  "live_sku": "10320",
+  "updated_at": "2026-11-16 17:06:28.714573",
+  "payload_matches": [
+   [
+    "FEBI BILSTEIN",
+    57.25,
+    "peugeot__peugeot_205-box-1983_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "GEBA",
+    276.87,
+    "vw__vw_lt-28-35-i-bus-281-363_cpie.json"
+   ],
+   [
+    "GEBA",
+    276.87,
+    "vw__vw_lt-28-46-ii-platform-chassis-2dc-2df-2dg-2dl-2dm_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    57.25,
+    "peugeot__peugeot_205-box-1983_cpie.json"
+   ],
+   [
+    "GEBA",
+    276.87,
+    "vw__vw_lt-28-46-ii-box-2da-2dd-2dh_cpie.json"
+   ],
+   [
+    "GEBA",
+    276.87,
+    "vw__vw_lt-28-35-ii-bus-2db-2de-2dk_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "f7eca435-3a16-4153-84ad-5ecd97289b3a",
+  "article": "103203",
+  "owner_brand": "DOGA",
+  "foreign": [
+   "JAPKO"
+  ],
+  "changed": false,
+  "snap_price": 128.41,
+  "live_price": 128.41,
+  "live_sku": "103203",
+  "updated_at": "2026-11-16 14:49:12.507255"
+ },
+ {
+  "offer_id": "c4c5b13a-2330-4f85-a4bf-d3557e908887",
+  "article": "103214",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "JAPKO"
+  ],
+  "changed": true,
+  "snap_price": 32.05,
+  "live_price": 36.61,
+  "live_sku": "103214",
+  "updated_at": "2026-11-16 19:58:50.269853",
+  "payload_matches": [
+   [
+    "FEBI BILSTEIN",
+    36.61,
+    "renault__renault_lodgy_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "JAPKO",
+    32.05,
+    "toyota__toyota_corolla-station-wagon-e9_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    36.61,
+    "renault__renault_lodgy_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "a146caa2-3b38-4ce7-9c06-4ee7628e6b4b",
+  "article": "11900911",
+  "owner_brand": "ALANKO",
+  "foreign": [
+   "IPARLUX"
+  ],
+  "changed": false,
+  "snap_price": 705.78,
+  "live_price": 705.78,
+  "live_sku": "11900911",
+  "updated_at": "2026-11-16 06:42:16.470232"
+ },
+ {
+  "offer_id": "f7b6e46d-bfc7-4762-a3cf-2620fa03f5b3",
+  "article": "1361",
+  "owner_brand": "BRISK",
+  "foreign": [
+   "LIQUI MOLY"
+  ],
+  "changed": true,
+  "snap_price": 22.83,
+  "live_price": 22.83,
+  "live_sku": "1361",
+  "updated_at": "2026-11-16 20:17:33.100096",
+  "payload_matches": [
+   [
+    "BRISK",
+    22.83,
+    "peugeot__peugeot_304-coupe-04c_cpie.json"
+   ],
+   [
+    "BRISK",
+    22.83,
+    "peugeot__peugeot_204-convertible_cpie.json"
+   ],
+   [
+    "BRISK",
+    22.83,
+    "mercedes-benz__mercedes-benz_ponton-w128_cpie.json"
+   ],
+   [
+    "BRISK",
+    22.83,
+    "renault__renault_21-box-s48_cpie.json"
+   ],
+   [
+    "BRISK",
+    22.83,
+    "peugeot__peugeot_204-coupe_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "LIQUI MOLY",
+    323.26,
+    "aston-martin__aston-martin_db9-convertible_cpie.json"
+   ],
+   [
+    "LIQUI MOLY",
+    323.26,
+    "aston-martin__aston-martin_dbs-volante_cpie.json"
+   ],
+   [
+    "BRISK",
+    22.83,
+    "peugeot__peugeot_304-coupe-04c_cpie.json"
+   ],
+   [
+    "LIQUI MOLY",
+    323.26,
+    "tvr__tvr_tuscan-ii-roadster_cpie.json"
+   ],
+   [
+    "LIQUI MOLY",
+    323.26,
+    "aston-martin__aston-martin_virage-vantage_cpie.json"
+   ],
+   [
+    "LIQUI MOLY",
+    323.26,
+    "aston-martin__aston-martin_vantage-vantage_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "be082255-60df-4c36-9fab-d9709abc83c9",
+  "article": "15011",
+  "owner_brand": "GEBA",
+  "foreign": [
+   "A.B.S.",
+   "SIDEM"
+  ],
+  "changed": true,
+  "snap_price": 147.27,
+  "live_price": 1389.95,
+  "live_sku": "15011",
+  "updated_at": "2026-11-16 18:35:18.432519",
+  "payload_matches": [
+   [
+    "GEBA",
+    1389.95,
+    "porsche__porsche_928-1977_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "A.B.S.",
+    147.27,
+    "alfa-romeo__alfa-romeo_giulietta-116_cpie.json"
+   ],
+   [
+    "SIDEM",
+    71.65,
+    "tesla__tesla_model-3-5yj3_cpie.json"
+   ],
+   [
+    "SIDEM",
+    71.65,
+    "tesla__tesla_model-y-juniper_cpie.json"
+   ],
+   [
+    "SIDEM",
+    71.65,
+    "tesla__tesla_model-y-5yjy_cpie.json"
+   ],
+   [
+    "GEBA",
+    1389.95,
+    "porsche__porsche_928-1977_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    147.27,
+    "alfa-romeo__alfa-romeo_75-162b_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "8847b443-2ee7-4bb3-bbb8-d5e4b23f53ad",
+  "article": "16045",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S."
+  ],
+  "changed": false,
+  "snap_price": 67.41,
+  "live_price": 67.41,
+  "live_sku": "16045",
+  "updated_at": "2026-11-16 08:19:50.304189"
+ },
+ {
+  "offer_id": "e8f8b2e4-b16b-418b-a137-1f539ead6b38",
+  "article": "16325",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": true,
+  "snap_price": 65.25,
+  "live_price": 65.25,
+  "live_sku": "16325",
+  "updated_at": "2026-11-16 19:10:45.696314",
+  "payload_matches": [
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-iv-saloon-c6-a_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_aeroback-hatchback-c2-a-c9-l_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_saloon-saloon-c2-s_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-iv-c6-a-c7-a_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_satria-c9-m_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_colt-iii-c5-a_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_wira-hatchback-c9-l_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-iii-station-wagon-c1-v-c3-v_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-v-station-wagon-cb-w-cd-w_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-iv-saloon-c6-a_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_aeroback-hatchback-c2-a-c9-l_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_saloon-saloon-c2-s_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "mitsubishi__mitsubishi_lancer-iv-c6-a-c7-a_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    65.25,
+    "proton__proton_satria-c9-m_cpie.json"
+   ],
+   [
+    "MAPCO",
+    88.98,
+    "peugeot__peugeot_307_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "5ccb4f67-60b4-4684-b68b-730c64720762",
+  "article": "16483",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "MONROE"
+  ],
+  "changed": true,
+  "snap_price": 88.6,
+  "live_price": 88.6,
+  "live_sku": "16483",
+  "updated_at": "2026-11-16 19:11:00.302469",
+  "payload_matches": [
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_persona-400-hatchback-c9-c-c9-s_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_wira-hatchback-c9-l_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_persona-300-c9-m_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "mitsubishi__mitsubishi_colt-v-cj-cp_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "mitsubishi__mitsubishi_colt-iv-ca-a_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "mitsubishi__mitsubishi_lancer-v-station-wagon-cb-w-cd-w_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "MONROE",
+    189.14,
+    "subaru__subaru_forester-sf_cpie.json"
+   ],
+   [
+    "MONROE",
+    189.14,
+    "subaru__subaru_legacy-ii-estate-bd-bg_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_persona-400-hatchback-c9-c-c9-s_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_wira-hatchback-c9-l_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "proton__proton_persona-300-c9-m_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    88.6,
+    "mitsubishi__mitsubishi_colt-v-cj-cp_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "692f537a-87aa-41e1-80df-ad90762c795c",
+  "article": "16578",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 66.5,
+  "live_price": 66.5,
+  "live_sku": "16578",
+  "updated_at": "2026-11-16 13:59:14.385111"
+ },
+ {
+  "offer_id": "dc1c9fda-c426-404c-b008-92db351e467e",
+  "article": "16580",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 54.18,
+  "live_price": 54.18,
+  "live_sku": "16580",
+  "updated_at": "2026-11-16 06:09:25.017347"
+ },
+ {
+  "offer_id": "3c0664d5-6cc9-4b60-a4bf-59290699c985",
+  "article": "16714",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 79.83,
+  "live_price": 79.83,
+  "live_sku": "16714",
+  "updated_at": "2026-11-16 14:43:26.400877"
+ },
+ {
+  "offer_id": "f7033d7b-e97a-4ca6-8bac-c17ec7cf997d",
+  "article": "17886",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 167.35,
+  "live_price": 167.35,
+  "live_sku": "17886",
+  "updated_at": "2026-11-16 12:56:33.877526"
+ },
+ {
+  "offer_id": "117e8061-8058-4170-beb4-44eb29121e84",
+  "article": "186681",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "VALEO"
+  ],
+  "changed": false,
+  "snap_price": 3.48,
+  "live_price": 3.48,
+  "live_sku": "186681",
+  "updated_at": "2026-11-16 07:55:02.794041"
+ },
+ {
+  "offer_id": "546b9731-ec52-4098-b148-0ec373f7872d",
+  "article": "19-2560",
+  "owner_brand": "MAXGEAR",
+  "foreign": [
+   "METELLI"
+  ],
+  "changed": false,
+  "snap_price": 122.84,
+  "live_price": 122.84,
+  "live_sku": "19-2560",
+  "updated_at": "2026-11-16 10:29:02.845962"
+ },
+ {
+  "offer_id": "12b02c2f-f552-4d2e-a5e7-e6d24fd79d81",
+  "article": "19522",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 34.63,
+  "live_price": 34.63,
+  "live_sku": "19522",
+  "updated_at": "2026-11-16 13:52:23.347285"
+ },
+ {
+  "offer_id": "5af465a2-4244-44ef-b9e3-9b6dadca130a",
+  "article": "20738",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "BREMI"
+  ],
+  "changed": false,
+  "snap_price": 121.45,
+  "live_price": 121.45,
+  "live_sku": "20738",
+  "updated_at": "2026-11-16 14:20:20.555199"
+ },
+ {
+  "offer_id": "d3258d60-760f-4bdc-bf35-639d356546e8",
+  "article": "20853",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "WALKER"
+  ],
+  "changed": false,
+  "snap_price": 140.84,
+  "live_price": 140.84,
+  "live_sku": "20853",
+  "updated_at": "2026-11-16 08:57:46.735001"
+ },
+ {
+  "offer_id": "cc8b12fc-6775-4c5e-9a7f-09f0cad7acbf",
+  "article": "21001",
+  "owner_brand": "MPM",
+  "foreign": [
+   "MAPCO",
+   "METALCAUCHO"
+  ],
+  "changed": true,
+  "snap_price": 61.87,
+  "live_price": 81.26,
+  "live_sku": "21001",
+  "updated_at": "2026-11-16 18:04:48.815246",
+  "payload_matches": [
+   [
+    null,
+    81.26,
+    "byd__byd_yuan-plus_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_t90ev_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "volvo__volvo_xc40-t3_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_tang-ii_cpie.json"
+   ],
+   [
+    "MPM",
+    81.26,
+    "polestar__polestar_polestar-4_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "rover__rover_range-r-sport_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_edeliver-9-van_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_t3-van_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_tang_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_edeliver-9-platform-chassis_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_dolphin-ea1_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_edeliver-7-van_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_han-i-facelift_cpie.json"
+   ],
+   [
+    "MPM",
+    81.26,
+    "polestar__polestar_polestar-3_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_e6-i_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_edeliver-3-platform-chassis_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "kia__kia_niro-plus_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    null,
+    52.27,
+    "fso__fso_125p-estate_cpie.json"
+   ],
+   [
+    null,
+    52.27,
+    "fso__fso_polonez-pickup_cpie.json"
+   ],
+   [
+    "MAPCO",
+    61.87,
+    "alfa-romeo__alfa-romeo_145-930_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "byd__byd_yuan-plus_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "maxus__maxus_t90ev_cpie.json"
+   ],
+   [
+    null,
+    81.26,
+    "volvo__volvo_xc40-t3_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "aee6d552-2e7a-484a-ab1e-7a03b5e76b01",
+  "article": "21663",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "LIQUI MOLY"
+  ],
+  "changed": false,
+  "snap_price": 5.74,
+  "live_price": 5.74,
+  "live_sku": "21663",
+  "updated_at": "2026-11-16 08:34:14.870923"
+ },
+ {
+  "offer_id": "2e8e77d0-3d68-4428-8a99-4c708844e3d5",
+  "article": "22429",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "WALKER"
+  ],
+  "changed": false,
+  "snap_price": 90.45,
+  "live_price": 90.45,
+  "live_sku": "22429",
+  "updated_at": "2026-11-16 08:32:21.779749"
+ },
+ {
+  "offer_id": "fb9d91f9-3e1e-4e2a-a420-ec6ddc91d65f",
+  "article": "23036",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "AS"
+  ],
+  "changed": false,
+  "snap_price": 92.25,
+  "live_price": 92.25,
+  "live_sku": "23036",
+  "updated_at": "2026-11-16 09:22:26.453738"
+ },
+ {
+  "offer_id": "33388626-463f-4825-b1f2-aae588e7b0d4",
+  "article": "26011",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 104.54,
+  "live_price": 104.54,
+  "live_sku": "26011",
+  "updated_at": "2026-11-16 11:05:39.828824"
+ },
+ {
+  "offer_id": "4bf64d7a-8bea-408f-b7eb-cf8ec0d06032",
+  "article": "26595",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 90.03,
+  "live_price": 90.03,
+  "live_sku": "26595",
+  "updated_at": "2026-11-16 07:50:24.868278"
+ },
+ {
+  "offer_id": "2a33e93e-4b1d-4c8f-b9a5-3558bf405901",
+  "article": "26761",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 107.36,
+  "live_price": 107.36,
+  "live_sku": "26761",
+  "updated_at": "2026-11-16 08:54:50.960647"
+ },
+ {
+  "offer_id": "73cd8d4b-b2f5-48ac-b022-d5b7cfc30e73",
+  "article": "26934",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 82.55,
+  "live_price": 82.55,
+  "live_sku": "26934",
+  "updated_at": "2026-11-16 15:26:09.384016"
+ },
+ {
+  "offer_id": "fa2aace1-9ad8-4a0a-af01-a7e103a2e39a",
+  "article": "27833",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 37.03,
+  "live_price": 37.03,
+  "live_sku": "27833",
+  "updated_at": "2026-11-16 10:15:52.762544"
+ },
+ {
+  "offer_id": "b369eb30-6bcb-4d74-8036-3f9158d8c26a",
+  "article": "28324",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "WALKER"
+  ],
+  "changed": false,
+  "snap_price": 88.32,
+  "live_price": 88.32,
+  "live_sku": "28324",
+  "updated_at": "2026-11-16 10:43:10.106821"
+ },
+ {
+  "offer_id": "1c0bb6f4-8166-4590-b01f-9554f2a80e45",
+  "article": "28678",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "WALKER"
+  ],
+  "changed": false,
+  "snap_price": 126.92,
+  "live_price": 126.92,
+  "live_sku": "28678",
+  "updated_at": "2026-11-16 08:54:45.994813"
+ },
+ {
+  "offer_id": "dd648aa0-0e05-4bd5-88a2-9c0185a1317f",
+  "article": "29871",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 59.13,
+  "live_price": 59.13,
+  "live_sku": "29871",
+  "updated_at": "2026-11-16 08:56:47.650153"
+ },
+ {
+  "offer_id": "aea9bb12-1d02-447c-965a-1b5f6190bd7c",
+  "article": "302229",
+  "owner_brand": "VALEO",
+  "foreign": [
+   "L\u00d6BRO"
+  ],
+  "changed": false,
+  "snap_price": 93.06,
+  "live_price": 93.06,
+  "live_sku": "302229",
+  "updated_at": "2026-11-16 07:24:54.250743"
+ },
+ {
+  "offer_id": "27c61a32-820c-4e56-b9d0-8a10ca1e6bf8",
+  "article": "302230",
+  "owner_brand": "VALEO",
+  "foreign": [
+   "L\u00d6BRO"
+  ],
+  "changed": true,
+  "snap_price": 238.35,
+  "live_price": 146.09,
+  "live_sku": "302230",
+  "updated_at": "2026-11-16 18:48:13.624678",
+  "payload_matches": [
+   [
+    "VALEO",
+    146.09,
+    "porsche__porsche_911-1963_cpie.json"
+   ],
+   [
+    "VALEO",
+    146.09,
+    "porsche__porsche_panamera-2009_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "VALEO",
+    146.09,
+    "porsche__porsche_911-1963_cpie.json"
+   ],
+   [
+    "L\u00d6BRO",
+    238.35,
+    "vw__vw_scirocco-53_cpie.json"
+   ],
+   [
+    "VALEO",
+    146.09,
+    "porsche__porsche_panamera-2009_cpie.json"
+   ],
+   [
+    "L\u00d6BRO",
+    238.35,
+    "vw__vw_caddy-i-14_cpie.json"
+   ],
+   [
+    "L\u00d6BRO",
+    238.35,
+    "vw__vw_passat-32_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "7db638fd-f8be-4336-8d54-d938f9e8ccfd",
+  "article": "31520",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S.",
+   "ORIGINAL IMPERIUM"
+  ],
+  "changed": false,
+  "snap_price": 59.72,
+  "live_price": 59.72,
+  "live_sku": "31520",
+  "updated_at": "2026-11-16 10:22:19.148340"
+ },
+ {
+  "offer_id": "c2382c7e-164b-4d0f-bc58-867fb0961c57",
+  "article": "32137",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S.",
+   "ORIGINAL IMPERIUM"
+  ],
+  "changed": false,
+  "snap_price": 37.62,
+  "live_price": 37.62,
+  "live_sku": "32137",
+  "updated_at": "2026-11-16 14:50:23.212610"
+ },
+ {
+  "offer_id": "a763a41b-6bde-4264-b2f2-65ca21618933",
+  "article": "32207",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 62.12,
+  "live_price": 62.12,
+  "live_sku": "32207",
+  "updated_at": "2026-11-16 06:08:09.579256"
+ },
+ {
+  "offer_id": "1958c2e8-363c-4c59-8034-e526ca81418a",
+  "article": "32282",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 102.76,
+  "live_price": 102.76,
+  "live_sku": "32282",
+  "updated_at": "2026-11-16 09:00:34.909533"
+ },
+ {
+  "offer_id": "d517c715-9614-4a38-9761-005100010e6f",
+  "article": "33002",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S."
+  ],
+  "changed": false,
+  "snap_price": 64.9,
+  "live_price": 64.9,
+  "live_sku": "33002",
+  "updated_at": "2026-11-16 06:01:57.122439"
+ },
+ {
+  "offer_id": "e582798a-83aa-45dc-8a4c-0795dd3bfa68",
+  "article": "3384",
+  "owner_brand": "TOKICO",
+  "foreign": [
+   "NGK"
+  ],
+  "changed": false,
+  "snap_price": 173.9,
+  "live_price": 173.9,
+  "live_sku": "3384",
+  "updated_at": "2026-11-16 13:41:51.189757"
+ },
+ {
+  "offer_id": "3a4e0564-f49e-4696-a1a5-87a0de9fdbc2",
+  "article": "35221",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "JAPKO"
+  ],
+  "changed": false,
+  "snap_price": 188.3,
+  "live_price": 188.3,
+  "live_sku": "35221",
+  "updated_at": "2026-11-16 09:00:30.246246"
+ },
+ {
+  "offer_id": "a712aeeb-74c8-44fc-b1fc-f998283d94a7",
+  "article": "36153",
+  "owner_brand": "ORIGINAL IMPERIUM",
+  "foreign": [
+   "FEBI BILSTEIN",
+   "NRF"
+  ],
+  "changed": false,
+  "snap_price": 120.2,
+  "live_price": 120.2,
+  "live_sku": "36153",
+  "updated_at": "2026-11-16 15:31:40.610896"
+ },
+ {
+  "offer_id": "94d076a9-8b12-403f-9ad9-2defbdb304ed",
+  "article": "36477",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S.",
+   "MAPCO",
+   "SPIDAN"
+  ],
+  "changed": false,
+  "snap_price": 70.68,
+  "live_price": 70.68,
+  "live_sku": "36477",
+  "updated_at": "2026-11-16 09:00:29.530737"
+ },
+ {
+  "offer_id": "ef7914ab-d1a6-471f-8dee-9422c7a589fe",
+  "article": "36530",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S.",
+   "SPIDAN"
+  ],
+  "changed": false,
+  "snap_price": 22.86,
+  "live_price": 22.86,
+  "live_sku": "36530",
+  "updated_at": "2026-11-16 09:02:42.804775"
+ },
+ {
+  "offer_id": "420d8e03-11df-4183-905f-13ef5d5a312d",
+  "article": "36585",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S."
+  ],
+  "changed": false,
+  "snap_price": 62.88,
+  "live_price": 62.88,
+  "live_sku": "36585",
+  "updated_at": "2026-11-16 09:01:45.086815"
+ },
+ {
+  "offer_id": "d4fa62a5-e062-4d02-936d-c5d05c68a56b",
+  "article": "3688",
+  "owner_brand": "NGK",
+  "foreign": [
+   "LIQUI MOLY"
+  ],
+  "changed": true,
+  "snap_price": 1031.33,
+  "live_price": 56.55,
+  "live_sku": "3688",
+  "updated_at": "2026-11-16 19:52:14.230109",
+  "payload_matches": [
+   [
+    "NGK",
+    56.55,
+    "renault__renault_avantime-de0_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "LIQUI MOLY",
+    1031.33,
+    "aston-martin__aston-martin_v12-speedster_cpie.json"
+   ],
+   [
+    "NGK",
+    56.55,
+    "renault__renault_avantime-de0_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "17ab3cee-1288-400b-8b06-83814ee859e7",
+  "article": "37138",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "FEBI BILSTEIN",
+   "ORIGINAL IMPERIUM"
+  ],
+  "changed": true,
+  "snap_price": 319.95,
+  "live_price": 88.74,
+  "live_sku": "37138",
+  "updated_at": "2026-11-16 19:57:24.386995",
+  "payload_matches": [
+   [
+    "A.B.S.",
+    88.74,
+    "renault__renault_laguna-i-grandtour-k56_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_m0nde0_cpie.json"
+   ],
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_edge-titanium_cpie.json"
+   ],
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_focus-iii-box-body-estate_cpie.json"
+   ],
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_s-max-2015_cpie.json"
+   ],
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_explorer-st_cpie.json"
+   ],
+   [
+    "ORIGINAL IMPERIUM",
+    319.95,
+    "ford__ford_transit-350l_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "62ec8baf-e1e6-49fb-bc08-eed6cb9dcbe2",
+  "article": "37467",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "A.B.S."
+  ],
+  "changed": false,
+  "snap_price": 44.58,
+  "live_price": 44.58,
+  "live_sku": "37467",
+  "updated_at": "2026-11-16 08:10:34.869850"
+ },
+ {
+  "offer_id": "c3bec056-590f-43c2-9036-cb1e53a9053d",
+  "article": "37615",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "A.B.S."
+  ],
+  "changed": true,
+  "snap_price": 179.29,
+  "live_price": 52.79,
+  "live_sku": "37615",
+  "updated_at": "2026-11-16 18:38:08.733277",
+  "payload_matches": [
+   [
+    "SIDEM",
+    52.79,
+    "porsche__porsche_macan-xab_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "A.B.S.",
+    179.29,
+    "toyota__toyota_avensis-saloon-zrt27-adt27_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    179.29,
+    "toyota__toyota_avensis-estate-zrt27-adt27_cpie.json"
+   ],
+   [
+    "SIDEM",
+    52.79,
+    "porsche__porsche_macan-xab_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "f11b6337-1bb4-43f7-99d7-61cd22fd5ef8",
+  "article": "37823",
+  "owner_brand": "A.B.S.",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": true,
+  "snap_price": 47.88,
+  "live_price": 104.89,
+  "live_sku": "37823",
+  "updated_at": "2026-11-16 18:47:37.787131",
+  "payload_matches": [
+   [
+    "A.B.S.",
+    104.89,
+    "porsche__porsche_911-speedster-997_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "MAPCO",
+    47.88,
+    "vw__vw_lt-28-35-i-platform-chassis-281-363_cpie.json"
+   ],
+   [
+    "MAPCO",
+    47.88,
+    "vw__vw_lt-40-55-i-platform-chassis-293-909_cpie.json"
+   ],
+   [
+    "A.B.S.",
+    104.89,
+    "porsche__porsche_911-speedster-997_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "72943f3a-91f8-4946-98b3-e0ee73491839",
+  "article": "37839",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 94.9,
+  "live_price": 94.9,
+  "live_sku": "37839",
+  "updated_at": "2026-11-16 08:56:25.189099"
+ },
+ {
+  "offer_id": "d1e52bf4-0e8c-4440-8232-d06b67c36fa0",
+  "article": "38970",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 149.78,
+  "live_price": 149.78,
+  "live_sku": "38970",
+  "updated_at": "2026-11-16 08:59:58.830634"
+ },
+ {
+  "offer_id": "5444fe57-e647-4738-beef-9d2491ca3444",
+  "article": "40201",
+  "owner_brand": "3RG",
+  "foreign": [
+   "JAPKO"
+  ],
+  "changed": true,
+  "snap_price": 20.74,
+  "live_price": 20.74,
+  "live_sku": "40201",
+  "updated_at": "2026-11-16 17:36:36.208976",
+  "payload_matches": [
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_505-break-551d_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-coupe_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-convertible_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-a-m_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_505-551a_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-pickup-e_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_604-561a_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-break-d-f_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "JAPKO",
+    71.2,
+    "suzuki__suzuki_sj-410-1979_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_505-break-551d_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-coupe_cpie.json"
+   ],
+   [
+    "JAPKO",
+    71.2,
+    "maruti__maruti_800_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-convertible_cpie.json"
+   ],
+   [
+    "3RG",
+    20.74,
+    "peugeot__peugeot_504-a-m_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "a274fc4b-2525-4971-aa91-dcb3b51358aa",
+  "article": "40819",
+  "owner_brand": "SPIDAN CHASSIS PARTS",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 107.98,
+  "live_price": 107.98,
+  "live_sku": "40819",
+  "updated_at": "2026-11-16 12:35:46.131547"
+ },
+ {
+  "offer_id": "e0cd9eb0-fe61-4ce3-8887-3a26a9c3bf97",
+  "article": "4286",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "NGK"
+  ],
+  "changed": false,
+  "snap_price": 63.58,
+  "live_price": 63.58,
+  "live_sku": "4286",
+  "updated_at": "2026-11-16 06:34:30.344345"
+ },
+ {
+  "offer_id": "04b207ab-8c7d-4925-9794-a3d69496f9dd",
+  "article": "44509",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "SPIDAN CHASSIS PARTS"
+  ],
+  "changed": true,
+  "snap_price": 76.14,
+  "live_price": 21.47,
+  "live_sku": "44509",
+  "updated_at": "2026-11-16 18:41:12.970517",
+  "payload_matches": [
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_911-convertible-996_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_cayman-987_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_boxster-986_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "SPIDAN CHASSIS PARTS",
+    76.14,
+    "seat__seat_marbella-28_cpie.json"
+   ],
+   [
+    "SPIDAN CHASSIS PARTS",
+    76.14,
+    "seat__seat_terra-24_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_911-convertible-996_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_cayman-987_cpie.json"
+   ],
+   [
+    "FEBI BILSTEIN",
+    21.47,
+    "porsche__porsche_boxster-986_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "907b0a9b-c9be-48d0-9e03-8bc6a351824b",
+  "article": "44741",
+  "owner_brand": "SPIDAN CHASSIS PARTS",
+  "foreign": [
+   "FEBI BILSTEIN"
+  ],
+  "changed": false,
+  "snap_price": 163.59,
+  "live_price": 163.59,
+  "live_sku": "44741",
+  "updated_at": "2026-11-16 08:34:05.606501"
+ },
+ {
+  "offer_id": "56b4f8ff-8f39-4c02-b49f-aa3591605c5e",
+  "article": "46040",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "SPIDAN CHASSIS PARTS"
+  ],
+  "changed": false,
+  "snap_price": 46.42,
+  "live_price": 46.42,
+  "live_sku": "46040",
+  "updated_at": "2026-11-16 09:06:06.862876"
+ },
+ {
+  "offer_id": "aea15cc7-7792-4343-9cfc-2f893d982989",
+  "article": "46296",
+  "owner_brand": "SPIDAN CHASSIS PARTS",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 90.72,
+  "live_price": 90.72,
+  "live_sku": "46296",
+  "updated_at": "2026-11-16 08:38:06.424835"
+ },
+ {
+  "offer_id": "21f807e4-798a-41ea-acbe-eb6131ae571f",
+  "article": "48193",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign": [
+   "NGK"
+  ],
+  "changed": false,
+  "snap_price": 94.38,
+  "live_price": 94.38,
+  "live_sku": "48193",
+  "updated_at": "2026-11-16 13:34:31.859567"
+ },
+ {
+  "offer_id": "ad90bd43-4dea-421e-b0ae-36e3735a9e59",
+  "article": "48207",
+  "owner_brand": "NGK",
+  "foreign": [
+   "3RG"
+  ],
+  "changed": false,
+  "snap_price": 98.03,
+  "live_price": 98.03,
+  "live_sku": "48207",
+  "updated_at": "2026-11-16 08:17:27.118770"
+ },
+ {
+  "offer_id": "a3610290-0330-41f0-84b6-0f8fa031f7da",
+  "article": "49215",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 128.45,
+  "live_price": 128.45,
+  "live_sku": "49215",
+  "updated_at": "2026-11-16 08:34:12.035891"
+ },
+ {
+  "offer_id": "b7f9fd24-8202-4daa-a0b3-a238e91d126c",
+  "article": "51565",
+  "owner_brand": "SPIDAN",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 3296.01,
+  "live_price": 3296.01,
+  "live_sku": "51565",
+  "updated_at": "2026-11-16 09:01:41.964249"
+ },
+ {
+  "offer_id": "625485ba-70eb-492e-9caf-bcaa15b40e95",
+  "article": "53506",
+  "owner_brand": "AIC",
+  "foreign": [
+   "NRF"
+  ],
+  "changed": true,
+  "snap_price": 200.66,
+  "live_price": 211.55,
+  "live_sku": "53506",
+  "updated_at": "2026-11-16 16:52:57.219500",
+  "payload_matches": [
+   [
+    "AIC",
+    211.55,
+    "peugeot__peugeot_partner-origin-combispace-g_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "NRF",
+    200.66,
+    "honda__honda_jazz-1-5_cpie.json"
+   ],
+   [
+    "NRF",
+    200.66,
+    "honda__honda_insight-hybrid_cpie.json"
+   ],
+   [
+    "NRF",
+    200.66,
+    "honda__honda_jazz-hybrid_cpie.json"
+   ],
+   [
+    "NRF",
+    200.66,
+    "honda__honda_civic-tourer_cpie.json"
+   ],
+   [
+    "AIC",
+    211.55,
+    "peugeot__peugeot_partner-origin-combispace-g_cpie.json"
+   ],
+   [
+    "NRF",
+    200.66,
+    "honda__honda_civic-4d_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "b7060436-bce9-407a-bbc0-3d24f24c86a2",
+  "article": "53631",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "NRF"
+  ],
+  "changed": false,
+  "snap_price": 47.47,
+  "live_price": 47.47,
+  "live_sku": "53631",
+  "updated_at": "2026-11-16 16:24:21.709510"
+ },
+ {
+  "offer_id": "4d70ffba-78dd-486d-9807-2e406716b265",
+  "article": "53823",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "NRF"
+  ],
+  "changed": false,
+  "snap_price": 126.29,
+  "live_price": 126.29,
+  "live_sku": "53823",
+  "updated_at": "2026-11-16 07:22:38.003719"
+ },
+ {
+  "offer_id": "361e304e-86bf-4f06-bd08-36e50b4cb77e",
+  "article": "53933",
+  "owner_brand": "AIC",
+  "foreign": [
+   "NRF"
+  ],
+  "changed": false,
+  "snap_price": 9.78,
+  "live_price": 9.78,
+  "live_sku": "53933",
+  "updated_at": "2026-11-16 14:32:09.705101"
+ },
+ {
+  "offer_id": "c02de4ea-2164-4b44-8961-d0dcd8d74d7f",
+  "article": "54849",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "AIC"
+  ],
+  "changed": false,
+  "snap_price": 23.98,
+  "live_price": 23.98,
+  "live_sku": "54849",
+  "updated_at": "2026-11-16 08:38:11.395275"
+ },
+ {
+  "offer_id": "d4ea12ba-778b-4587-84fc-fc895c5f4ace",
+  "article": "58060",
+  "owner_brand": "NRF",
+  "foreign": [
+   "AIC"
+  ],
+  "changed": true,
+  "snap_price": 187.78,
+  "live_price": 464.82,
+  "live_sku": "58060",
+  "updated_at": "2026-11-16 19:57:27.498105",
+  "payload_matches": [
+   [
+    "NRF",
+    464.82,
+    "renault__renault_laguna-i-grandtour-k56_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "AIC",
+    187.36,
+    "mazda__mazda_3-bl_cpie.json"
+   ],
+   [
+    "AIC",
+    187.78,
+    "suzuki__suzuki_sx4-ey-gy_cpie.json"
+   ],
+   [
+    "AIC",
+    187.36,
+    "mazda__mazda_3-saloon-bk_cpie.json"
+   ],
+   [
+    "NRF",
+    464.82,
+    "renault__renault_laguna-i-grandtour-k56_cpie.json"
+   ],
+   [
+    "AIC",
+    187.36,
+    "mazda__mazda_3-bk_cpie.json"
+   ],
+   [
+    "AIC",
+    187.78,
+    "suzuki__suzuki_sx4_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "447c08b9-8e55-44b0-86ba-45ed0579ec2e",
+  "article": "58131",
+  "owner_brand": "NRF",
+  "foreign": [
+   "SPIDAN CHASSIS PARTS"
+  ],
+  "changed": false,
+  "snap_price": 443.91,
+  "live_price": 443.91,
+  "live_sku": "58131",
+  "updated_at": "2026-11-16 08:19:54.469253"
+ },
+ {
+  "offer_id": "ea856bea-4811-4bb4-b710-2407e4c5d82e",
+  "article": "58335",
+  "owner_brand": "NRF",
+  "foreign": [
+   "SPIDAN CHASSIS PARTS"
+  ],
+  "changed": false,
+  "snap_price": 322.32,
+  "live_price": 322.32,
+  "live_sku": "58335",
+  "updated_at": "2026-11-16 08:59:56.699664"
+ },
+ {
+  "offer_id": "cf1a7098-dfb7-40db-9279-3ea507fd48a6",
+  "article": "59119",
+  "owner_brand": "NRF",
+  "foreign": [
+   "MAPCO",
+   "SPIDAN CHASSIS PARTS"
+  ],
+  "changed": false,
+  "snap_price": 329.14,
+  "live_price": 329.14,
+  "live_sku": "59119",
+  "updated_at": "2026-11-16 12:07:17.320697"
+ },
+ {
+  "offer_id": "f47e5038-ee78-407d-b1b0-bb1049c2735f",
+  "article": "59323",
+  "owner_brand": "NRF",
+  "foreign": [
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 513.23,
+  "live_price": 513.23,
+  "live_sku": "59323",
+  "updated_at": "2026-11-16 08:41:34.760612"
+ },
+ {
+  "offer_id": "1d9b2f7d-12a0-444a-80c9-6543da78f1c6",
+  "article": "5975",
+  "owner_brand": "SIDEM",
+  "foreign": [
+   "NGK"
+  ],
+  "changed": true,
+  "snap_price": 34.38,
+  "live_price": 215.52,
+  "live_sku": "5975",
+  "updated_at": "2026-11-16 19:58:24.248541",
+  "payload_matches": [
+   [
+    "SIDEM",
+    215.52,
+    "renault__renault_latitude-l70_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "NGK",
+    34.38,
+    "trabant__trabant_p-601-tramp_cpie.json"
+   ],
+   [
+    "NGK",
+    34.38,
+    "trabant__trabant_p-601-universal_cpie.json"
+   ],
+   [
+    "SIDEM",
+    215.52,
+    "renault__renault_latitude-l70_cpie.json"
+   ],
+   [
+    "NGK",
+    34.38,
+    "trabant__trabant_p-601-box_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "c1a6813e-06c4-4afa-997d-e4e23c40f418",
+  "article": "60104",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "MEAT & DORIA"
+  ],
+  "changed": false,
+  "snap_price": 24.05,
+  "live_price": 24.05,
+  "live_sku": "60104",
+  "updated_at": "2026-11-16 13:34:30.129315"
+ },
+ {
+  "offer_id": "01d3b0d1-df0a-4a9c-ba8d-589f444be9d5",
+  "article": "601552",
+  "owner_brand": "GSP",
+  "foreign": [
+   "CORTECO"
+  ],
+  "changed": false,
+  "snap_price": 177.55,
+  "live_price": 177.55,
+  "live_sku": "601552",
+  "updated_at": "2026-11-16 11:02:55.407988"
+ },
+ {
+  "offer_id": "b884289a-ceeb-474d-8060-3cc3df901e89",
+  "article": "60359",
+  "owner_brand": "MEAT & DORIA",
+  "foreign": [
+   "NISSENS"
+  ],
+  "changed": false,
+  "snap_price": 1399.27,
+  "live_price": 1399.27,
+  "live_sku": "60359",
+  "updated_at": "2026-11-16 13:23:06.364248"
+ },
+ {
+  "offer_id": "840e1566-8337-46c1-b6c4-558d9ddf312b",
+  "article": "6432881",
+  "owner_brand": "ALKAR",
+  "foreign": [
+   "DIEDERICHS"
+  ],
+  "changed": false,
+  "snap_price": 87.97,
+  "live_price": 87.97,
+  "live_sku": "6432881",
+  "updated_at": "2026-11-16 15:56:33.039048"
+ },
+ {
+  "offer_id": "7f62db15-ae7c-4c4d-a286-30e15ca22eaa",
+  "article": "673536",
+  "owner_brand": "VALEO",
+  "foreign": [
+   "ERA"
+  ],
+  "changed": false,
+  "snap_price": 192.17,
+  "live_price": 192.17,
+  "live_sku": "673536",
+  "updated_at": "2026-11-16 15:18:47.702941"
+ },
+ {
+  "offer_id": "871108aa-5c27-43a7-ab53-14180b89063f",
+  "article": "6744",
+  "owner_brand": "MAPCO",
+  "foreign": [
+   "KAMOKA"
+  ],
+  "changed": false,
+  "snap_price": 52.34,
+  "live_price": 52.34,
+  "live_sku": "6744",
+  "updated_at": "2026-11-16 08:10:33.822294"
+ },
+ {
+  "offer_id": "fe592439-b60d-4713-8ac1-19449e5d3ec9",
+  "article": "802542",
+  "owner_brand": "VALEO",
+  "foreign": [
+   "GSP"
+  ],
+  "changed": false,
+  "snap_price": 97.06,
+  "live_price": 97.06,
+  "live_sku": "802542",
+  "updated_at": "2026-11-16 12:26:42.719245"
+ },
+ {
+  "offer_id": "6e4c5b1d-c248-4406-8903-5fe3690ddf0c",
+  "article": "850005",
+  "owner_brand": "GSP",
+  "foreign": [
+   "VALEO"
+  ],
+  "changed": true,
+  "snap_price": 463.5,
+  "live_price": 71.34,
+  "live_sku": "850005",
+  "updated_at": "2026-11-16 19:57:30.689436",
+  "payload_matches": [
+   [
+    "GSP",
+    71.34,
+    "renault__renault_laguna-i-grandtour-k56_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "VALEO",
+    463.5,
+    "alfa-romeo__alfa-romeo_33-sportwagon-907b_cpie.json"
+   ],
+   [
+    "VALEO",
+    463.5,
+    "alfa-romeo__alfa-romeo_33-907a_cpie.json"
+   ],
+   [
+    "GSP",
+    71.34,
+    "renault__renault_laguna-i-grandtour-k56_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "9b3a3de6-63ea-48ce-8bf1-b44182e455da",
+  "article": "90106",
+  "owner_brand": "METALCAUCHO",
+  "foreign": [
+   "FISPA",
+   "MAPCO"
+  ],
+  "changed": false,
+  "snap_price": 143.58,
+  "live_price": 143.58,
+  "live_sku": "90106",
+  "updated_at": "2026-11-16 14:28:52.069128"
+ },
+ {
+  "offer_id": "fda5e590-f95c-4d3a-b1d0-c95412a81dc9",
+  "article": "908790",
+  "owner_brand": "AMC",
+  "foreign": [
+   "VALVOLINE"
+  ],
+  "changed": true,
+  "snap_price": 1782.42,
+  "live_price": 1782.42,
+  "live_sku": "908790",
+  "updated_at": "2026-11-16 20:04:43.024608",
+  "payload_matches": [
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_gla-class-x156_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "renault__renault_clio-iv-grandtour-kh_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_cla-coupe-c117_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_cla-shooting-brake-x117_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_citan-kombi-415_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_b-class-w246-w242_cpie.json"
+   ],
+   [
+    "AMC",
+    1782.42,
+    "mercedes-benz__mercedes-benz_a-class-w176_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_d-truck-pickup_cpie.json"
+   ],
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_a-741_cpie.json"
+   ],
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_roadline_cpie.json"
+   ],
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_d-truck-box_cpie.json"
+   ],
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_gto_cpie.json"
+   ],
+   [
+    "VALVOLINE",
+    209.15,
+    "aixam__aixam_coupe-2012_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "9a6c849a-cb1e-46da-916d-6e055c8fba16",
+  "article": "910080",
+  "owner_brand": "KYB",
+  "foreign": [
+   "AMC"
+  ],
+  "changed": true,
+  "snap_price": 1506.49,
+  "live_price": 68.94,
+  "live_sku": "910080",
+  "updated_at": "2026-11-16 19:58:16.826966",
+  "payload_matches": [
+   [
+    "KYB",
+    68.94,
+    "renault__renault_laguna-iii-bt0-1_cpie.json"
+   ]
+  ],
+  "payload_all": [
+   [
+    "AMC",
+    1506.49,
+    "vw__vw_transporter-iii-box_cpie.json"
+   ],
+   [
+    "AMC",
+    1506.49,
+    "vw__vw_transporter-ii-bus_cpie.json"
+   ],
+   [
+    "AMC",
+    1506.49,
+    "vw__vw_transporter-iii-platform-chassis_cpie.json"
+   ],
+   [
+    "KYB",
+    68.94,
+    "renault__renault_laguna-iii-bt0-1_cpie.json"
+   ]
+  ],
+  "verdict": "OWNER_BRAND_PAYLOAD"
+ },
+ {
+  "offer_id": "1631bd51-3c10-4435-bbdc-d9b9619f75e5",
+  "article": "PA1632",
+  "owner_brand": "GRAF",
+  "foreign": [
+   "SALERI SIL"
+  ],
+  "changed": false,
+  "snap_price": 183.92,
+  "live_price": 183.92,
+  "live_sku": "PA1632",
+  "updated_at": "2026-11-16 12:57:36.276025"
+ },
+ {
+  "offer_id": "c3eb4577-6aa5-49b3-9d05-4dee15f44d9d",
+  "article": "R1020PCA",
+  "owner_brand": "SAMKO",
+  "foreign": [
+   "LPR"
+  ],
+  "changed": false,
+  "snap_price": 294.9,
+  "live_price": 294.9,
+  "live_sku": "R1020PCA",
+  "updated_at": "2026-11-16 13:58:14.648759"
+ },
+ {
+  "offer_id": "4ce50507-7a92-422e-ba78-c967a73e482e",
+  "article": "TCK58",
+  "owner_brand": "MOTIVE",
+  "foreign": [
+   "FAI AUTOPARTS"
+  ],
+  "changed": false,
+  "snap_price": 639.9,
+  "live_price": 639.9,
+  "live_sku": "TCK58",
+  "updated_at": "2026-11-16 12:59:43.319023"
+ },
+ {
+  "offer_id": "e2dd937a-ea43-41cd-822c-503966d5b89d",
+  "article": "ZR OP701 R",
+  "owner_brand": "JUMASA",
+  "foreign": [
+   "ELECTRIC LIFE"
+  ],
+  "changed": false,
+  "snap_price": 410.08,
+  "live_price": 410.08,
+  "live_sku": "ZR OP701 R",
+  "updated_at": "2026-11-16 15:38:45.912625"
+ }
+]
