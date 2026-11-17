@@ -21,9 +21,9 @@ SMALL_PAYLOAD = 100          # 10 of 6,497 payload files are < 100 items and all
 CATCH_ALL = "כללי"
 
 
-def category_for(name: str, slug: str, url: str = "", extra: str = "") -> str:
+def category_for(name: str, slug: str, url: str = "", extra: str = "", by_name: str | None = None) -> str:
     """Product identity first (name), listing-page taxonomy only when the name is uninformative."""
-    by_name = categorize_on_ingest(name=name, url="", extra=extra)
+    by_name = by_name or categorize_on_ingest(name=name, url="", extra=extra)
     if by_name != CATCH_ALL:
         return by_name
     by_slug = categorize_slug(slug or "")

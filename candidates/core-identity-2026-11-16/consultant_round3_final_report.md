@@ -12,7 +12,7 @@
 | B. Final accounting (951) | **PASS**, with a CONCERN | 951 unique, one disposition each. The 116 not repaired are all unchanged since the snapshot, all still `is_available=true`, none relinked, deactivated or deleted. Identity spot check: 10/10 owner brands match, and classify agrees with the file on 72/72 sibling pairs. All 75 SAME siblings are present, unchanged and active, and 0 of their offers were touched. |
 | C. base_price | **PASS**, with a CONCERN | Random 2,000 journal parts: 2,000/2,000 live == my own independent recomputation. heal32: 32/32. STALE_SOURCE + ESTIMATE_AMBIGUOUS, full population of 470,647: 470,469 unchanged. The 178 that changed were written by the live car-parts.ie importer, not by the repair tool (details below). |
 | D. Writers | **PASS** for the 4 claimed fixes, with a CONCERN | The fixes are real in the diffs. The inventory misses `rockauto_price_import.py`, and it misclassifies `amayama_price_import.py` and `oempartsonline_importer.py`, which are all reachable at runtime and still use their own `x1.45`. |
-| E. Harvester | **PASS**, with a CONCERN | pid 1 and the harvester (pid 87) started after every relevant mtime. The 3 models were kept `pending` through 4 mint-failure cycles, then collected 389/395/23. Brand check: 786/786 payload items brand-consistent with the written offer. 0 of the 835 overwritten. Post-restart base_price: 754/754 equal to the rule. |
+| E. Harvester | **PASS** for the restart and pending-not-empty fix; **CONCERN (High)**: the byd/atto-3 "23 parts" are junk | pid 1 and the harvester (pid 87) started after every relevant mtime. The 3 models were kept `pending` through 4 mint-failure cycles, then collected 389/395/23. Brand check: 786/786 payload items brand-consistent with the written offer. 0 of the 835 overwritten. Post-restart base_price: 754/754 equal to the rule. |
 | F. Schedule | **PASS** | Night jobs ran 01:00-04:45 Israel time on 2026-11-17. run_all_tasks slots are unchanged and ran 21:30 and 00:15 Israel time. |
 
 ---
@@ -55,13 +55,14 @@ Data: the 4 result files (canary + rest for v4 and for v5add), v4 + v5add manife
     - MALÒ→`malo` (6) and LEMFÖRDER→`lemforder` (1) differ only by diacritics.
     - DIEDERICHS→`hd-karosserieteile` (3) and EFI AUTOMOTIVE→`bougicord` (1) are product pages whose parsed structured data says brand DIEDERICHS / EFI AUTOMOTIVE with the exact SKU (pp_*.jsonl), so the slug is a sub-brand line.
 - **The 116 not repaired:**
-  - 0 updated since the 2026-11-16 snapshot. Their price and URL are still the foreign-brand values, and every one still has a vehicle-category URL.
+  - VERIFIED: live price_ils and supplier_url equal `s1_snapshot_20261116.json` (`price_now`/`url_now`) and the v5 `current_at_snapshot` for 116/116. No `updated_at` has moved, and every one still has a vehicle-category URL.
+  - v5 flags `foreign_qualified_price_equals_bare=True` (the price provably equals another brand's row) for 58 of them. For the other 57 + 1 it is not proven either way.
   - 0 unavailable, 0 relinked, 0 part deactivated, 0 missing. Nothing was hidden or deleted.
   - **CONCERN:** these 115 wrong offers plus KAMOKA (which is valid) remain customer-visible and orderable at a price that is known to belong to another brand's article.
 - **Identity cases (59):**
   - Siblings: 306 (226 different, 75 same, 5 uncertain). All are present and active, and none changed name, oem_number or part_type.
   - 11 siblings carry an old `merged_from` marker, all dated on or before 2026-11-16 22:33 UTC. None was created today.
-  - 1 DIFFERENT sibling had `updated_at 03:59:24` from the Renault harvest import. That is a normal upsert, not a merge.
+  - 1 DIFFERENT sibling (febi bilstein 03212, Daewoo) has `updated_at 03:59:24`. The timing matches the Renault import, but sku 03212 is not in the 03:59 payloads, so the writer is ASSUMED, not attributed. Its name, oem_number and part_type are unchanged and it is active, so this is not a merge.
   - Offers on the 75 SAME siblings updated after 01:50 UTC: 0. No merge or relink happened.
   - Spot check, 10 random cases (seed 7): title brand == owner brand in 10/10. I ran `part_identity.classify` myself on the live rows: it matched the file's verdict on 72/72 sibling pairs.
 
@@ -130,6 +131,11 @@ Data: the 4 result files (canary + rest for v4 and for v5add), v4 + v5add manife
   2. **Partial delivery is "done".** If `sent > 0`, blocked pages only produce a warning, and a failed final `post_relay(batch)` silently drops those parts. The model is marked `done` with partial data and will not be revisited until the 14-day refresh. Medium (silent data loss, against the "importer never drops rows silently" rule).
   3. In session mode, a genuine 404 counts as blocked, so a model with no parts can never become `empty` in session mode. Low.
   4. The mint lock falls through after a 3×timeout+30 s deadline and solves anyway. That is acceptable.
+  5. **The byd/atto-3 collection is not real vehicle data (High).** All 23 payload items, found on every slug page (the log stays at 23 from 20/79 to 80/79 slugs), are a page-wide product block, not Atto 3 parts. Examples: Spark plug RIDEX 686S0003, Glow plug RIDEX 243G0006, Glow plug KAMOKA KP002, Engine oil ELF 2202818 and Oil filter RIDEX 7O0005. The BYD Atto 3 is a battery-electric car.
+     - The import wrote **22 `part_vehicle_fitment` rows for Byd / Atto 3 at about 03:59 UTC**. These are the only Atto 3 fitment rows (22 in total), and 11 of them are ICE-only parts (spark or glow plug, oil filter, engine oil, sump plug).
+     - The harvester has no check that separates a page's real category listing from a "popular products" or fallback block. When a model page has no real listing, this junk becomes fitment, and fitment is the core search differentiator (G1).
+     - `harvest_queue` shows `parts_found=87` for atto-3, so earlier harvests did the same. Whether Renault fuego/master also absorbed carousel items is UNVERIFIED. COF100136S (fuego payload) landed on a "Master II" titled part, which is consistent with either a collision or a carousel.
+     - E stays PASS for what the item asked: the restart, pending kept through mint failures, and no `empty`. But "23 parts collected" is not evidence of real collection.
 
 ## F. Schedule
 
@@ -141,16 +147,17 @@ Data: the 4 result files (canary + rest for v4 and for v5add), v4 + v5add manife
   - rex_night: 00:37 → 00:40 (0 inserts, 0 price updates)
   - category_discovery: 00:41 → 02:45 (0 inserted; stopped by the 7,200 s time budget)
   - All are COMPLETED, and all started at or after 01:00 Israel time.
-- `run_all_tasks`: `DB_AGENT_RUN_TIMES_IL` default `21:30,00:15,07:15`, not overridden in the environment. db_update_agent's only change this round is the 2 lines for `ensure_vat_registry`. `job_registry` shows runs at 19:30 UTC (21:30 Israel) and 22:15 UTC (00:15 Israel) on 2026-11-16, both completed.
+- `run_all_tasks`: `DB_AGENT_RUN_TIMES_IL` default `21:30,00:15,07:15`, not overridden in the environment. `git log -p --since=2026-11-14` over db_update_agent.py and night_pipeline.py shows no added or removed line touching `RUN_TIMES`, `WINDOW_OPEN/CLOSE` or `NIGHT_PIPELINE_OPEN` (VERIFIED). `job_registry` shows runs at 19:30 UTC (21:30 Israel) and 22:15 UTC (00:15 Israel) on 2026-11-16, both completed.
 - Note: rex_night and category_discovery ran in the old uvicorn on pre-fix catalog_scraper code (restart was 03:34). They inserted 0 parts and wrote 0 prices, so there was no raw-USD base_price impact. I checked parts touched by category discovery in 00:41-02:46 UTC: 0.
 
 ## G. Open items for the tracker
 
 | # | Severity | Item |
 |---|---|---|
+| 0 | **High** | **Wrong fitment from page-wide product blocks:** byd/atto-3 wrote 22 fitment rows (11 ICE-only: glow and spark plugs, oil) for an EV at 03:59 UTC. The harvester cannot tell a real category listing from a carousel or fallback block. Audit models whose `parts_found` is small and identical across slugs. Remove the Atto 3 rows after the owner approves (a destructive production change). |
 | 1 | **High** | 115 known-wrong offers (41 OTHER_EVIDENCE_GAP, 36 UNRESOLVED_SOURCE_BLOCKER, 23 IDENTITY_CONFIRMED_NO_PRICE, 15 UNRESOLVED_IDENTITY) are still `is_available=true` and visible at a price that belongs to another brand's article. Decide: hide them pending evidence, or accept the risk explicitly. |
 | 2 | Medium | 256 of the 835 repaired offers have source evidence `OutOfStock` but remain `is_available=true` and `availability=in_stock` (deliberately unchanged). A customer can order a part the supplier lists as out of stock. |
-| 3 | Medium | The root cause is not closed for other offers: a bare-article `supplier_sku` key is shared across brands (737/754 offers written post-restart are bare keys). Undetected collisions outside the 1,043-offer population remain possible, and every re-harvest can re-collide. |
+| 3 | **High** | The bare-key collision is still active after the restart. 737/754 Car-Parts.ie offers written at 03:59 UTC are bare article keys. In the two Renault import transactions, 79/99 and 83/109 of the upserted parts ended with **no offer at all**: the harvested price landed on an offer that another part owns (COF100136S from the fuego payload went onto a "Master II" part). The owner part gets only an estimate base_price. Every re-harvest repeats this, so new wrong offers can appear outside the repaired population. |
 | 4 | Medium | The live importer writes the catalog-estimate base_price on upserted parts with no offer (178 ESTIMATE/STALE rows changed at 03:59). This contradicts the "ESTIMATE_AMBIGUOUS = do not write" decision. Pick one policy. |
 | 5 | Medium | Writer inventory gaps: `rockauto_price_import.py` (missing) plus `amayama_price_import.py` and `oempartsonline_importer.py` (runtime-triggered, not one-shot) still use their own `×1.45` (fill-if-empty). Also the IL importer family (already OPEN in the inventory). |
 | 6 | Medium | Harvester partial delivery: a failed relay batch, or blocked pages when `sent>0`, means silent loss and status `done`. |

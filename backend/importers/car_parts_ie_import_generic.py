@@ -75,6 +75,7 @@ from car_brand_resolver import resolve_source_brand
 import cpie_identity
 import cpie_fitment_guard
 import base_price_rule
+from category_map import categorize_on_ingest
 
 from warranty_policy import resolve as _warranty_resolve
 
@@ -255,7 +256,8 @@ async def import_file(
 
             # Category + fitment evidence: cpie_fitment_guard (2026-11-17) - the product NAME decides the category (the listing-page
             # slug only as a fallback) and a page-wide block item in a small payload creates no fitment.
-            category = cpie_fitment_guard.category_for(name, product.get("category") or "", url, description_text)
+            category = cpie_fitment_guard.category_for(name, product.get("category") or "", url, description_text,
+                                                       by_name=categorize_on_ingest(name=name, url="", extra=description_text))
             _fit_ok = cpie_fitment_guard.fitment_allowed(_payload_size, name, product.get("category") or "", description_text)
             # EUR→ILS: Car-Parts.ie prices are our supplier cost in EUR (NOT consumer prices
             # with Israeli VAT). Convert to ILS and apply 45% margin for the customer price.
