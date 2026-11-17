@@ -1,0 +1,791 @@
+{
+ "_doc": "Pure battery-electric vehicles (no combustion engine in any variant). Proposed backend/data/bev_models.json, read by cpie_fitment_guard.fitment_allowed. Key = car-parts.ie vehicle_slug exactly as the importer receives it; manufacturer/model = car_parts_ie_import_generic._parse_vehicle_slug(slug). Hybrid / PHEV / range-extender / ambiguous models are listed under not_bev and must NEVER be added.",
+ "version": "2026-11-17-c1",
+ "vehicle_slugs": [
+  "abarth/500e-convertible-332-2023",
+  "abarth/500e-hatchback-332",
+  "audi/a6-e-tron-avant-gh5",
+  "audi/a6-e-tron-sportback-gha",
+  "audi/e-tron-gen",
+  "audi/e-tron-gt-saloon-f83",
+  "audi/e-tron-sportback-gea",
+  "audi/etron",
+  "audi/q4-sportback",
+  "audi/q4-sportback-f4n",
+  "audi/q4-suv-f4b",
+  "audi/q8-e-tron",
+  "audi/q8-e-tron-sportback-get",
+  "audi/q8-e-tron-suv-geg",
+  "bmw/aceman-se",
+  "bmw/i4-g26",
+  "bmw/i4-m50",
+  "bmw/ix-i20",
+  "bmw/ix3-g08",
+  "byd/atto-3",
+  "byd/byd-dolphin",
+  "byd/dolphin-ea1",
+  "byd/e6-i",
+  "byd/seal",
+  "byd/seal-limousine",
+  "byd/t3-van",
+  "byd/yuan-plus",
+  "chevrolet/bolt",
+  "cupra/born-2021",
+  "dacia/spring",
+  "dacia/spring-2020",
+  "fiat/500e-332",
+  "fiat/500e-convertible-332",
+  "ford-usa/mustang-mach-e-cgw",
+  "hyundai/ioniq-5-ne",
+  "hyundai/ioniq-6-ce",
+  "hyundai/ioniq5",
+  "hyundai/ioniq6",
+  "jaguar/i-pace-x590",
+  "kia/ev3-sv",
+  "kia/ev6",
+  "kia/ev6-cv",
+  "kia/ev9",
+  "kia/ev9-mv",
+  "kia/niro-ev",
+  "kia/niro-plus-ev",
+  "maxus/edeliver-3-platform-chassis",
+  "maxus/edeliver-7-van",
+  "maxus/edeliver-9-platform-chassis",
+  "maxus/edeliver-9-van",
+  "maxus/mifa-9",
+  "maxus/t90ev",
+  "mercedes-benz/eqa-250",
+  "mercedes-benz/eqa-h243",
+  "mercedes-benz/eqa250",
+  "mercedes-benz/eqb-x243",
+  "mercedes-benz/eqc-n293",
+  "mercedes-benz/eqe-suv-x294",
+  "mercedes-benz/eqe-v295",
+  "mercedes-benz/eqe350-plus",
+  "mercedes-benz/eqs-suv-x296",
+  "mercedes-benz/eqs-v297",
+  "mercedes-benz/eqs450-4matic",
+  "mercedes-benz/eqv-w447",
+  "mercedes-benz/esprinter-van-b910",
+  "mercedes-benz/evito-tourer-w447",
+  "mg/ep-2020",
+  "mg/marvel-r",
+  "mg/mg4",
+  "mg/zs-ev",
+  "mini/mini-aceman-j05",
+  "nissan/ariya-fe0",
+  "nissan/leaf-2010",
+  "nissan/leaf-ze1",
+  "polestar/polestar-2-p",
+  "polestar/polestar-3",
+  "polestar/polestar-4",
+  "porsche/taycan-4s",
+  "porsche/taycan-cross-turismo",
+  "porsche/taycan-sport-turismo-y1c",
+  "porsche/taycan-y1a",
+  "skoda/elroq-pyl",
+  "skoda/enyaq",
+  "skoda/enyaq-iv",
+  "skoda/enyaq-iv-coupe-5ac",
+  "skoda/enyaq-iv-suv-5ac-5az",
+  "smart/1-suv-hx11",
+  "smart/3-suv",
+  "smart/hashtag-one",
+  "smart/hashtag-three",
+  "subaru/solterra-suv",
+  "tesla/model-3",
+  "tesla/model-3-5yj3",
+  "tesla/model-s",
+  "tesla/model-x",
+  "tesla/model-y",
+  "tesla/model-y-5yjy",
+  "tesla/model-y-juniper",
+  "toyota/bz4x-eam1",
+  "toyota/toyota-bz4x",
+  "volkswagen/id-3-pro-150kw",
+  "volkswagen/id-4-crozz",
+  "volkswagen/id4",
+  "volvo/c40-i-suv",
+  "volvo/ec40-539",
+  "volvo/ex30-416",
+  "volvo/ex30-sm",
+  "volvo/ex40-536",
+  "volvo/ex90-356",
+  "vw/id-3-e11",
+  "vw/id-4-e21",
+  "vw/id-5-e39",
+  "vw/id-buzz-bus-ebb",
+  "xpeng/g6",
+  "xpeng/g9",
+  "xpeng/p7i",
+  "zeekr/zeekr-001",
+  "zeekr/zeekr-7x",
+  "zeekr/zeekr-x"
+ ],
+ "c1_scope": [
+  {
+   "vehicle_slug": "audi/a6-e-tron-avant-gh5",
+   "manufacturer": "Audi",
+   "model": "A6 E Tron Avant Gh5",
+   "reason": "Audi A6 Avant e-tron (GH5, PPE, 2024-): battery-electric only"
+  },
+  {
+   "vehicle_slug": "audi/a6-e-tron-sportback-gha",
+   "manufacturer": "Audi",
+   "model": "A6 E Tron Sportback Gha",
+   "reason": "Audi A6 Sportback e-tron (GHA, PPE, 2024-): battery-electric only"
+  },
+  {
+   "vehicle_slug": "audi/etron",
+   "manufacturer": "Audi",
+   "model": "Etron",
+   "reason": "IL registry model 'ETRON' (756 vehicles, il_market) = Audi e-tron (GE, 2018-, renamed Q8 e-tron): BEV only; the PHEVs are registered separately (A3 Sportback e-tron, 'Q3 SBACK ETRON' is its own queue row)"
+  },
+  {
+   "vehicle_slug": "bmw/aceman-se",
+   "manufacturer": "Bmw",
+   "model": "Aceman Se",
+   "reason": "IL registry 'ACEMAN SE' = MINI Aceman SE (J05, 2024-): BEV only"
+  },
+  {
+   "vehicle_slug": "bmw/i4-m50",
+   "manufacturer": "Bmw",
+   "model": "I4 M50",
+   "reason": "BMW i4 M50 (G26): BEV only"
+  },
+  {
+   "vehicle_slug": "byd/dolphin-ea1",
+   "manufacturer": "Byd",
+   "model": "Dolphin Ea1",
+   "reason": "BYD Dolphin (EA1): BEV only"
+  },
+  {
+   "vehicle_slug": "byd/e6-i",
+   "manufacturer": "Byd",
+   "model": "E6 I",
+   "reason": "BYD e6: BEV only"
+  },
+  {
+   "vehicle_slug": "byd/seal",
+   "manufacturer": "Byd",
+   "model": "Seal",
+   "reason": "IL registry 'SEAL' (1,338 vehicles) = BYD Seal saloon (EK, e-platform 3.0): BEV only (Seal U / Seal 5 / Seal 06 DM-i are separate models and separate queue rows)"
+  },
+  {
+   "vehicle_slug": "byd/seal-limousine",
+   "manufacturer": "Byd",
+   "model": "Seal Limousine",
+   "reason": "car-parts.ie 'SEAL Limousine' = BYD Seal saloon: BEV only"
+  },
+  {
+   "vehicle_slug": "byd/t3-van",
+   "manufacturer": "Byd",
+   "model": "T3 Van",
+   "reason": "BYD T3 / ETP3 van: BEV only"
+  },
+  {
+   "vehicle_slug": "byd/yuan-plus",
+   "manufacturer": "Byd",
+   "model": "Yuan Plus",
+   "reason": "BYD Yuan Plus = Atto 3: BEV only"
+  },
+  {
+   "vehicle_slug": "fiat/500e-332",
+   "manufacturer": "Fiat",
+   "model": "500E 332",
+   "reason": "Fiat 500e (332, 2020-): BEV only"
+  },
+  {
+   "vehicle_slug": "fiat/500e-convertible-332",
+   "manufacturer": "Fiat",
+   "model": "500E Convertible 332",
+   "reason": "Fiat 500e Cabrio (332): BEV only"
+  },
+  {
+   "vehicle_slug": "hyundai/ioniq5",
+   "manufacturer": "Hyundai",
+   "model": "Ioniq5",
+   "reason": "Hyundai Ioniq 5 (NE, E-GMP): BEV only"
+  },
+  {
+   "vehicle_slug": "hyundai/ioniq6",
+   "manufacturer": "Hyundai",
+   "model": "Ioniq6",
+   "reason": "Hyundai Ioniq 6 (CE, E-GMP): BEV only"
+  },
+  {
+   "vehicle_slug": "kia/niro-ev",
+   "manufacturer": "Kia",
+   "model": "Niro Ev",
+   "reason": "Kia Niro EV / e-Niro: BEV (HEV/PHEV are separate slugs niro-hev / niro-phev)"
+  },
+  {
+   "vehicle_slug": "kia/niro-plus-ev",
+   "manufacturer": "Kia",
+   "model": "Niro Plus Ev",
+   "reason": "IL registry 'NIRO PLUS EV' (1,747 vehicles) is the EV trim; 'NIRO PLUS PHEV' (9,266) and the ambiguous 'NIRO PLUS' are separate rows and stay EXCLUDED"
+  },
+  {
+   "vehicle_slug": "maxus/edeliver-3-platform-chassis",
+   "manufacturer": "Maxus",
+   "model": "Edeliver 3 Platform Chassis",
+   "reason": "Maxus eDeliver 3: BEV only"
+  },
+  {
+   "vehicle_slug": "maxus/edeliver-7-van",
+   "manufacturer": "Maxus",
+   "model": "Edeliver 7 Van",
+   "reason": "Maxus eDeliver 7: BEV only (ICE twin is 'Deliver 7')"
+  },
+  {
+   "vehicle_slug": "maxus/edeliver-9-platform-chassis",
+   "manufacturer": "Maxus",
+   "model": "Edeliver 9 Platform Chassis",
+   "reason": "Maxus eDeliver 9: BEV only (ICE twin is 'Deliver 9')"
+  },
+  {
+   "vehicle_slug": "maxus/edeliver-9-van",
+   "manufacturer": "Maxus",
+   "model": "Edeliver 9 Van",
+   "reason": "Maxus eDeliver 9: BEV only"
+  },
+  {
+   "vehicle_slug": "maxus/mifa-9",
+   "manufacturer": "Maxus",
+   "model": "Mifa 9",
+   "reason": "Maxus MIFA 9: BEV only"
+  },
+  {
+   "vehicle_slug": "maxus/t90ev",
+   "manufacturer": "Maxus",
+   "model": "T90Ev",
+   "reason": "Maxus T90 EV / eT90: BEV only (ICE twin is 'T90')"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqa-250",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqa 250",
+   "reason": "Mercedes EQA 250 (H243): BEV only"
+  },
+  {
+   "vehicle_slug": "mg/ep-2020",
+   "manufacturer": "Mg",
+   "model": "Ep 2020",
+   "reason": "MG EP / EP Plus (= Roewe Ei5 / MG5 EV estate): BEV only"
+  },
+  {
+   "vehicle_slug": "mg/mg4",
+   "manufacturer": "Mg",
+   "model": "Mg4",
+   "reason": "MG4 Electric (MSP): BEV only"
+  },
+  {
+   "vehicle_slug": "mg/zs-ev",
+   "manufacturer": "Mg",
+   "model": "Zs Ev",
+   "reason": "MG ZS EV: BEV (ICE ZS is slug mg/zs)"
+  },
+  {
+   "vehicle_slug": "polestar/polestar-2-p",
+   "manufacturer": "Polestar",
+   "model": "Polestar 2 P",
+   "reason": "Polestar 2: BEV only (Polestar 1 is PHEV and stays EXCLUDED)"
+  },
+  {
+   "vehicle_slug": "polestar/polestar-3",
+   "manufacturer": "Polestar",
+   "model": "Polestar 3",
+   "reason": "Polestar 3: BEV only"
+  },
+  {
+   "vehicle_slug": "polestar/polestar-4",
+   "manufacturer": "Polestar",
+   "model": "Polestar 4",
+   "reason": "Polestar 4: BEV only"
+  },
+  {
+   "vehicle_slug": "porsche/taycan-4s",
+   "manufacturer": "Porsche",
+   "model": "Taycan 4S",
+   "reason": "Porsche Taycan 4S (J1): BEV only"
+  },
+  {
+   "vehicle_slug": "skoda/enyaq",
+   "manufacturer": "Skoda",
+   "model": "Enyaq",
+   "reason": "Skoda Enyaq (MEB): BEV only"
+  },
+  {
+   "vehicle_slug": "skoda/enyaq-iv",
+   "manufacturer": "Skoda",
+   "model": "Enyaq Iv",
+   "reason": "Skoda Enyaq iV (MEB): BEV only"
+  },
+  {
+   "vehicle_slug": "skoda/enyaq-iv-coupe-5ac",
+   "manufacturer": "Skoda",
+   "model": "Enyaq Iv Coupe 5Ac",
+   "reason": "Skoda Enyaq Coupe iV (5AC): BEV only"
+  },
+  {
+   "vehicle_slug": "skoda/enyaq-iv-suv-5ac-5az",
+   "manufacturer": "Skoda",
+   "model": "Enyaq Iv Suv 5Ac 5Az",
+   "reason": "Skoda Enyaq iV SUV (5AC/5AZ): BEV only"
+  },
+  {
+   "vehicle_slug": "smart/1-suv-hx11",
+   "manufacturer": "Smart",
+   "model": "1 Suv Hx11",
+   "reason": "smart #1 (HX11, SEA): BEV only"
+  },
+  {
+   "vehicle_slug": "smart/3-suv",
+   "manufacturer": "Smart",
+   "model": "3 Suv",
+   "reason": "smart #3 (SEA): BEV only"
+  },
+  {
+   "vehicle_slug": "smart/hashtag-one",
+   "manufacturer": "Smart",
+   "model": "Hashtag One",
+   "reason": "IL registry 'HASHTAG ONE' = smart #1: BEV only"
+  },
+  {
+   "vehicle_slug": "smart/hashtag-three",
+   "manufacturer": "Smart",
+   "model": "Hashtag Three",
+   "reason": "IL registry 'HASHTAG THREE' = smart #3: BEV only"
+  },
+  {
+   "vehicle_slug": "subaru/solterra-suv",
+   "manufacturer": "Subaru",
+   "model": "Solterra Suv",
+   "reason": "Subaru Solterra (e-TNGA, bZ4X twin): BEV only"
+  },
+  {
+   "vehicle_slug": "toyota/bz4x-eam1",
+   "manufacturer": "Toyota",
+   "model": "Bz4X Eam1",
+   "reason": "Toyota bZ4X (EAM1): BEV only"
+  },
+  {
+   "vehicle_slug": "toyota/toyota-bz4x",
+   "manufacturer": "Toyota",
+   "model": "Toyota Bz4X",
+   "reason": "Toyota bZ4X: BEV only"
+  },
+  {
+   "vehicle_slug": "volkswagen/id4",
+   "manufacturer": "Volkswagen",
+   "model": "Id4",
+   "reason": "VW ID.4 (MEB): BEV only"
+  },
+  {
+   "vehicle_slug": "volvo/c40-i-suv",
+   "manufacturer": "Volvo",
+   "model": "C40 I Suv",
+   "reason": "Volvo C40 Recharge (539): BEV only (renamed EC40)"
+  },
+  {
+   "vehicle_slug": "volvo/ec40-539",
+   "manufacturer": "Volvo",
+   "model": "Ec40 539",
+   "reason": "Volvo EC40 (539): BEV only"
+  },
+  {
+   "vehicle_slug": "xpeng/g6",
+   "manufacturer": "Xpeng",
+   "model": "G6",
+   "reason": "XPeng G6 (IL registry 8,943 vehicles, EU): BEV. ASSUMED for any later range-extender derivative, none is in the IL registry row"
+  },
+  {
+   "vehicle_slug": "xpeng/g9",
+   "manufacturer": "Xpeng",
+   "model": "G9",
+   "reason": "XPeng G9 (IL registry 1,652 vehicles, EU): BEV. Same caveat as G6"
+  },
+  {
+   "vehicle_slug": "xpeng/p7i",
+   "manufacturer": "Xpeng",
+   "model": "P7I",
+   "reason": "XPeng P7i: BEV only"
+  },
+  {
+   "vehicle_slug": "zeekr/zeekr-001",
+   "manufacturer": "Zeekr",
+   "model": "Zeekr 001",
+   "reason": "Zeekr 001: BEV only"
+  },
+  {
+   "vehicle_slug": "zeekr/zeekr-7x",
+   "manufacturer": "Zeekr",
+   "model": "Zeekr 7X",
+   "reason": "Zeekr 7X: BEV only"
+  },
+  {
+   "vehicle_slug": "zeekr/zeekr-x",
+   "manufacturer": "Zeekr",
+   "model": "Zeekr X",
+   "reason": "Zeekr X: BEV only"
+  }
+ ],
+ "extended": [
+  {
+   "vehicle_slug": "abarth/500e-convertible-332-2023",
+   "manufacturer": "Abarth",
+   "model": "500E Convertible 332 2023"
+  },
+  {
+   "vehicle_slug": "abarth/500e-hatchback-332",
+   "manufacturer": "Abarth",
+   "model": "500E Hatchback 332"
+  },
+  {
+   "vehicle_slug": "audi/e-tron-gen",
+   "manufacturer": "Audi",
+   "model": "E Tron Gen"
+  },
+  {
+   "vehicle_slug": "audi/e-tron-gt-saloon-f83",
+   "manufacturer": "Audi",
+   "model": "E Tron Gt Saloon F83"
+  },
+  {
+   "vehicle_slug": "audi/e-tron-sportback-gea",
+   "manufacturer": "Audi",
+   "model": "E Tron Sportback Gea"
+  },
+  {
+   "vehicle_slug": "audi/q4-sportback-f4n",
+   "manufacturer": "Audi",
+   "model": "Q4 Sportback F4N"
+  },
+  {
+   "vehicle_slug": "audi/q4-sportback",
+   "manufacturer": "Audi",
+   "model": "Q4 Sportback"
+  },
+  {
+   "vehicle_slug": "audi/q4-suv-f4b",
+   "manufacturer": "Audi",
+   "model": "Q4 Suv F4B"
+  },
+  {
+   "vehicle_slug": "audi/q8-e-tron-sportback-get",
+   "manufacturer": "Audi",
+   "model": "Q8 E Tron Sportback Get"
+  },
+  {
+   "vehicle_slug": "audi/q8-e-tron-suv-geg",
+   "manufacturer": "Audi",
+   "model": "Q8 E Tron Suv Geg"
+  },
+  {
+   "vehicle_slug": "audi/q8-e-tron",
+   "manufacturer": "Audi",
+   "model": "Q8 E Tron"
+  },
+  {
+   "vehicle_slug": "bmw/i4-g26",
+   "manufacturer": "Bmw",
+   "model": "I4 G26"
+  },
+  {
+   "vehicle_slug": "bmw/ix-i20",
+   "manufacturer": "Bmw",
+   "model": "Ix I20"
+  },
+  {
+   "vehicle_slug": "bmw/ix3-g08",
+   "manufacturer": "Bmw",
+   "model": "Ix3 G08"
+  },
+  {
+   "vehicle_slug": "byd/atto-3",
+   "manufacturer": "Byd",
+   "model": "Atto 3"
+  },
+  {
+   "vehicle_slug": "byd/byd-dolphin",
+   "manufacturer": "Byd",
+   "model": "Byd Dolphin"
+  },
+  {
+   "vehicle_slug": "chevrolet/bolt",
+   "manufacturer": "Chevrolet",
+   "model": "Bolt"
+  },
+  {
+   "vehicle_slug": "cupra/born-2021",
+   "manufacturer": "Cupra",
+   "model": "Born 2021"
+  },
+  {
+   "vehicle_slug": "dacia/spring-2020",
+   "manufacturer": "Dacia",
+   "model": "Spring 2020"
+  },
+  {
+   "vehicle_slug": "dacia/spring",
+   "manufacturer": "Dacia",
+   "model": "Spring"
+  },
+  {
+   "vehicle_slug": "ford-usa/mustang-mach-e-cgw",
+   "manufacturer": "Ford Usa",
+   "model": "Mustang Mach E Cgw"
+  },
+  {
+   "vehicle_slug": "hyundai/ioniq-5-ne",
+   "manufacturer": "Hyundai",
+   "model": "Ioniq 5 Ne"
+  },
+  {
+   "vehicle_slug": "hyundai/ioniq-6-ce",
+   "manufacturer": "Hyundai",
+   "model": "Ioniq 6 Ce"
+  },
+  {
+   "vehicle_slug": "jaguar/i-pace-x590",
+   "manufacturer": "Jaguar",
+   "model": "I Pace X590"
+  },
+  {
+   "vehicle_slug": "kia/ev3-sv",
+   "manufacturer": "Kia",
+   "model": "Ev3 Sv"
+  },
+  {
+   "vehicle_slug": "kia/ev6-cv",
+   "manufacturer": "Kia",
+   "model": "Ev6 Cv"
+  },
+  {
+   "vehicle_slug": "kia/ev6",
+   "manufacturer": "Kia",
+   "model": "Ev6"
+  },
+  {
+   "vehicle_slug": "kia/ev9-mv",
+   "manufacturer": "Kia",
+   "model": "Ev9 Mv"
+  },
+  {
+   "vehicle_slug": "kia/ev9",
+   "manufacturer": "Kia",
+   "model": "Ev9"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqa-h243",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqa H243"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqa250",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqa250"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqb-x243",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqb X243"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqc-n293",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqc N293"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqe-suv-x294",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqe Suv X294"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqe-v295",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqe V295"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqe350-plus",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqe350 Plus"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqs-suv-x296",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqs Suv X296"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqs-v297",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqs V297"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqs450-4matic",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqs450 4Matic"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/eqv-w447",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Eqv W447"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/esprinter-van-b910",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Esprinter Van B910"
+  },
+  {
+   "vehicle_slug": "mercedes-benz/evito-tourer-w447",
+   "manufacturer": "Mercedes-Benz",
+   "model": "Evito Tourer W447"
+  },
+  {
+   "vehicle_slug": "mg/marvel-r",
+   "manufacturer": "Mg",
+   "model": "Marvel R"
+  },
+  {
+   "vehicle_slug": "mini/mini-aceman-j05",
+   "manufacturer": "Mini",
+   "model": "Mini Aceman J05"
+  },
+  {
+   "vehicle_slug": "nissan/ariya-fe0",
+   "manufacturer": "Nissan",
+   "model": "Ariya Fe0"
+  },
+  {
+   "vehicle_slug": "nissan/leaf-2010",
+   "manufacturer": "Nissan",
+   "model": "Leaf 2010"
+  },
+  {
+   "vehicle_slug": "nissan/leaf-ze1",
+   "manufacturer": "Nissan",
+   "model": "Leaf Ze1"
+  },
+  {
+   "vehicle_slug": "porsche/taycan-cross-turismo",
+   "manufacturer": "Porsche",
+   "model": "Taycan Cross Turismo"
+  },
+  {
+   "vehicle_slug": "porsche/taycan-sport-turismo-y1c",
+   "manufacturer": "Porsche",
+   "model": "Taycan Sport Turismo Y1C"
+  },
+  {
+   "vehicle_slug": "porsche/taycan-y1a",
+   "manufacturer": "Porsche",
+   "model": "Taycan Y1A"
+  },
+  {
+   "vehicle_slug": "skoda/elroq-pyl",
+   "manufacturer": "Skoda",
+   "model": "Elroq Pyl"
+  },
+  {
+   "vehicle_slug": "tesla/model-3-5yj3",
+   "manufacturer": "Tesla",
+   "model": "Model 3 5Yj3"
+  },
+  {
+   "vehicle_slug": "tesla/model-3",
+   "manufacturer": "Tesla",
+   "model": "Model 3"
+  },
+  {
+   "vehicle_slug": "tesla/model-s",
+   "manufacturer": "Tesla",
+   "model": "Model S"
+  },
+  {
+   "vehicle_slug": "tesla/model-x",
+   "manufacturer": "Tesla",
+   "model": "Model X"
+  },
+  {
+   "vehicle_slug": "tesla/model-y-5yjy",
+   "manufacturer": "Tesla",
+   "model": "Model Y 5Yjy"
+  },
+  {
+   "vehicle_slug": "tesla/model-y-juniper",
+   "manufacturer": "Tesla",
+   "model": "Model Y Juniper"
+  },
+  {
+   "vehicle_slug": "tesla/model-y",
+   "manufacturer": "Tesla",
+   "model": "Model Y"
+  },
+  {
+   "vehicle_slug": "volkswagen/id-3-pro-150kw",
+   "manufacturer": "Volkswagen",
+   "model": "Id 3 Pro 150Kw"
+  },
+  {
+   "vehicle_slug": "volkswagen/id-4-crozz",
+   "manufacturer": "Volkswagen",
+   "model": "Id 4 Crozz"
+  },
+  {
+   "vehicle_slug": "vw/id-3-e11",
+   "manufacturer": "Vw",
+   "model": "Id 3 E11"
+  },
+  {
+   "vehicle_slug": "vw/id-4-e21",
+   "manufacturer": "Vw",
+   "model": "Id 4 E21"
+  },
+  {
+   "vehicle_slug": "vw/id-5-e39",
+   "manufacturer": "Vw",
+   "model": "Id 5 E39"
+  },
+  {
+   "vehicle_slug": "vw/id-buzz-bus-ebb",
+   "manufacturer": "Vw",
+   "model": "Id Buzz Bus Ebb"
+  },
+  {
+   "vehicle_slug": "volvo/ex30-416",
+   "manufacturer": "Volvo",
+   "model": "Ex30 416"
+  },
+  {
+   "vehicle_slug": "volvo/ex30-sm",
+   "manufacturer": "Volvo",
+   "model": "Ex30 Sm"
+  },
+  {
+   "vehicle_slug": "volvo/ex40-536",
+   "manufacturer": "Volvo",
+   "model": "Ex40 536"
+  },
+  {
+   "vehicle_slug": "volvo/ex90-356",
+   "manufacturer": "Volvo",
+   "model": "Ex90 356"
+  }
+ ],
+ "not_bev": {
+  "bmw/i3-i01": "i3 was also sold as i3 REx (range extender)",
+  "kia/niro-plus": "ambiguous IL registry row (Niro Plus PHEV/EV)",
+  "byd/seal-u": "Seal U is also sold as Seal U DM-i (PHEV)",
+  "byd/byd-seal-u": "Seal U DM-i",
+  "byd/byd-seal-5": "Seal 5 DM-i (PHEV)",
+  "byd/sealion-5": "Sealion 5 DM-i (PHEV)",
+  "byd/tang": "Tang DM",
+  "byd/tang-ii": "Tang DM",
+  "byd/han-i-facelift": "Han DM",
+  "polestar/polestar-1-p": "Polestar 1 is a PHEV",
+  "audi/q3-sback-etron": "Q3 Sportback 45 TFSI e (PHEV)",
+  "chery/fx-ev": "unverified identity",
+  "volvo/xc40-recharget5": "XC40 Recharge T5 is a PHEV",
+  "mg/mg5": "MG5 name covers ICE saloon and EV estate"
+ }
+}

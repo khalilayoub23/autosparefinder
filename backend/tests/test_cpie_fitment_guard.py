@@ -50,3 +50,30 @@ def test_in_category_or_vehicle_named_items_in_full_size_payloads_keep_fitment()
 
 def test_slug_of():
     assert g.slug_of("https://www.car-parts.ie/car-parts/byd/seal/timing-belt?x=1") == "timing-belt"
+
+
+# ---- C1 (2026-11-17): ICE-only products never fit a pure battery-electric vehicle ----
+def test_ice_only_product_never_fits_a_bev():
+    for nm in ("RIDEX 7O0002 Audi A4 B7 oil filter", "BOSCH 0 242 235 666 AUDI Q6 e-tron SUV spark plug",
+               "LuK 415 0477 10 BYD Seal Saloon clutch flywheel", "RIDEX 1123T0002 AUDI Q6 e-tron SUV timing chain",
+               "LIQUI MOLY 20647 MAXUS T90EV engine oil", "Sump plug washer (RIDEX, 135O0004)"):
+        assert g.fitment_allowed(500, nm, "x", vehicle_slug="byd/seal") is False, nm
+
+
+def test_same_items_on_ice_hybrid_and_unlisted_vehicles_are_unaffected():
+    for slug in ("audi/a4-b7", "byd/seal-u", "kia/niro-plus", "bmw/i3-i01", "toyota/corolla"):
+        assert g.fitment_allowed(500, "RIDEX 7O0002 Audi A4 B7 oil filter", "x", vehicle_slug=slug) is True, slug
+
+
+def test_bev_keeps_non_ice_fitment_and_transmission_oil():
+    for nm in ("Brake pad set BOSCH 0 986 494 000", "Cabin air filter MANN CUK 2939", "Wiper blade BOSCH 3 397 007",
+               "Gear oil MOTUL 8100 transmission fluid"):
+        assert g.fitment_allowed(500, nm, "", vehicle_slug="tesla/model-3") is True, nm
+
+
+def test_bev_list_has_no_hybrid_or_phev():
+    import json, os
+    d = json.load(open(os.path.join(os.path.dirname(g.__file__), "data", "bev_models.json")))
+    slugs = set(d["vehicle_slugs"])
+    for hybrid in ("byd/seal-u", "byd/tang", "byd/han", "kia/niro-plus", "bmw/i3-i01", "volvo/xc40-recharget5", "polestar/polestar-1-p"):
+        assert hybrid not in slugs, hybrid

@@ -259,7 +259,8 @@ async def import_file(
             category = cpie_fitment_guard.category_for(name, product.get("category") or "", url, description_text,
                                                        by_name=categorize_on_ingest(name=name, url="", extra=description_text),
                                                        payload_size=_payload_size)
-            _fit_ok = cpie_fitment_guard.fitment_allowed(_payload_size, name, product.get("category") or cpie_fitment_guard.slug_of(product.get("source_url") or ""), description_text)
+            _fit_ok = cpie_fitment_guard.fitment_allowed(_payload_size, name, product.get("category") or cpie_fitment_guard.slug_of(product.get("source_url") or ""), description_text,
+                                                         vehicle_slug=vehicle_slug or "", manufacturer=manufacturer, model=model_name)
             # EUR→ILS: Car-Parts.ie prices are our supplier cost in EUR (NOT consumer prices
             # with Israeli VAT). Convert to ILS and apply 45% margin for the customer price.
             # The /1.18 that was here was wrong — it stripped phantom Israeli VAT from a
