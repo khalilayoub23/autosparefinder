@@ -69,7 +69,8 @@ def main(scenario, out_path):
     hv.BASE_SLUGS = ["slug-a", "slug-b", "slug-c"]
     hv.fs_cleanup_stale_sessions = lambda: 0
     relayed, checks, kills = [], [], []
-    hv.post_relay = lambda vehicle, parts, done=False: relayed.append((vehicle, len(parts), done)) or True
+    hv.post_relay = lambda vehicle, parts, done=False, **kw: relayed.append((vehicle, len(parts), done)) or True
+    hv.relay_done = lambda vehicle, run_id, chunks: relayed.append((vehicle, 0, True))
 
     # ── queue: fake (in-memory) or real (sandbox schema h78_test) ──
     claimed = []

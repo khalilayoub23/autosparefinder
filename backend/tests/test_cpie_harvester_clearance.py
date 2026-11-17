@@ -86,6 +86,7 @@ def test_all_pages_blocked_raises_but_404_is_a_legitimate_empty(tmp_path, monkey
     import urllib.error
     monkeypatch.setattr(h.time, "sleep", lambda s: None)
     monkeypatch.setattr(h, "post_relay", lambda *a, **k: True)
+    monkeypatch.setattr(h, "relay_done", lambda *a, **k: None)
     def op403(req, timeout=0):
         raise urllib.error.HTTPError("u", 403, "forbidden", {}, None)
     monkeypatch.setattr(h, "ensure_clearance", lambda force=False: False)
@@ -171,7 +172,7 @@ def test_final_relay_refusal_after_partial_delivery_is_not_done(tmp_path, monkey
     monkeypatch.setattr(h, "BATCH_SIZE", 2)
     monkeypatch.setattr(h, "parse_parts", lambda html, path: [{"sku": str(i)} for i in range(3)])
     calls = []
-    def relay(v, b, done=False):
+    def relay(v, b, done=False, **kw):
         calls.append(len(b)); return len(calls) == 1          # first chunk delivered, the final chunk refused
     monkeypatch.setattr(h, "post_relay", relay)
     try:

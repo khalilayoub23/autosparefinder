@@ -18,9 +18,11 @@ import json
 import os
 import re
 import time
+import uuid
 import logging
 import sys
 import threading
+import urllib.parse
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -858,12 +860,14 @@ def fs_get(url: str, session_id: str = "", timeout_ms: int = 20000) -> str:
     return http_get(url, timeout_s=max(15, timeout_ms // 1000))
 
 # ── Relay POST ────────────────────────────────────────────────────────────────
-def post_relay(vehicle: str, parts: list, done: bool = False) -> bool:
+def _relay_json(vehicle: str, parts: list, done: bool = False, **extra):
+    """POST one relay request. Returns (http_status, parsed_json_or_None); (0, None) on a transport error."""
     payload = json.dumps({
         "source": "car-parts.ie",
         "vehicle": vehicle,
         "parts": parts,
         "done": done,
+        **extra,
     }).encode()
     headers = {
         "Content-Type": "application/json",
@@ -875,11 +879,74 @@ def post_relay(vehicle: str, parts: list, done: bool = False) -> bool:
         headers["X-Collect-Secret"] = _COLLECT_SECRET
     req = urllib.request.Request(RELAY, data=payload, headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return r.status == 200
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
+            try:
+                return r.status, json.loads(raw)
+            except Exception:
+                return r.status, None
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read())
+        except Exception:
+            return e.code, None
     except Exception as e:
         log.warning(f"Relay POST failed ({vehicle}): {e}")
+        return 0, None
+
+
+def post_relay(vehicle: str, parts: list, done: bool = False, run_id: str = "", seq: int | None = None) -> bool:
+    """One chunk, ACKNOWLEDGED: True only when the server answered 200 with status 'ok' for this run/seq."""
+    extra = {"run_id": run_id, "seq": seq} if run_id else {}
+    code, body = _relay_json(vehicle, parts, done, **extra)
+    if code != 200:
         return False
+    return (body or {}).get("status") == "ok" and (not run_id or (body or {}).get("seq") == seq)
+
+
+IMPORT_WAIT_S = int(os.environ.get("HARVESTER_IMPORT_WAIT_S", "1500"))
+
+
+def _import_status(vehicle: str, run_id: str):
+    url = f"{RELAY}/import-status?vehicle={urllib.parse.quote(vehicle)}&run_id={urllib.parse.quote(run_id)}"
+    req = urllib.request.Request(url, headers={"X-Collect-Secret": _COLLECT_SECRET, "User-Agent": _DEFAULT_UA})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        return {"state": "unknown", "error": str(e)[:120]}
+
+
+def relay_done(vehicle: str, run_id: str, chunks: dict) -> None:
+    """Close a run: `done` must be ACCEPTED (every chunk present - re-send the ones the server reports missing) and the importer
+    must FINISH OK. Any other outcome raises HarvestFetchFailed so the model is released, never recorded 'done'."""
+    exp_chunks = len(chunks)
+    exp_parts = sum(len(c) for c in chunks.values())
+    for attempt in range(3):
+        code, body = _relay_json(vehicle, [], True, run_id=run_id, expected_chunks=exp_chunks, expected_parts=exp_parts)
+        st = (body or {}).get("status")
+        if code == 200 and st == "empty":
+            return
+        if code == 200 and st == "saved":
+            break
+        if code == 409 and st == "incomplete":
+            for seq in (body or {}).get("missing", []):
+                if seq in chunks and not post_relay(vehicle, chunks[seq], run_id=run_id, seq=seq):
+                    break
+            continue
+        raise HarvestFetchFailed(f"{vehicle}: final 'done' refused (http {code}, {st}); model released")
+    else:
+        raise HarvestFetchFailed(f"{vehicle}: relay still incomplete after 3 re-sends; model released")
+    deadline = time.time() + IMPORT_WAIT_S
+    while time.time() < deadline:
+        t = _import_status(vehicle, run_id)
+        if t.get("state") == "ok":
+            log.info(f"  {vehicle}: importer finished ok (run {run_id})")
+            return
+        if t.get("state") == "failed":
+            raise HarvestFetchFailed(f"{vehicle}: importer FAILED exit={t.get('exit_code')} log={t.get('log')}; model released")
+        time.sleep(10)
+    raise HarvestFetchFailed(f"{vehicle}: importer did not finish within {IMPORT_WAIT_S}s (run {run_id}); model released")
 
 # ── HTML parsing ──────────────────────────────────────────────────────────────
 # Attributes a lazy-loaded <img> may carry the real URL in (src is often a 1x1
@@ -976,6 +1043,8 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     seen = set()
     batch = []
     sent = 0
+    run_id = uuid.uuid4().hex   # one acknowledged relay run per harvest of this model
+    chunks: dict = {}          # seq -> parts, kept until the importer reported success (re-sent if the server lacks one)
 
     for i, slug in enumerate(all_slugs):
         path = f"/car-parts/{brand}/{model}/{slug}"
@@ -988,7 +1057,9 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
             batch.extend(parts)
 
         if len(batch) >= BATCH_SIZE:
-            if post_relay(vehicle, batch[:BATCH_SIZE]):
+            _seq = len(chunks)
+            if post_relay(vehicle, batch[:BATCH_SIZE], run_id=run_id, seq=_seq):
+                chunks[_seq] = batch[:BATCH_SIZE]
                 sent += BATCH_SIZE
                 batch = batch[BATCH_SIZE:]
             else:
@@ -1000,7 +1071,9 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
         time.sleep(0.1)  # small delay between requests
 
     if batch:
-        if post_relay(vehicle, batch):
+        _seq = len(chunks)
+        if post_relay(vehicle, batch, run_id=run_id, seq=_seq):
+            chunks[_seq] = batch
             sent += len(batch)
             batch = []
         else:
@@ -1015,7 +1088,7 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     if _c["blocked"]:
         log.warning(f"  {vehicle}: {_c['blocked']} page fetch(es) failed, {_c['ok']} ok - partial collection")
 
-    post_relay(vehicle, [], done=True)
+    relay_done(vehicle, run_id, chunks)   # raises HarvestFetchFailed unless 'done' was accepted AND the importer finished ok
     log.info(f"✓ {vehicle}: {sent} parts")
     return sent
 

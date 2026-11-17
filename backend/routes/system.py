@@ -300,6 +300,43 @@ async def collect_scrape_data(request: Request):
     buf_key = f"{brand}::{vehicle_slug}" if vehicle_slug else brand
     file_tag = buf_key.replace("/", "_").replace(":", "_")
 
+    # ACKNOWLEDGED + DURABLE relay (2026-11-17, car-parts.ie harvester): a request that carries `run_id` is persisted chunk by
+    # chunk on disk (relay_store), acknowledged by sequence number, and `done` is accepted only when every expected chunk is
+    # present (409 + the missing seqs otherwise). The importer runs under a per-run log/result the harvester polls.
+    _run_id = str((data or {}).get("run_id") or "")
+    if _run_id:
+        import relay_store
+        if not done:
+            try:
+                n = relay_store.store_chunk(file_tag, _run_id, int((data or {}).get("seq")), chunk or [])
+            except (TypeError, ValueError):
+                return JSONResponse({"status": "error", "detail": "seq required"}, status_code=400, headers=CORS_HEADERS)
+            return JSONResponse({"status": "ok", "run_id": _run_id, "seq": int(data["seq"]), "received": n}, headers=CORS_HEADERS)
+        try:
+            exp_chunks, exp_parts = int(data["expected_chunks"]), int(data["expected_parts"])
+        except (KeyError, TypeError, ValueError):
+            return JSONResponse({"status": "error", "detail": "expected_chunks and expected_parts required"}, status_code=400, headers=CORS_HEADERS)
+        if exp_parts == 0:
+            return JSONResponse({"status": "empty", "run_id": _run_id}, headers=CORS_HEADERS)
+        try:
+            run_parts = relay_store.missing_or_parts(file_tag, _run_id, exp_chunks, exp_parts)
+        except relay_store.RelayIncomplete as e:
+            return JSONResponse({"status": "incomplete", "run_id": _run_id, "missing": e.missing, "have_parts": e.have_parts},
+                                status_code=409, headers=CORS_HEADERS)
+        out = {**((data or {}).get("meta") or {}), "parts": run_parts}
+        if vehicle_slug:
+            out["vehicle_slug"] = vehicle_slug
+        payload = relay_store.RELAY_DIR / "payloads" / f"{file_tag}__{_run_id}.json"
+        payload.parent.mkdir(parents=True, exist_ok=True)
+        payload.write_text(json.dumps(out))
+        cmd = ["python3", "/app/importers/car_parts_ie_import_generic.py", "--brand", brand, "--file", str(payload)]
+        if vehicle_slug:
+            cmd += ["--vehicle-slug", vehicle_slug]
+        started = relay_store.start_import(cmd, file_tag, _run_id, payload)
+        relay_store.gc()
+        print(f"[collect] acknowledged relay complete brand={brand} vehicle={vehicle_slug} run={_run_id} parts={len(run_parts)} import={started}", flush=True)
+        return JSONResponse({"status": "saved", "run_id": _run_id, "total": len(run_parts), "import": started}, headers=CORS_HEADERS)
+
     if buf_key not in _collect_buffers:
         _collect_buffers[buf_key] = {"meta": {}, "parts": []}
 
@@ -385,6 +422,18 @@ async def collect_scrape_data(request: Request):
         {"status": "ok", "brand": brand, "total": len(_collect_buffers[buf_key]["parts"])},
         headers=CORS_HEADERS
     )
+
+
+@router.get("/api/v1/system/collect/import-status")
+async def collect_import_status(request: Request, vehicle: str, run_id: str, brand: str = ""):
+    """State of the importer for ONE relay run (running | ok | failed | unknown). Same secret as /collect."""
+    if _COLLECT_SECRET and request.headers.get("X-Collect-Secret", "") != _COLLECT_SECRET:
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=403, detail="Forbidden")
+    import relay_store
+    b = brand or vehicle.split("/")[0]
+    tag = f"{b}::{vehicle}".replace("/", "_").replace(":", "_")
+    return relay_store.import_state(tag, run_id)
 
 
 @router.get("/api/v1/system/oem-relay")
