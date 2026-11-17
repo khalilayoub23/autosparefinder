@@ -71,8 +71,8 @@ def _mask_supplier(name: str) -> str:
 def display_supplier_sku(sku):
     """Customer-facing supplier SKU. A brand-qualified car-parts.ie offer key ('BRAND~article', workstream C) is OUR
     disambiguator, never the supplier's number: customers and supplier messages see the bare article only.
-    ONE function for every customer surface (cpie_identity.article_of is the single parser)."""
-    if not sku or "~" not in str(sku):
+    A part-scoped key ('MAKE5@...') is internal too. ONE function for every customer surface (cpie_identity.article_of is the single parser)."""
+    if not sku:
         return sku
     import cpie_identity
     return cpie_identity.article_of(str(sku))[1] or sku

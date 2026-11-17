@@ -219,6 +219,7 @@ async def import_file(path: Path) -> dict[str, int]:
                 ON CONFLICT (supplier_id, supplier_sku) DO UPDATE SET
                     supplier_url = EXCLUDED.supplier_url,
                     updated_at = NOW()
+                WHERE supplier_parts.part_id = EXCLUDED.part_id   -- 2026-11-17: never rewrite ANOTHER part's offer (bare-key identity)
                 """,
                 supplier_id,
                 part_id,

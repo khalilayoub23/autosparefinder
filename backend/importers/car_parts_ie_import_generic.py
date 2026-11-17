@@ -410,7 +410,10 @@ async def import_file(
                         "SELECT p.name, sp.supplier_url, sp.part_id::text AS part_id FROM supplier_parts sp JOIN parts_catalog p ON p.id=sp.part_id WHERE sp.supplier_id=$1::uuid AND sp.supplier_sku=$2",
                         supplier_id, _k)
                     return dict(_r) if _r else None
-                offer_sku = await cpie_identity.choose_offer_key(sku_raw, _brand, sku_prefix, part_id, _holder, url)
+                _own_key = await conn.fetchval(
+                    "SELECT supplier_sku FROM supplier_parts WHERE supplier_id=$1::uuid AND part_id=$2::uuid AND part_type IS NULL LIMIT 1",
+                    supplier_id, part_id)
+                offer_sku = await cpie_identity.choose_offer_key(sku_raw, _brand, sku_prefix, part_id, _holder, url, own_key=_own_key)
                 if offer_sku is None:  # owner of the bare key cannot be identified: no offer write (counted); the image/fitment work below still runs
                     supplier_skipped += 1
                     skip_reasons["offer_owner_brand_unresolved"] = skip_reasons.get("offer_owner_brand_unresolved", 0) + 1

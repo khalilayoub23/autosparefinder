@@ -94,3 +94,32 @@ def test_keyed_holder_of_other_or_unresolved_brand_is_never_written():
 
 def test_article_of_strips_scope_then_brand():
     assert ci.article_of("BYD@FAE~62505") == ("FAE", "62505")
+
+
+def test_display_and_order_never_show_or_use_the_internal_scope_key():
+    from routes.utils import display_supplier_sku
+    import supplier_ordering
+    assert display_supplier_sku("BYD@7O0005") == "7O0005"
+    assert display_supplier_sku("RENAU@FAE~62505") == "62505"
+    assert display_supplier_sku("1233014L00@") == "1233014L00@"          # another supplier's SKU is untouched
+    assert supplier_ordering._bare_article("BYD@7O0005") == "7O0005"
+    assert supplier_ordering._bare_article("1233014L00@") == "1233014L00@"
+
+
+def test_part_that_already_holds_its_offer_reuses_that_key():
+    h = {"1": {"name": "FAE 1 y", "supplier_url": "u", "part_id": "Q"}, "FAE~1": {"name": "FAE 1 x", "supplier_url": "u", "part_id": "P"}}
+    assert _choose_own(h, "1", "FAE", "BMW", "P", "FAE~1") == "FAE~1"
+    assert _choose_own(h, "1", "FAE", "BMW", "P", "OTHER~1") is None       # holds another brand's offer: fail closed
+    assert _choose_own(h, "1", "FAE", "BMW", "P", "BMW@1") == "BMW@1"
+
+
+def _choose_own(holders, art, brand, make, pid, own):
+    async def f(k):
+        return holders.get(k)
+    return asyncio.run(ci.choose_offer_key(art, brand, make, pid, f, None, own_key=own))
+
+
+def test_opel_seed_importer_cannot_rewrite_another_parts_offer():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "opel_car_parts_ie_import.py").read_text()
+    assert "WHERE supplier_parts.part_id = EXCLUDED.part_id" in src

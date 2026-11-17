@@ -61,10 +61,12 @@ def offer_key(article: str, brand: Optional[str], bare_owner_brand: Optional[str
     return article if bare_owner_brand == brand else f"{_tok(brand)}{SEP}{article}"
 
 
+_SCOPE_RE = re.compile(r"^[A-Z0-9]{1,5}@(?=.)")
 PART_SEP = "@"  # part-scoped offer key: `<MAKE5>@<offer key>` (one article, one brand, one offer per make-specific part row)
 
 
-async def choose_offer_key(article: str, brand: Optional[str], make: str, part_id: str, fetch_holder, url: Optional[str] = None) -> Optional[str]:
+async def choose_offer_key(article: str, brand: Optional[str], make: str, part_id: str, fetch_holder, url: Optional[str] = None,
+                           own_key: Optional[str] = None) -> Optional[str]:
     """Offer key for THIS part row, or None = skip the write (fail closed).
     fetch_holder(key) -> None | {"name","supplier_url","part_id"}: who holds that supplier_sku today.
     2026-11-17 (bare-key identity): parts_catalog keeps one row per vehicle make for ONE physical article, but
@@ -73,6 +75,9 @@ async def choose_offer_key(article: str, brand: Optional[str], make: str, part_i
     given its own part-scoped key; a holder of a different or unresolved brand is never written (fail closed)."""
     if not brand:
         return None
+    if own_key:   # (supplier, part) is unique: THIS part already holds an offer - reuse it when it is this article+brand, else fail closed
+        b, a = article_of(own_key)
+        return own_key if (a == article and b in (None, _tok(brand))) else None
     h0 = await fetch_holder(article)
     k1 = offer_key(article, brand, brand_of(h0["name"], article) if h0 else None, h0 is not None,
                    bool(h0 and url and (h0.get("supplier_url") or "").strip().lower() == url.strip().lower()), same_part=bool(h0 and str(h0["part_id"]) == str(part_id)))
@@ -92,8 +97,9 @@ def article_of(key: Optional[str]) -> Tuple[Optional[str], str]:
     """(brand token or None, bare article). A bare article containing '~' is not produced by car-parts.ie.
     A part-scope prefix `<MAKE5>@` is stripped first (internal only: never shown, never used to order)."""
     k = key or ""
-    if PART_SEP in k:
-        k = k.split(PART_SEP, 1)[1]
+    m = _SCOPE_RE.match(k)       # anchored: other suppliers' SKUs may contain '@' (e.g. '1233014L00@') and are never touched
+    if m:
+        k = k[m.end():]
     if SEP in k:
         b, a = k.split(SEP, 1)
         return b, a
