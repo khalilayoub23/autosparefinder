@@ -1,0 +1,17 @@
+{
+ "manifest": "/app/state/cpie_ownership/base_price_repair/bp_manifest_20261117b.jsonl.gz",
+ "manifest_sha256": "d83e8dcd4aa5981d776fade2ac1675c1132352f079e3836ea4d650dac2accbad",
+ "rows": 490731,
+ "scanned": 1197625,
+ "counts": {
+  "divergent:offer": 436680,
+  "class:STALE_SOURCE": 416596,
+  "correct": 704971,
+  "divergent:estimate": 54051,
+  "class:ESTIMATE_AMBIGUOUS": 54051,
+  "class:REPAIRABLE": 20084,
+  "no_target:no_basis": 1923
+ },
+ "rate": 3.24,
+ "built_utc": "2026-11-17T03:50:06Z"
+}

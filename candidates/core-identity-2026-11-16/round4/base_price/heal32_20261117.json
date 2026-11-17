@@ -1,0 +1,204 @@
+{
+ "result": {
+  "scanned": 32,
+  "updated": 32,
+  "unchanged": 0,
+  "skipped": 0,
+  "reasons": {},
+  "vat_registry_loaded": true
+ },
+ "rows": [
+  {
+   "part_id": "0b370e5a-6c41-4f20-a12f-0a4bf1fcf456",
+   "before": "53.33",
+   "target": 54.59,
+   "after": "54.59"
+  },
+  {
+   "part_id": "20967f82-c096-485f-ab97-e5cbd83500cc",
+   "before": "51.01",
+   "target": 47.63,
+   "after": "47.63"
+  },
+  {
+   "part_id": "20d1384d-5afb-4a0c-9b8d-4805d511e759",
+   "before": "146.13",
+   "target": 146.23,
+   "after": "146.23"
+  },
+  {
+   "part_id": "21cf19bf-18e9-4190-9644-bad444318677",
+   "before": "5.19",
+   "target": 5.39,
+   "after": "5.39"
+  },
+  {
+   "part_id": "24926a6d-43a6-4138-a34a-5c99ce3c7a50",
+   "before": "58.99",
+   "target": 58.88,
+   "after": "58.88"
+  },
+  {
+   "part_id": "2a0c6822-35ec-41f2-890c-edea3ff9d903",
+   "before": "230.41",
+   "target": 230.55,
+   "after": "230.55"
+  },
+  {
+   "part_id": "31f0377d-54f2-4cb9-a1f5-9ee07492aa8d",
+   "before": "1735.37",
+   "target": 1736.23,
+   "after": "1736.23"
+  },
+  {
+   "part_id": "372f3026-9e76-44fd-9820-2c733fcc8eeb",
+   "before": "58.99",
+   "target": 58.88,
+   "after": "58.88"
+  },
+  {
+   "part_id": "39241812-b547-4ddc-b84b-e7ff9ad4495c",
+   "before": "721.82",
+   "target": 728.03,
+   "after": "728.03"
+  },
+  {
+   "part_id": "3f2a62d8-72fc-4410-bc2a-f0e5d05e667d",
+   "before": "322.33",
+   "target": 322.44,
+   "after": "322.44"
+  },
+  {
+   "part_id": "46fd36f8-599d-452b-8010-adb8d13b9613",
+   "before": "181.15",
+   "target": 180.95,
+   "after": "180.95"
+  },
+  {
+   "part_id": "4fa9774a-36a8-4826-b5ed-5489e28d8eb6",
+   "before": "269.31",
+   "target": 282.33,
+   "after": "282.33"
+  },
+  {
+   "part_id": "52598dc4-f1fd-4013-a3c0-7f33cdf9007c",
+   "before": "97.58",
+   "target": 98.4,
+   "after": "98.40"
+  },
+  {
+   "part_id": "53067081-dbc2-488f-bec4-af7ab61b55d8",
+   "before": "224.45",
+   "target": 224.4,
+   "after": "224.40"
+  },
+  {
+   "part_id": "6250ab7c-f448-4513-8c4a-1b552757af8b",
+   "before": "1360.14",
+   "target": 1360.81,
+   "after": "1360.81"
+  },
+  {
+   "part_id": "6c2de913-8f6c-49f7-84c6-54e8857f65d3",
+   "before": "432.98",
+   "target": 449.09,
+   "after": "449.09"
+  },
+  {
+   "part_id": "72ec0e07-7a88-41f8-ae40-04c79a1cdaf6",
+   "before": "201.54",
+   "target": 146.33,
+   "after": "146.33"
+  },
+  {
+   "part_id": "8a7a73f4-1610-45b9-b873-3ad270a5cce6",
+   "before": "21.45",
+   "target": 20.79,
+   "after": "20.79"
+  },
+  {
+   "part_id": "9edad2bc-da8f-4ba5-a820-89e72539cf3a",
+   "before": "249.92",
+   "target": 250.02,
+   "after": "250.02"
+  },
+  {
+   "part_id": "a5f4f84d-5fa3-4ec4-9077-ed6a15ebc792",
+   "before": "146.99",
+   "target": 147.09,
+   "after": "147.09"
+  },
+  {
+   "part_id": "aaa092e1-cc33-415e-ba3b-8092b79fa065",
+   "before": "129.53",
+   "target": 129.69,
+   "after": "129.69"
+  },
+  {
+   "part_id": "afd40a09-70f4-4109-8986-9ee12bfb28b3",
+   "before": "65.64",
+   "target": 65.84,
+   "after": "65.84"
+  },
+  {
+   "part_id": "b579f95b-8ad3-4883-abad-2dcd8efd7827",
+   "before": "293.73",
+   "target": 290.96,
+   "after": "290.96"
+  },
+  {
+   "part_id": "cd83f103-0f6e-4cf7-ac1b-0321e0549b4b",
+   "before": "554.00",
+   "target": 554.41,
+   "after": "554.41"
+  },
+  {
+   "part_id": "cefee800-3286-4d9e-a15d-c25d4fb16a5a",
+   "before": "12.82",
+   "target": 12.17,
+   "after": "12.17"
+  },
+  {
+   "part_id": "de3b0432-89d5-4cce-923d-7c229f713443",
+   "before": "169.19",
+   "target": 169.29,
+   "after": "169.29"
+  },
+  {
+   "part_id": "e028d9b5-d991-4c0c-ab07-26bb4255114f",
+   "before": "180.64",
+   "target": 180.74,
+   "after": "180.74"
+  },
+  {
+   "part_id": "e947dbf7-9033-4d1c-b23e-206b48886af0",
+   "before": "911.72",
+   "target": 912.11,
+   "after": "912.11"
+  },
+  {
+   "part_id": "e9e65681-b7dd-4d9f-afb1-3e303e6dd7dc",
+   "before": "4.64",
+   "target": 5.05,
+   "after": "5.05"
+  },
+  {
+   "part_id": "ea4bb74f-8fa7-4fac-b6a3-8907c05b6c82",
+   "before": "198.77",
+   "target": 198.97,
+   "after": "198.97"
+  },
+  {
+   "part_id": "eec3c62a-60c0-41c2-8624-8854c4f37f1c",
+   "before": "160.11",
+   "target": 160.21,
+   "after": "160.21"
+  },
+  {
+   "part_id": "f8fb697f-a260-460e-a659-34e958252963",
+   "before": "131.15",
+   "target": 131.24,
+   "after": "131.24"
+  }
+ ]
+}

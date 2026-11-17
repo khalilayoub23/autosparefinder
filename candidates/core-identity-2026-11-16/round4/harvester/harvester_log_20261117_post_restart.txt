@@ -1,0 +1,103 @@
+2026-11-17 03:35:47,440 INFO parallel_sessions=5 (env HARVESTER_PARALLEL_SESSIONS=5) inter_model_s=20 idle_max_rest_s=3600
+2026-11-17 03:35:47,799 INFO Queue drained — full IL pass complete. Requeued 0 models >14d old for refresh.
+2026-11-17 03:35:47,857 INFO ═══ Cycle 4606 — queue-driven | done=6695/6695 models (182/182 brands), pending=0 ═══
+2026-11-17 03:35:47,881 INFO Worker 1: queue empty — nothing pending
+2026-11-17 03:35:47,882 INFO Worker 1: done (0 models this cycle)
+2026-11-17 03:35:48,908 INFO Worker 2: queue empty — nothing pending
+2026-11-17 03:35:48,908 INFO Worker 2: done (0 models this cycle)
+2026-11-17 03:35:49,889 INFO Worker 3: queue empty — nothing pending
+2026-11-17 03:35:49,890 INFO Worker 3: done (0 models this cycle)
+2026-11-17 03:35:50,887 INFO Worker 4: queue empty — nothing pending
+2026-11-17 03:35:50,887 INFO Worker 4: done (0 models this cycle)
+2026-11-17 03:35:51,886 INFO Worker 5: queue empty — nothing pending
+2026-11-17 03:35:51,887 INFO Worker 5: done (0 models this cycle)
+2026-11-17 03:35:52,866 INFO Cycle 4606 done — queue drained (idle x1). Resting 240s...
+2026-11-17 03:39:53,035 INFO ═══ Cycle 4607 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:40:56,873 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:42:10,155 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:43:17,607 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:43:23,608 ERROR could not mint cf_clearance cookie after retries
+2026-11-17 03:43:23,611 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:44:23,752 INFO ═══ Cycle 4608 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:44:23,753 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:45:23,910 INFO ═══ Cycle 4609 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:46:30,848 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:47:43,110 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:48:56,351 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:49:02,352 ERROR could not mint cf_clearance cookie after retries
+2026-11-17 03:49:02,355 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:50:02,543 INFO ═══ Cycle 4610 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:50:02,545 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:51:02,676 INFO ═══ Cycle 4611 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:52:09,098 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:53:22,197 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:54:34,389 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:54:40,390 ERROR could not mint cf_clearance cookie after retries
+2026-11-17 03:54:40,391 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:55:40,497 INFO ═══ Cycle 4612 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:55:40,498 WARNING No valid cf_clearance/session — skipping worker cycle to avoid false-empty queue burn. Sleeping 60s before retry.
+2026-11-17 03:56:40,573 INFO ═══ Cycle 4613 — queue-driven | done=6692/6695 models (182/182 brands), pending=3 ═══
+2026-11-17 03:57:47,250 WARNING FlareSolverr error solving clearance on http://flaresolverr:8191/v1: HTTP Error 500: Internal Server Error
+2026-11-17 03:58:09,481 INFO cf_clearance minted via flaresolverr (12 cookies, sessionless)
+2026-11-17 03:58:09,524 INFO ▶ byd/atto-3
+2026-11-17 03:58:10,037 INFO   byd/atto-3: 79 slugs (0 extra)
+2026-11-17 03:58:10,524 INFO ▶ renault/fuego-136
+2026-11-17 03:58:11,453 INFO   renault/fuego-136: 82 slugs (21 extra)
+2026-11-17 03:58:11,510 INFO ▶ renault/master-ii-bus-jd
+2026-11-17 03:58:12,526 INFO Worker 4: queue empty — nothing pending
+2026-11-17 03:58:12,527 INFO Worker 4: done (0 models this cycle)
+2026-11-17 03:58:12,591 INFO   renault/master-ii-bus-jd: 82 slugs (21 extra)
+2026-11-17 03:58:13,539 INFO Worker 5: queue empty — nothing pending
+2026-11-17 03:58:13,539 INFO Worker 5: done (0 models this cycle)
+2026-11-17 03:58:22,607 WARNING fetch failed: HTTP 404 (x1) https://www.car-parts.ie/car-parts/renault/fuego-136/timing-belt
+2026-11-17 03:58:27,273 INFO   byd/atto-3: 20/79 slugs | 23 parts
+2026-11-17 03:58:28,664 INFO   renault/fuego-136: 20/82 slugs | 135 parts
+2026-11-17 03:58:30,186 INFO   renault/master-ii-bus-jd: 20/82 slugs | 136 parts
+2026-11-17 03:58:41,104 INFO   renault/fuego-136: 40/82 slugs | 247 parts
+2026-11-17 03:58:42,676 INFO   renault/master-ii-bus-jd: 40/82 slugs | 242 parts
+2026-11-17 03:58:45,231 INFO   byd/atto-3: 40/79 slugs | 23 parts
+2026-11-17 03:58:53,520 INFO   renault/fuego-136: 60/82 slugs | 312 parts
+2026-11-17 03:58:54,288 INFO   renault/master-ii-bus-jd: 60/82 slugs | 307 parts
+2026-11-17 03:59:04,400 WARNING fetch failed: HTTP 404 (x50) https://www.car-parts.ie/car-parts/renault/master-ii-bus-jd/fuel-supply-system-auto
+2026-11-17 03:59:04,787 INFO   byd/atto-3: 60/79 slugs | 23 parts
+2026-11-17 03:59:08,052 INFO   renault/fuego-136: 80/82 slugs | 387 parts
+2026-11-17 03:59:09,653 INFO ✓ renault/fuego-136: 389 parts
+2026-11-17 03:59:09,690 INFO Worker 2: renault/fuego-136 → 389 parts
+2026-11-17 03:59:11,685 INFO   renault/master-ii-bus-jd: 80/82 slugs | 395 parts
+2026-11-17 03:59:13,301 INFO ✓ renault/master-ii-bus-jd: 395 parts
+2026-11-17 03:59:13,329 INFO Worker 3: renault/master-ii-bus-jd → 395 parts
+2026-11-17 03:59:21,343 INFO ✓ byd/atto-3: 23 parts
+2026-11-17 03:59:21,370 INFO Worker 1: byd/atto-3 → 23 parts
+2026-11-17 03:59:29,738 INFO Worker 2: queue empty — nothing pending
+2026-11-17 03:59:29,740 INFO Worker 2: done (1 models this cycle)
+2026-11-17 03:59:33,371 INFO Worker 3: queue empty — nothing pending
+2026-11-17 03:59:33,375 INFO Worker 3: done (1 models this cycle)
+2026-11-17 03:59:41,392 INFO Worker 1: queue empty — nothing pending
+2026-11-17 03:59:41,393 INFO Worker 1: done (1 models this cycle)
+2026-11-17 03:59:41,394 INFO Cycle 4613 done. Total parts: 21454450. Resting 120s...
+2026-11-17 04:01:41,559 INFO Queue drained — full IL pass complete. Requeued 0 models >14d old for refresh.
+2026-11-17 04:01:41,622 INFO ═══ Cycle 4614 — queue-driven | done=6695/6695 models (182/182 brands), pending=0 ═══
+2026-11-17 04:01:41,649 INFO Worker 1: queue empty — nothing pending
+2026-11-17 04:01:41,650 INFO Worker 1: done (0 models this cycle)
+2026-11-17 04:01:42,648 INFO Worker 2: queue empty — nothing pending
+2026-11-17 04:01:42,649 INFO Worker 2: done (0 models this cycle)
+2026-11-17 04:01:43,655 INFO Worker 3: queue empty — nothing pending
+2026-11-17 04:01:43,655 INFO Worker 3: done (0 models this cycle)
+2026-11-17 04:01:44,650 INFO Worker 4: queue empty — nothing pending
+2026-11-17 04:01:44,651 INFO Worker 4: done (0 models this cycle)
+2026-11-17 04:01:45,655 INFO Worker 5: queue empty — nothing pending
+2026-11-17 04:01:45,656 INFO Worker 5: done (0 models this cycle)
+2026-11-17 04:01:46,631 INFO Cycle 4614 done — queue drained (idle x1). Resting 240s...
+2026-11-17 04:05:46,721 INFO Queue drained — full IL pass complete. Requeued 0 models >14d old for refresh.
+2026-11-17 04:05:46,768 INFO ═══ Cycle 4615 — queue-driven | done=6695/6695 models (182/182 brands), pending=0 ═══
+2026-11-17 04:05:46,792 INFO Worker 1: queue empty — nothing pending
+2026-11-17 04:05:46,793 INFO Worker 1: done (0 models this cycle)
+2026-11-17 04:05:47,798 INFO Worker 2: queue empty — nothing pending
+2026-11-17 04:05:47,799 INFO Worker 2: done (0 models this cycle)
+2026-11-17 04:05:48,801 INFO Worker 3: queue empty — nothing pending
+2026-11-17 04:05:48,801 INFO Worker 3: done (0 models this cycle)
+2026-11-17 04:05:49,795 INFO Worker 4: queue empty — nothing pending
+2026-11-17 04:05:49,795 INFO Worker 4: done (0 models this cycle)
+2026-11-17 04:05:50,803 INFO Worker 5: queue empty — nothing pending
+2026-11-17 04:05:50,804 INFO Worker 5: done (0 models this cycle)
+2026-11-17 04:05:51,776 INFO Cycle 4615 done — queue drained (idle x2). Resting 480s...

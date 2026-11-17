@@ -1,0 +1,5858 @@
+[
+ {
+  "offer_id": "0aa4c5ef-d4db-4f16-8ded-c94709a1af16",
+  "part_id": "564e8c56-1c96-4f91-a9ec-958a24110e66",
+  "article": "01111",
+  "owner_brand": "JAPKO",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "564e8c56-1c96-4f91-a9ec-958a24110e66",
+   "name": "Vanette C22 Glow plug JAPKO 01111",
+   "oem_number": "01111",
+   "part_type": "aftermarket",
+   "manufacturer": "Nissan",
+   "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90",
+   "sku": "NISSA-01111",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/nissan/vanette-box-c22/ignition-system-auto",
+   "is_active": true
+  },
+  "title_brand": "JAPKO",
+  "offers": [
+   {
+    "id": "0aa4c5ef-d4db-4f16-8ded-c94709a1af16",
+    "supplier_sku": "01111",
+    "price_ils": "14.20",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/golf-iii-1h1/damping-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "a74b9587-9791-4ca5-81bd-c964a019a19e",
+     "name": "Chevrolet Aveo T200 Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "137df8e1-1bc4-4474-976e-6d39deaa26ff",
+     "name": "Lublin 2 Platform/Chassis Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "18346784-06f5-405b-bfae-fb94b8bf5db0",
+     "name": "Seat Ibiza 6k Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Seat",
+     "mid": "ebb4521b-6742-4cc2-b1d0-207903ea085a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "17f05df6-e15b-40e7-9b58-632e07d51d95",
+     "name": "SKODA Fabia II Praktik (545) Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "eb46d906-469b-4733-b19e-697844261555",
+     "name": "Smart 450 Convertible Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Smart",
+     "mid": "aed142ae-b9a1-41f9-b394-9754d2ea1aaa"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "e717473a-29cc-487b-8200-d68686e64ad4",
+     "name": "Golf 3 Top strut mount bearing febi bilstein 01111",
+     "oem_number": "01111",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "2b4daa20-2ce6-4dcf-b62a-3457b1f4ef8b",
+  "part_id": "1201fb31-f4b4-4362-8118-e35f01d1e066",
+  "article": "03212",
+  "owner_brand": "AMIO",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "1201fb31-f4b4-4362-8118-e35f01d1e066",
+   "name": "AMiO 03212 Towbar Socket",
+   "oem_number": "03212",
+   "part_type": "aftermarket",
+   "manufacturer": "Jaguar",
+   "mid": "fde0f2dc-c6fb-4ab6-b699-765044fbc073",
+   "sku": "JAGUA-03212",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "AMIO",
+  "offers": [
+   {
+    "id": "2b4daa20-2ce6-4dcf-b62a-3457b1f4ef8b",
+    "supplier_sku": "03212",
+    "price_ils": "4.18",
+    "supplier_url": "https://www.car-parts.ie/car-parts/saab/900-ii-convertible/suspension-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   },
+   {
+    "id": "b0245dfa-80e4-4352-ac4c-8e555231ad91",
+    "supplier_sku": "03212",
+    "price_ils": "310.86",
+    "supplier_url": "https://www.ebay.com/itm/275663905004?amdata=enc%3AAQALAAAAoGfYFPkwiKCW4ZNSs2u11xDxofQ949a9MVWs6R%2B4PScag892uS%2B%2Fvcgyti%2FfgPmrgj7KChvOzxBQchdxYFxdPaHJYvzTpHSl2BbAx7hZ7e%2BBA0KA0%2BnMzAqG3WkYjQhU%2BfQCxoHtjzLbux%2FZgaRGXSilBKbgfAwaSihVEEQqM2k8GvPIsbt%2FEhFtieDdI3ZwslQYyBOaIEsvnT52HOt4nzE%3D",
+    "part_type": null,
+    "is_available": true,
+    "sname": "eBay Motors"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "783d2f1b-6ece-4119-aa11-61e6bfd6226f",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "520eb45e-67da-4920-9fdb-58b86833663c",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "476946f2-b9c2-465b-96d2-950f81108ecd",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "3d9b37a7-ceba-4214-9292-9ce232a06ff8",
+     "name": "febi bilstein 03212 DAEWOO Lacetti Premiere Saloon (J300) anti roll bar links",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "35955cb1-d0d5-4d88-b760-fa0bc035da6b",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "9af42fc2-cb5c-43f1-9370-8c23e88fbcf7",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "7401b738-84c0-4e62-952c-f0cbf8952cdd",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "42862d30-3313-46c6-a3ed-4852ca1a1d90",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "d02babdf-c0fd-4148-aa14-432302290e83",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "c70e6109-ebc6-484d-bb46-3bb52c914dfd",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "b26befe6-1f07-4da7-a151-a553859893ff",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "600b0711-e8e4-41dd-9389-672ad015fba2",
+     "name": "OPEL Kadett C Aero Mounting, stabilizer coupling rod febi bilstein 03212",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1e63e0ae-d519-491c-9881-3e086ef70e83",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "731535fe-666b-4bc1-b151-aef24693b95d",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "eb7985d1-0d89-4588-9ddb-825bede75303",
+     "name": "Saab 900 II Convertible Mounting, stabilizer coupling rod febi bilstein 03212",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a51c91ab-a011-4acf-80fc-05636a1fd211",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "06fcbe70-f300-4bb4-b628-f966d697a94e",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Subaru",
+     "mid": "88a04aee-d7d5-45ff-8308-4c6b50c67c0e"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "7aae3094-6f86-4606-92c6-e5934cb1dad7",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Suzuki",
+     "mid": "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "f0cd6a02-3052-4b0b-bdd0-6e4e63ee1dd2",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "689550f0-4d2a-4ecb-a299-31986d3dbb3b",
+     "name": "AMiO 03212 Towbar Socket",
+     "oem_number": "03212",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   }
+  ]
+ },
+ {
+  "offer_id": "864ac7d7-c543-4fc9-b8c6-e67a725e6aff",
+  "part_id": "e6be7972-978f-4c7a-a19b-847866710be5",
+  "article": "04622",
+  "owner_brand": "METALCAUCHO",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "e6be7972-978f-4c7a-a19b-847866710be5",
+   "name": "Nissan Patrol K260 Engine mount Metalcaucho 04622",
+   "oem_number": "04622",
+   "part_type": "aftermarket",
+   "manufacturer": "Nissan",
+   "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90",
+   "sku": "NISSA-04622",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/nissan/patrol-hardtop-k260/engine-auto",
+   "is_active": true
+  },
+  "title_brand": "METALCAUCHO",
+  "offers": [
+   {
+    "id": "864ac7d7-c543-4fc9-b8c6-e67a725e6aff",
+    "supplier_sku": "04622",
+    "price_ils": "32.33",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/vento-1h2/air-filter",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "80eebc8a-762e-4b6c-b3c2-ee230a65ab83",
+     "name": "febi bilstein 04622 VW Vento 1h2 air filter",
+     "oem_number": "04622",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "25887589-e4cf-4907-904f-0d3edaf5153b",
+  "part_id": "5969c7dc-f116-4e4f-b84a-58e96af37f99",
+  "article": "101666",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign_brands": [
+   "MOTUL"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "5969c7dc-f116-4e4f-b84a-58e96af37f99",
+   "name": "febi bilstein 101666 RENAULT Megane IV Saloon air filter",
+   "oem_number": "101666",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-101666",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/renault/kangoo-iii-mpv/filters-auto",
+   "is_active": true
+  },
+  "title_brand": "FEBI BILSTEIN",
+  "offers": [
+   {
+    "id": "25887589-e4cf-4907-904f-0d3edaf5153b",
+    "supplier_sku": "101666",
+    "price_ils": "67.44",
+    "supplier_url": "https://www.car-parts.ie/car-parts/aston-martin/vantage-vantage/engine-cooling-system-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "801c3040-30ca-4bbc-97a1-e0fd41a11263",
+     "name": "ACURA MDX (YD2) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Acura",
+     "mid": "718f11d6-2656-46d9-8545-20e45a226b58"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "32c39e16-b415-4d3e-aecd-920f3609b262",
+     "name": "ASTON MARTIN Vantage Coupe V8 / V12 Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Aston Martin",
+     "mid": "e13a6cde-168a-4c6a-865e-75042c3a531d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "558c9d04-3715-4ebe-883a-dead42adb162",
+     "name": "MOTUL 101666 Audi A4 B5 brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "96db5d84-f834-4041-a4d6-27bcf1066a64",
+     "name": "AUSTIN Ambassador Hatchback Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Austin",
+     "mid": "eb80ca1e-cccb-4230-a262-b075212f4c6c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "016bbd81-079c-4b66-bf72-5982fc5d04d1",
+     "name": "MOTUL 101666 BMW E38 brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5dcd4594-ba2b-4346-a148-a54daec50a64",
+     "name": "CADILLAC Escalade EXT Pickup (GMT900) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Cadillac",
+     "mid": "6f18818a-3c94-4a70-bab1-1384c19a94fc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "879d4d15-4ee7-4a30-8500-beefcf1eda6b",
+     "name": "CHEVROLET Uplander MPV Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "7d35e1eb-f4e8-4397-a3b6-357811fe3956",
+     "name": "CITRO\u00cbN C-Zero Hatchback Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "c3e918e6-04d4-4e07-a041-a70d9101ecf7",
+     "name": "DODGE Dart Saloon (PF) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Dodge",
+     "mid": "403703a4-fa08-4159-9e47-b6583ec652ef"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "347ce963-8a65-4245-9579-e922cde9f47a",
+     "name": "Ferrari 348 TS Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Ferrari",
+     "mid": "559a1250-9621-4f96-b511-6e7df351bf0f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3f3efb93-479b-49f3-a0e9-23f7994b044b",
+     "name": "MOTUL 101666 Fiat Grande Punto 199 brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "d44819aa-e93e-4431-af3e-b8ab6ff2dcb7",
+     "name": "FORD GT Mk1 Coupe Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6c628366-f499-4239-bf7e-f7a28d5e5a7c",
+     "name": "FORD USA Crown Victoria II (EN114) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford Usa",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "992ce279-e73c-4953-b3e8-e5f9035c1cdd",
+     "name": "HONDA Ridgeline (YK1) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "70eae28d-deb7-4510-883c-6fd1ca905304",
+     "name": "Hyundai Atos Prime Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f29bd1ce-4e44-49c6-bb6f-ea268b1e8a25",
+     "name": "K2700 (K62W) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2b884ba7-c80a-42a7-9b1b-02e18f82bf7d",
+     "name": "LAMBORGHINI Murci\u00e9lago Coupe Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Lamborghini",
+     "mid": "3eac5635-095c-43ce-be32-93ca726963de"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "dede7969-e54e-4b10-898c-c96bed9c3a68",
+     "name": "Mark LT Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Lincoln",
+     "mid": "41a549ed-6217-4b82-b5c0-0a0cf636ae89"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3c788c38-aa21-47c4-be50-e9e6feb9e969",
+     "name": "Elite Type 75 / Type 83 Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Lotus",
+     "mid": "2a863f80-4269-4ee5-904e-37516d4459dd"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "22ef94ca-3e50-49ca-b46d-8ec6e50710b5",
+     "name": "Goa Pickup Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Mahindra",
+     "mid": "55ccb109-cd13-4234-972b-5d0327fb214b"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "484feb9e-3d2d-435f-acd8-60b1d787dde7",
+     "name": "MASERATI Biturbo Spider Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Maserati",
+     "mid": "d2860650-732d-4f73-998d-c72fbca21370"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6918d69d-9cc5-4eb7-812b-c6f462f31d5a",
+     "name": "MOTUL 101666 MAZDA CX-3 (DK) brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Mazda",
+     "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "9905e69c-1b3c-4490-87c5-8574c99cc169",
+     "name": "MERCEDES-BENZ Citan II Tourer (W420) filters FEBI BILSTEIN 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "07ac2580-b0a3-4ab0-85a9-474d4aca81c1",
+     "name": "MITSUBISHI Lancer VIII Estate (CV) Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "165faaa6-19b5-4f53-ae96-87a4695416de",
+     "name": "MOSKVICH ASLK 2137 Estate Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Moskvich",
+     "mid": "bf18019b-19b5-4d8e-a53e-bb209afc25e2"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "19ddd450-ea63-4efa-a05b-62c21847db13",
+     "name": "MOTUL 101666 Nissan Note E11 brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "27793d18-4b58-47e0-a435-f5ff050b87a9",
+     "name": "MOTUL 101666 Opel Astra H brake fluid",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a85fc94a-8f59-4f36-aae4-8dc66c186197",
+     "name": "PEUGEOT iOn Hatchback Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "80baed5e-581d-42a3-b3b9-632b90d7cfce",
+     "name": "Piaggio Ape TM Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Piaggio",
+     "mid": "55b9a24a-9a0d-4c77-a6e4-fac35e393456"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "8ceeb4f3-ffef-4e9b-9a77-2dbd322d0c91",
+     "name": "PONTIAC Solstice Convertible Brake Fluid MOTUL 101666",
+     "oem_number": "101666",
+     "part_type": "aftermarket",
+     "manufacturer": "Pontiac",
+     "mid": "6556b6e7-ba0d-41e7-b1c8-a20ce860ec18"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "2c763220-a5b0-4b6b-bcde-ee3ea1bf414a",
+  "part_id": "e11a8624-4a3c-4ed6-9db2-5a5e2873db73",
+  "article": "103032",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign_brands": [
+   "DOGA"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "e11a8624-4a3c-4ed6-9db2-5a5e2873db73",
+   "name": "Opel Astra F35 steering FEBI BILSTEIN 103032",
+   "oem_number": "103032",
+   "part_type": "aftermarket",
+   "manufacturer": "Opel",
+   "mid": "86106424-41ba-434b-b107-4b6db23523b7",
+   "sku": "OPEL-103032",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/opel/astra-g-classic-caravan-f35/steering-auto",
+   "is_active": true
+  },
+  "title_brand": "FEBI BILSTEIN",
+  "offers": [
+   {
+    "id": "2c763220-a5b0-4b6b-bcde-ee3ea1bf414a",
+    "supplier_sku": "103032",
+    "price_ils": "464.86",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/qashqai/window-regulator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "867949fd-577d-4beb-88bd-f5a0f0f8f5e6",
+     "name": "DOGA 103032 Nissan Qashqai j10 window regulator",
+     "oem_number": "103032",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "39fa4dd6-32b9-492e-85c1-e2a4ebd04c45",
+  "part_id": "aa908342-659e-4e5f-847a-1721d7d1f77a",
+  "article": "10915",
+  "owner_brand": "MEAT & DORIA",
+  "foreign_brands": [
+   "3RG"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "aa908342-659e-4e5f-847a-1721d7d1f77a",
+   "name": "MERCEDES-BENZ C-Class T-Modell (S206) Ignition coil MEAT & DORIA 10915",
+   "oem_number": "10915",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-10915",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/geba/p-14335438",
+   "is_active": true
+  },
+  "title_brand": "MEAT & DORIA",
+  "offers": [
+   {
+    "id": "39fa4dd6-32b9-492e-85c1-e2a4ebd04c45",
+    "supplier_sku": "10915",
+    "price_ils": "49.59",
+    "supplier_url": "https://www.car-parts.ie/car-parts/fiat/doblo-1-6-comby/camshaft",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b07cb048-f6f8-4a64-83fd-f402de0ebb76",
+     "name": "3RG 10915 FIAT Doblo 119 camshaft",
+     "oem_number": "10915",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "126e3f04-9b6a-4c3f-b9c9-3ecf96b164bd",
+     "name": "\u05e9\u05e8\u05d5\u05d5\u05dc \u05de\u05ea\u05db\u05d5\u05d5\u05e5 3,4,5 \u05de",
+     "oem_number": "10915",
+     "part_type": "oem",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "uncertain",
+    "reason": "product_type_conflict"
+   },
+   {
+    "sibling": {
+     "id": "ee5b6afb-bf2b-4047-a154-b5f2599481a5",
+     "name": "GEBA 10915 Mercedes X253 water pump",
+     "oem_number": "10915",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "602de59e-86c2-4f84-8963-c2befe338d65",
+  "part_id": "b104b8b5-245d-4c8d-bf68-b4f11b86566f",
+  "article": "1225017",
+  "owner_brand": "DIEDERICHS",
+  "foreign_brands": [
+   "KRAFT"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "b104b8b5-245d-4c8d-bf68-b4f11b86566f",
+   "name": "DIEDERICHS 1225017 Wheel arch liner Left Front, Rear Section",
+   "oem_number": "1225017",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-1225017",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/hd-karosserieteile/p-8917954",
+   "is_active": true
+  },
+  "title_brand": "DIEDERICHS",
+  "offers": [
+   {
+    "id": "602de59e-86c2-4f84-8963-c2befe338d65",
+    "supplier_sku": "1225017",
+    "price_ils": "58.36",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/vivaro-box/belt-drive-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "82032bd1-174d-4e81-bc4b-f5eb239aa991",
+     "name": "OPEL Vivaro B Van (X82) Deflection / guide pulley, V-ribbed belt KRAFT 1225017",
+     "oem_number": "1225017",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "00a03b23-9c82-48cc-8d90-c244dfbf5dfe",
+     "name": "Renault Espace 5 Deflection / guide pulley, V-ribbed belt KRAFT 1225017",
+     "oem_number": "1225017",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "644a6043-3da5-4bb7-ac6c-d22f7e524a21",
+     "name": "VAUXHALL Vivaro Van (X82) Deflection / guide pulley, V-ribbed belt KRAFT 1225017",
+     "oem_number": "1225017",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "98d9bfeb-9b7c-4a2d-a4ec-50d0c8e0b4d4",
+  "part_id": "95a8977e-882a-4aa0-9f23-4adbcde54f8c",
+  "article": "16102",
+  "owner_brand": "FAE",
+  "foreign_brands": [
+   "A.B.S."
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "95a8977e-882a-4aa0-9f23-4adbcde54f8c",
+   "name": "FAE 16102 BMW E90 exhaust pressure sensor",
+   "oem_number": "16102",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-16102",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/3rg/p-26947536",
+   "is_active": true
+  },
+  "title_brand": "FAE",
+  "offers": [
+   {
+    "id": "98d9bfeb-9b7c-4a2d-a4ec-50d0c8e0b4d4",
+    "supplier_sku": "16102",
+    "price_ils": "255.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/ac/ace/brake-discs",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "9365f970-5bc5-41c4-ac0d-60301c461aef",
+     "name": "A.B.S. 16102 Ace brake discs",
+     "oem_number": "16102",
+     "part_type": "aftermarket",
+     "manufacturer": "Ac",
+     "mid": "736dec0f-9ad8-4393-9f37-3c5ce5109835"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "be57d22c-2643-4a3a-8aa9-8961e09841bc",
+  "part_id": "6c5d0a26-39d1-4b7d-907f-2821dac0cdee",
+  "article": "190972",
+  "owner_brand": "SPIDAN",
+  "foreign_brands": [
+   "L\u00d6BRO"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "6c5d0a26-39d1-4b7d-907f-2821dac0cdee",
+   "name": "SPIDAN 190972 Peugeot Boxer Minibus cv boot",
+   "oem_number": "190972",
+   "part_type": "aftermarket",
+   "manufacturer": "Peugeot",
+   "mid": "2b6a2687-8227-4307-9c88-500545fc96ca",
+   "sku": "PEUGE-190972",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/peugeot/boxer-bus-230p/cv-boot",
+   "is_active": true
+  },
+  "title_brand": "SPIDAN",
+  "offers": [
+   {
+    "id": "be57d22c-2643-4a3a-8aa9-8961e09841bc",
+    "supplier_sku": "190972",
+    "price_ils": "50.91",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/voyage-1994/cv-boot",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "d76ecf31-233a-4312-80d5-c871302aa0df",
+     "name": "SPIDAN 190972 BMW E90 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "f254f96c-a18e-4f6e-ab9d-689a504c02f0",
+     "name": "L\u00d6BRO 190972 C1500 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "81f70c25-1623-466b-9830-f59bb1ac5e85",
+     "name": "SPIDAN 190972 \u0421itro\u00ebn ZX N2 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "e788578e-8634-4278-8c7c-98015108e00d",
+     "name": "L\u00d6BRO 190972 FIAT Mille Hatchback (146) cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1aed87eb-7cd6-468f-a4fd-a3db171b74e6",
+     "name": "L\u00d6BRO 190972 Ford C-Max DM2 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "9f3c8686-36d0-4e6f-80eb-f51180584151",
+     "name": "SPIDAN 190972 Honda Accord VIII CU cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "1c2f5ef5-d727-4f89-bbb5-1b9fb351a8fa",
+     "name": "L\u00d6BRO 190972 Hyundai Elantra 3 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "803b19c5-0b2c-44ca-8849-20e5c79fd462",
+     "name": "SPIDAN 190972 Mercedes W638 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "fdd8568c-20b1-47a1-9870-49ec9aa3f169",
+     "name": "L\u00d6BRO 190972 MG MGY Hatchback cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "MG",
+     "mid": "341be223-5852-4f29-bd96-085ef2c5d07b"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "fef2fb7c-1b91-4b2b-81a7-122b4c0ca2a9",
+     "name": "L\u00d6BRO 190972 Nissan Primera P11 Saloon cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "87438d96-9165-4a0a-b660-3899209eda1f",
+     "name": "SPIDAN 190972 Opel Astra H cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "263a722f-7bfc-401a-93b6-a69b09ca492c",
+     "name": "CV boot (L\u00d6BRO, 190972)",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Ravon",
+     "mid": "555346ee-ad25-478c-b60e-3adcf6f14617"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "eaa9e28d-7038-4de0-a5bb-580593db507c",
+     "name": "L\u00d6BRO 190972 Renault Scenic 3 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a495496c-9494-41c1-a147-d3c2f3cf0156",
+     "name": "L\u00d6BRO 190972 Skoda Roomster 5j cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6f7d294a-8417-4ab0-9ba4-e35165bc289c",
+     "name": "SPIDAN 190972 TOYOTA Corolla VIII Saloon (E110) cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "f9c1859d-7ba3-4e65-a19c-6841e2a2e617",
+     "name": "SPIDAN 190972 Volvo V50 545 cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "42fa6fc1-9eff-4751-98f0-3c344ced3459",
+     "name": "L\u00d6BRO 190972 Volkswagen Voyage (5X1) cv boot",
+     "oem_number": "190972",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "ccf7fe51-d9aa-4474-a61f-12ec51e3e7d2",
+  "part_id": "8be12b54-e8b3-485f-b2e0-99631d558f26",
+  "article": "1952",
+  "owner_brand": "NGK",
+  "foreign_brands": [
+   "NTK"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "8be12b54-e8b3-485f-b2e0-99631d558f26",
+   "name": "NGK 1952 CLK C209 lambda sensor",
+   "oem_number": "1952",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-1952",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/lpr/p-2361498",
+   "is_active": true
+  },
+  "title_brand": "NGK",
+  "offers": [
+   {
+    "id": "ccf7fe51-d9aa-4474-a61f-12ec51e3e7d2",
+    "supplier_sku": "1952",
+    "price_ils": "173.69",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/hiace-iii-box-yh7-lh6-lh7-lh5-yh5-yh6/lambda-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "88e12a00-9297-4606-8b9d-0cfb3bd65e3e",
+     "name": "NGK 1952 Audi R8 42 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "d3d83870-0f7a-4058-95a2-95577278a704",
+     "name": "NGK 1952 BMW Z3 Coupe lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0f9bd531-4ac8-4a6e-90e4-caf8833f865b",
+     "name": "NGK 1952 Chevrolet Aveo T250 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "32305da4-2c36-41ac-8b7a-61a1703b05d6",
+     "name": "NGK 1952 CITRO\u00cbN XM I Hatchback (Y3) lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0c6a88cb-670e-4bed-8c56-28e4938e0345",
+     "name": "NGK 1952 Fiat Brava 182 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "574fcbf0-0e22-451f-9d01-5ca6e0809072",
+     "name": "NTK 1952 Ford Fiesta Mk4 JVS lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5aebf4e7-64e1-4bd5-8ff3-2438e615f26a",
+     "name": "NGK 1952 Honda Logo GA3 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "45ef87ca-01b4-4661-bb45-8a2efa9b1036",
+     "name": "NGK 1952 Hyundai Tucson jm lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "901e1719-6890-456e-9bb8-9ebc6f076fa1",
+     "name": "NGK 1952 Jaguar XJ X350 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Jaguar",
+     "mid": "fde0f2dc-c6fb-4ab6-b699-765044fbc073"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "89a59299-d2e5-428d-9b2d-e0068feb78d4",
+     "name": "NGK 1952 KIA Shuma II Saloon (FB) lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "b228b3b9-5f55-4c0f-beb7-3da5cdcd9b1e",
+     "name": "NGK 1952 MG ZR lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "MG",
+     "mid": "341be223-5852-4f29-bd96-085ef2c5d07b"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0c5f967d-22ea-4199-a2ae-48061e130990",
+     "name": "NTK 1952 Mitsubishi Eclipse Cross lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "80426607-b30b-46c5-b8fe-7fee070b74a4",
+     "name": "NGK 1952 Nissan Kubistar Van X80 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "7c06b3da-d3b3-46fe-9a31-966489329199",
+     "name": "NGK 1952 Opel Corsa S93 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "f96c0c83-7d16-4372-98e6-167387b0ced4",
+     "name": "NGK 1952 Peugeot 306 Convertible lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "418e2af2-500e-453f-ad10-222ea511d049",
+     "name": "NGK 1952 Sc\u00e9nic 4 lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0f74421c-bd35-4900-a896-36ec21d92caf",
+     "name": "NGK 1952 ROVER Streetwise Hatchback lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Rover",
+     "mid": "9e3b7475-c104-4f75-a006-26c5858b9c37"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "4b6e086b-e5a1-4ba6-8c45-b4e56f127b43",
+     "name": "NGK 1952 Saab 9-3 YS3D lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "08654920-5c81-4788-8766-f6772426cf40",
+     "name": "SKODA Felicia Cube Van (6U5) Lambda sensor NTK 1952",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "uncertain",
+    "reason": "brand_unknown"
+   },
+   {
+    "sibling": {
+     "id": "d49c668a-319f-429c-a57d-6bf3bde054ed",
+     "name": "NTK 1952 Suzuki SJ Convertible lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Suzuki",
+     "mid": "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "bccbc61d-b624-4949-a657-bcc8616bae35",
+     "name": "NTK 1952 TOYOTA Hiace Van (H100) lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a3393cd1-9767-424f-8071-3724206281d0",
+     "name": "NGK 1952 VOLVO S70 (LS, 874) lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "1dd6fb01-3ec2-4340-bd72-3bd8518bd6dd",
+     "name": "NGK 1952 T4 Transporter lambda sensor",
+     "oem_number": "1952",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   }
+  ]
+ },
+ {
+  "offer_id": "216935bd-e4da-4617-bf13-640c5ab1034f",
+  "part_id": "37b4b2e8-48b5-4bc5-bcd6-c0026637b7a7",
+  "article": "20157",
+  "owner_brand": "MEAT & DORIA",
+  "foreign_brands": [
+   "BREMI",
+   "MAPCO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "37b4b2e8-48b5-4bc5-bcd6-c0026637b7a7",
+   "name": "VW Karmann GHIA Convertible windscreen cleaning system MEAT & DORIA 20157",
+   "oem_number": "20157",
+   "part_type": "aftermarket",
+   "manufacturer": "Vw",
+   "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25",
+   "sku": "VW-20157",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/vw/1500-1600-variant-36/windscreen-cleaning-system-auto",
+   "is_active": true
+  },
+  "title_brand": "MEAT & DORIA",
+  "offers": [
+   {
+    "id": "216935bd-e4da-4617-bf13-640c5ab1034f",
+    "supplier_sku": "20157",
+    "price_ils": "114.81",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/roadster-452/ignition-system-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b093a3dd-97f9-4fdf-981e-a2462768b16c",
+     "name": "MAPCO 20157 RENAULT Modus / Grand Modus (F, JP) shock absorber",
+     "oem_number": "20157",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "94b8d0a8-83b8-4d01-ae44-de498bdb6d12",
+     "name": "Smart Roadster Convertible Ignition coil BREMI 20157",
+     "oem_number": "20157",
+     "part_type": "aftermarket",
+     "manufacturer": "Smart",
+     "mid": "aed142ae-b9a1-41f9-b394-9754d2ea1aaa"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "b88692f5-f7cf-4808-aa24-b2bf0b1d9508",
+  "part_id": "b6f834c7-c175-476f-b592-d9c6349e0d9e",
+  "article": "2214006",
+  "owner_brand": "DIEDERICHS",
+  "foreign_brands": [
+   "ELF"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "b6f834c7-c175-476f-b592-d9c6349e0d9e",
+   "name": "DIEDERICHS 2214006 Wing fender Right Front",
+   "oem_number": "2214006",
+   "part_type": "aftermarket",
+   "manufacturer": "Vw",
+   "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25",
+   "sku": "VW-2214006",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/hd-karosserieteile/p-7031436",
+   "is_active": true
+  },
+  "title_brand": "DIEDERICHS",
+  "offers": [
+   {
+    "id": "b88692f5-f7cf-4808-aa24-b2bf0b1d9508",
+    "supplier_sku": "2214006",
+    "price_ils": "51.54",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/v60-box-body-estate-155/engine-oil",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "3da6ac9a-62a6-4d73-ab61-113af2e066e3",
+     "name": "ELF 2214006 Chevrolet Epica US engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "091c59f8-6d6f-4b44-af65-1885deff5bd3",
+     "name": "ELF 2214006 CITRO\u00cbN C5 Box Body / Estate (DE_, RE_) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "50da226b-ef03-4876-aae0-375cc304db77",
+     "name": "ELF 2214006 DAEWOO Magnus Saloon engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "7f807fe5-e983-4791-8b74-97126f43b2cd",
+     "name": "ELF 2214006 FIAT Scudo II Platform / Chassis (270, 272) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5b98de55-ba52-485c-9e6b-ae4994ef4c5a",
+     "name": "ELF 2214006 Hover H5 engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Great Wall",
+     "mid": "16e9b67b-9bb0-4c31-99dc-f5c359d38109"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2abeecce-6d56-413c-bac5-c2c2bb03425a",
+     "name": "ELF 2214006 Creta engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6b591143-d84a-4b58-b050-0ea72deeaddb",
+     "name": "ELF 2214006 IVECO Daily IV Minibus engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Iveco",
+     "mid": "f7a25a66-dc77-4027-a0ab-91a75d6d2bd0"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "0a2a10d2-c904-41e5-9888-f0f91095525f",
+     "name": "ELF 2214006 Lada Vesta SW engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Lada",
+     "mid": "2b548295-c78b-41c6-a992-aa0dd070f347"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f198d1ba-58fa-46a2-b3b9-abe40f23ab6f",
+     "name": "ELF 2214006 NISSAN Teana III (J33, L33) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2c8371b6-e93b-4d65-9efe-88a7e391157d",
+     "name": "ELF 2214006 PEUGEOT 508 I SW Box Body / Estate (8E_) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "38793d6b-20bc-4497-8106-e800d8c7e162",
+     "name": "ELF 2214006 Suzuki LJ 80 OL engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Suzuki",
+     "mid": "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "589f1ee6-8eb6-4460-86cd-fc9b47695250",
+     "name": "ELF 2214006 TOYOTA Mark II Mk9 Saloon (X110) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "e0a3d3be-8d34-4b33-9c8a-638e18a8b1fc",
+     "name": "ELF 2214006 VOLVO V60 I Box Body / Estate (155) engine oil",
+     "oem_number": "2214006",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "7086a5cb-9a74-4a47-99ed-861ae284bc0e",
+  "part_id": "064624b8-63d7-411f-adf4-ac833a5e8a90",
+  "article": "22440",
+  "owner_brand": "WALKER",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "064624b8-63d7-411f-adf4-ac833a5e8a90",
+   "name": "RENAULT Megane I Box Body / Hatchback (SA0/1_) Middle silencer WALKER 22440",
+   "oem_number": "22440",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-22440",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/renault/megane-i-hatchback-van-sa0-1/exhaust-system-auto",
+   "is_active": true
+  },
+  "title_brand": "WALKER",
+  "offers": [
+   {
+    "id": "7086a5cb-9a74-4a47-99ed-861ae284bc0e",
+    "supplier_sku": "22440",
+    "price_ils": "57.56",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/fortwo-cabrio-450/pollen-filter",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "37b4e304-640a-4d0a-bd0e-a97ac6aa76a6",
+     "name": "febi bilstein 22440 Smart 450 Convertible pollen filter",
+     "oem_number": "22440",
+     "part_type": "aftermarket",
+     "manufacturer": "Smart",
+     "mid": "aed142ae-b9a1-41f9-b394-9754d2ea1aaa"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "4e853c14-df1e-4e35-a150-0adf68ed6750",
+  "part_id": "b963b01a-807e-4882-a286-becbf8cb95ee",
+  "article": "26211",
+  "owner_brand": "SPIDAN",
+  "foreign_brands": [
+   "MAPCO"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "b963b01a-807e-4882-a286-becbf8cb95ee",
+   "name": "SPIDAN 26211 Mercedes W463 cv boot",
+   "oem_number": "26211",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-26211",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/febi-bilstein/p-1882822",
+   "is_active": true
+  },
+  "title_brand": "SPIDAN",
+  "offers": [
+   {
+    "id": "4e853c14-df1e-4e35-a150-0adf68ed6750",
+    "supplier_sku": "26211",
+    "price_ils": "142.19",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/yaris-verso-nlp2-ncp2/wheel-bearing",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "cc6d79a8-22a4-42cf-a500-c5b7bb514232",
+     "name": "MAPCO 26211 Toyota Yaris Verso wheel bearing",
+     "oem_number": "26211",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "48b1f53a-008b-4be2-9ad4-aeee52f88a3a",
+  "part_id": "68ebbd46-8e65-44b8-a9f9-467c59f3c5c2",
+  "article": "26522",
+  "owner_brand": "MAL\u00d2",
+  "foreign_brands": [
+   "FEBI BILSTEIN",
+   "MAPCO"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "68ebbd46-8e65-44b8-a9f9-467c59f3c5c2",
+   "name": "MAL\u00d2 26522 FORD Orion Mk3 (GAL) clutch cable",
+   "oem_number": "26522",
+   "part_type": "aftermarket",
+   "manufacturer": "Ford",
+   "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41",
+   "sku": "FORD-26522",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/ford/orion-iii-gal/clutch-cable",
+   "is_active": true
+  },
+  "title_brand": "MAL\u00d2",
+  "offers": [
+   {
+    "id": "48b1f53a-008b-4be2-9ad4-aeee52f88a3a",
+    "supplier_sku": "26522",
+    "price_ils": "152.01",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/hiace-iii-box-yh7-lh6-lh7-lh5-yh5-yh6/water-pump",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8d319ab1-a68d-48e3-8a9a-cdb38d44a0a0",
+     "name": "Nissan Almera N15 Wheel bearing kit MAPCO 26522",
+     "oem_number": "26522",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6ba495e2-9f72-4535-9f93-a864fca55429",
+     "name": "febi bilstein 26522 TOYOTA Hiace Van (H100) water pump",
+     "oem_number": "26522",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "2008e936-96ad-45d0-b8c1-9c9e1430ceb8",
+  "part_id": "e3e3291c-15ec-414d-8d8b-106bd858e444",
+  "article": "27597",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign_brands": [
+   "MAPCO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "e3e3291c-15ec-414d-8d8b-106bd858e444",
+   "name": "BMW E39 Touring Gas Spring, rear windscreen febi bilstein 27597",
+   "oem_number": "27597",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-27597",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/bmw/5-touring-e39/body-auto",
+   "is_active": true
+  },
+  "title_brand": "FEBI BILSTEIN",
+  "offers": [
+   {
+    "id": "2008e936-96ad-45d0-b8c1-9c9e1430ceb8",
+    "supplier_sku": "27597",
+    "price_ils": "729.51",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/s60-ii-cross-country-134/power-steering-pump",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "6a112cba-fcee-423a-8760-f163bcf4d0d1",
+     "name": "MAPCO 27597 FORD Taunus 26M XL Coupe (53F) power steering pump",
+     "oem_number": "27597",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "128227cf-181d-4903-a128-65a68632a651",
+     "name": "MAPCO 27597 VOLVO S60 II Cross Country (134) power steering pump",
+     "oem_number": "27597",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "48680b8a-11b0-4be8-b5dd-7daf189146e1",
+  "part_id": "0785fe92-8032-4796-bc19-1ac57b9441df",
+  "article": "295001",
+  "owner_brand": "EFI AUTOMOTIVE",
+  "foreign_brands": [
+   "NK"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "0785fe92-8032-4796-bc19-1ac57b9441df",
+   "name": "EFI AUTOMOTIVE 295001 Oil temperature sensor",
+   "oem_number": "295001",
+   "part_type": "aftermarket",
+   "manufacturer": "Opel",
+   "mid": "86106424-41ba-434b-b107-4b6db23523b7",
+   "sku": "OPEL-295001",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/bougicord/p-15503611",
+   "is_active": true
+  },
+  "title_brand": "EFI AUTOMOTIVE",
+  "offers": [
+   {
+    "id": "48680b8a-11b0-4be8-b5dd-7daf189146e1",
+    "supplier_sku": "295001",
+    "price_ils": "37.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/daewoo/nubira-saloon-klaj/abs-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "e99c8789-961e-4870-915c-be45a2cab2e2",
+     "name": "NK 295001 DAEWOO Nubira Saloon (J100) abs sensor",
+     "oem_number": "295001",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "20b36eec-9a2a-4a15-925a-008218863469",
+  "part_id": "396ccedc-62b8-4c6d-9621-e5bc6857af0b",
+  "article": "30017",
+  "owner_brand": "FEBI BILSTEIN",
+  "foreign_brands": [
+   "A.B.S."
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "396ccedc-62b8-4c6d-9621-e5bc6857af0b",
+   "name": "FEBI BILSTEIN 30017 Power steering fluid Capacity: 5l",
+   "oem_number": "30017",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-30017",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "FEBI BILSTEIN",
+  "offers": [
+   {
+    "id": "20b36eec-9a2a-4a15-925a-008218863469",
+    "supplier_sku": "30017",
+    "price_ils": "59.58",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volkswagen/multivan/abs-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "a9950cd8-e192-4050-9fd3-bc711f4d349e",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "479adece-1ce8-4f57-b600-4f8f32f9d18f",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "0c329c8b-a210-40f9-8ce0-c671703eeb88",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1c8be71f-2eb5-40fe-b0f2-2a467af4b28e",
+     "name": "FEBI BILSTEIN 30017 Fiat Tipo 160 automatic transmission fluid",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "8339fb08-c6ed-45e2-bc80-c9eba327ac1e",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "feaea219-4e42-464c-a7d9-ae7b82cada4c",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "c418f3bd-5ff8-4a05-b30b-dd117d916290",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3e650f24-5754-41ca-8c1c-9e3baebeea1e",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5620fb0d-5871-4e57-972a-1b3bb35f11cf",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1681f38d-9fd0-472d-9192-bb16971e9758",
+     "name": "A.B.S. 30017 TGE UZ abs sensor",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "MAN",
+     "mid": "acbc4f17-07da-4a43-ae91-d30e10a5eb74"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5e15f6fd-105e-4784-8c6f-eb2a9af03f95",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Mazda",
+     "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3ef6ad7a-14cc-4422-ba51-19c03c93e78d",
+     "name": "FEBI BILSTEIN 30017 Mercedes W126 automatic transmission fluid",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "c27faf8c-9246-42c2-9ce1-c20f914b3bec",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "e96f4633-c271-4764-8755-da2b9c75f0e9",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a25f6ef2-a150-4c50-900f-0c20f0118a4c",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "bd5b8971-32c3-446d-9f7e-cea7e07b52e8",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "868d7e6e-c234-45f9-b5b8-791d88e1674a",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "c7c7a9fa-dcb8-48ba-9cfe-f43a6238ed30",
+     "name": "FEBI BILSTEIN 30017 Peugeot 106 1 automatic transmission fluid",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "550b32d1-f00b-48a6-a6b2-41b9a823b92e",
+     "name": "A.B.S. 30017 PORSCHE Carrera GT (980) abs sensor",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "Porsche",
+     "mid": "6129ed2e-3f88-4025-9f66-5bf8ab97a8c1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "7df4e0c7-5f52-418e-9f23-8f301394deb7",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "741c4952-b23a-4c92-9933-12e6a1108adf",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "7b16b705-6954-4994-b019-8393c35e55bf",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "b962ee7a-0cf0-4057-8844-ce5897f06270",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Suzuki",
+     "mid": "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "67a776f6-58ec-487b-9f7d-20d6b8b84273",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "53222cfa-138a-4dfc-98d0-b9e3a45ede5f",
+     "name": "STP 30-017 Power steering fluid",
+     "oem_number": "30-017",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "d7ebfe7b-a5ad-49b8-893a-3987e4cd4d04",
+     "name": "A.B.S. 30017 VW T6 Platform abs sensor",
+     "oem_number": "30017",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "d5335c94-80d4-4713-830a-43eab9e8918e",
+  "part_id": "9320f731-109e-4186-90d3-2d1204827f85",
+  "article": "301004",
+  "owner_brand": "VEMA",
+  "foreign_brands": [
+   "VALEO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "9320f731-109e-4186-90d3-2d1204827f85",
+   "name": "VEMA 301004 Oil filler cap",
+   "oem_number": "301004",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-301004",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "VEMA",
+  "offers": [
+   {
+    "id": "d5335c94-80d4-4713-830a-43eab9e8918e",
+    "supplier_sku": "301004",
+    "price_ils": "63.89",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a8-4e/brake-pads",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "1c537f06-f105-40a9-ab63-6ae59672d69d",
+     "name": "VALEO 301004 Audi A8 D3 brake pads",
+     "oem_number": "301004",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5cdde2ae-466f-4363-8924-a8b35882dc71",
+     "name": "VALEO 301004 BENTLEY Continental Convertible brake pads",
+     "oem_number": "301004",
+     "part_type": "aftermarket",
+     "manufacturer": "Bentley",
+     "mid": "ce9d5778-a89e-4891-b3df-d9b20098b6b2"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6843d504-77d5-4cfa-9dfa-80107f9503b5",
+     "name": "IJS GROUP 30-1004 Alternator clutch pulley Requires special tools for mounting",
+     "oem_number": "30-1004",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "4f44216c-8c80-4468-8677-e20babca1d6b",
+     "name": "VALEO 301004 Brake pad set FIRST, without integrated wear sensor, Rear Axle, with anti-squeak plate",
+     "oem_number": "301004",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "68ad8ca5-18f0-4ca1-a752-5f6bfddd57c8",
+  "part_id": "c1a355c6-f1d0-4c88-95fb-b4fd14066068",
+  "article": "30214",
+  "owner_brand": "AS",
+  "foreign_brands": [
+   "3RG",
+   "A.B.S."
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "c1a355c6-f1d0-4c88-95fb-b4fd14066068",
+   "name": "AS 30214 Renault Clio 4 Grandtour catalytic converter",
+   "oem_number": "30214",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-30214",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/renault/master-iii-bus-jv/ignition-coil",
+   "is_active": true
+  },
+  "title_brand": "AS",
+  "offers": [
+   {
+    "id": "68ad8ca5-18f0-4ca1-a752-5f6bfddd57c8",
+    "supplier_sku": "30214",
+    "price_ils": "24.60",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/d10-estate-e39/ignition-system-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "0e5a7d6c-2b76-4749-b613-8e01d5ebac90",
+     "name": "ALPINA D10 Touring (E39) Cable Repair Set, glow plug 3RG 30214",
+     "oem_number": "30214",
+     "part_type": "aftermarket",
+     "manufacturer": "Alpina",
+     "mid": "df194b75-a79c-448b-8485-a4c9fbff584e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "86ab8542-f3c2-4997-bc19-5034a59f1256",
+     "name": "A.B.S. 30214 FORD Transit Mk6 Caja / Chasis (V347, V348) abs sensor",
+     "oem_number": "30214",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "cd22216d-bbd3-4657-8d08-3f0ab47e8242",
+     "name": "Maserati Quattroporte 6 Cable Repair Set, glow plug 3RG 30214",
+     "oem_number": "30214",
+     "part_type": "aftermarket",
+     "manufacturer": "Maserati",
+     "mid": "d2860650-732d-4f73-998d-c72fbca21370"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3bbbc53e-0b9b-4702-8835-bfd328551d67",
+     "name": "Mercedes Vario Box Body Cable Repair Set, glow plug 3RG 30214",
+     "oem_number": "30214",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "07bf4aad-755e-4ade-b8fa-fc39cab97868",
+  "part_id": "2b9c0214-50f4-4dc0-a755-f19a687ed5c6",
+  "article": "303022",
+  "owner_brand": "VEMA",
+  "foreign_brands": [
+   "VALEO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "2b9c0214-50f4-4dc0-a755-f19a687ed5c6",
+   "name": "VEMA 303022 Rubber Buffer, air filter Mechanical",
+   "oem_number": "303022",
+   "part_type": "aftermarket",
+   "manufacturer": "Citroen",
+   "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66",
+   "sku": "CITRO-303022",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "VEMA",
+  "offers": [
+   {
+    "id": "07bf4aad-755e-4ade-b8fa-fc39cab97868",
+    "supplier_sku": "303022",
+    "price_ils": "58.26",
+    "supplier_url": "https://www.car-parts.ie/car-parts/chevrolet/alero/brake-pads",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "2aab5005-0c30-49b6-a7c7-4189e405e864",
+     "name": "VALEO 303022 CADILLAC Deville VIII Saloon brake pads",
+     "oem_number": "303022",
+     "part_type": "aftermarket",
+     "manufacturer": "Cadillac",
+     "mid": "6f18818a-3c94-4a70-bab1-1384c19a94fc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "188a9778-b80c-4d1c-a836-060a45bdb0a6",
+     "name": "VALEO 303022 CHEVROLET Trans Sport II Van brake pads",
+     "oem_number": "303022",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6d2f0f15-510c-489f-85c6-35823688598f",
+     "name": "CIFAM 303-022 Brake Power Regulator",
+     "oem_number": "303-022",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "022d7949-fb80-417f-8bca-2659f949f7b3",
+     "name": "VALEO 303022 Delta 88 brake pads",
+     "oem_number": "303022",
+     "part_type": "aftermarket",
+     "manufacturer": "Oldsmobile",
+     "mid": "42dfef28-a289-4480-a774-ca3189d17917"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f32d1f11-8211-492c-baa1-d89a2c6e0ff2",
+     "name": "CIFAM 303-022 Brake Power Regulator",
+     "oem_number": "303-022",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "01ed096b-67d8-477e-b9ea-586ca98c031b",
+     "name": "VALEO 303022 Grand Prix VI Coupe brake pads",
+     "oem_number": "303022",
+     "part_type": "aftermarket",
+     "manufacturer": "Pontiac",
+     "mid": "6556b6e7-ba0d-41e7-b1c8-a20ce860ec18"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "b8964d78-c2c2-44b7-bdd2-a0db4ba2c9e0",
+  "part_id": "c48feb6c-a20b-4f8a-a356-86695a39495e",
+  "article": "31421",
+  "owner_brand": "3RG",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "c48feb6c-a20b-4f8a-a356-86695a39495e",
+   "name": "Opel Corsa B Caravan Suspension arm 3RG 31421",
+   "oem_number": "31421",
+   "part_type": "aftermarket",
+   "manufacturer": "Opel",
+   "mid": "86106424-41ba-434b-b107-4b6db23523b7",
+   "sku": "OPEL-31421",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/opel/corsa-b-estate-f35/suspension-auto",
+   "is_active": true
+  },
+  "title_brand": "3RG",
+  "offers": [
+   {
+    "id": "b8964d78-c2c2-44b7-bdd2-a0db4ba2c9e0",
+    "supplier_sku": "31421",
+    "price_ils": "116.82",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/victor/engine-mount",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b8696c1e-9c34-403e-b453-191b09e14345",
+     "name": "febi bilstein 31421 VAUXHALL Victor Saloon engine mount",
+     "oem_number": "31421",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "bca214bc-f4ef-4a8b-bcf1-db698316251a",
+  "part_id": "1e44af74-50ff-4d05-b6ab-2b750077c8cd",
+  "article": "31831",
+  "owner_brand": "FA KROSNO",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "1e44af74-50ff-4d05-b6ab-2b750077c8cd",
+   "name": "FA KROSNO 31831 Bonnet strut Extention Force: 300N, both sides",
+   "oem_number": "31831",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-31831",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/abs/p-13866460",
+   "is_active": true
+  },
+  "title_brand": "FA KROSNO",
+  "offers": [
+   {
+    "id": "bca214bc-f4ef-4a8b-bcf1-db698316251a",
+    "supplier_sku": "31831",
+    "price_ils": "64.55",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/q5-8r/body-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "034d5610-90aa-4b07-9c24-5dda8a471aa3",
+     "name": "Audi Q5 8RB Tailgate strut febi bilstein 31831",
+     "oem_number": "31831",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "1694ff86-40a2-4407-8af6-22456db4788b",
+  "part_id": "75665783-a165-408d-88fc-c6ff7fc60aa2",
+  "article": "335822",
+  "owner_brand": "STABILUS",
+  "foreign_brands": [
+   "KYB"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "75665783-a165-408d-88fc-c6ff7fc60aa2",
+   "name": "Honda Accord 7 Tourer Tailgate strut STABILUS 335822",
+   "oem_number": "335822",
+   "part_type": "aftermarket",
+   "manufacturer": "Honda",
+   "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9",
+   "sku": "HONDA-335822",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/honda/accord-vii-tourer-cm/body-auto",
+   "is_active": true
+  },
+  "title_brand": "STABILUS",
+  "offers": [
+   {
+    "id": "1694ff86-40a2-4407-8af6-22456db4788b",
+    "supplier_sku": "335822",
+    "price_ils": "281.81",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/verso/shock-absorber",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8ad61c0b-2d64-4a8f-813c-f1d19759092e",
+     "name": "KYB 335822 Toyota Verso AR2 shock absorber",
+     "oem_number": "335822",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "e86087de-ea5c-4c5d-a3d4-b015e3b19a64",
+  "part_id": "b14a1484-59d5-475b-93e7-c2b1c2c2f5f2",
+  "article": "343398",
+  "owner_brand": "BUDWEG CALIPER",
+  "foreign_brands": [
+   "KYB"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "b14a1484-59d5-475b-93e7-c2b1c2c2f5f2",
+   "name": "KIA Roadster (M100) brake system BUDWEG CALIPER 343398",
+   "oem_number": "343398",
+   "part_type": "aftermarket",
+   "manufacturer": "Kia",
+   "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc",
+   "sku": "KIA-343398",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/kia/roadster-1999/brakes-auto",
+   "is_active": true
+  },
+  "title_brand": "BUDWEG CALIPER",
+  "offers": [
+   {
+    "id": "e86087de-ea5c-4c5d-a3d4-b015e3b19a64",
+    "supplier_sku": "343398",
+    "price_ils": "140.97",
+    "supplier_url": "https://www.car-parts.ie/car-parts/hyundai/getz/shock-absorber",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b0459caf-984f-48ed-9541-0f3b71f3bed4",
+     "name": "KYB 343398 Hyundai Getz TB shock absorber",
+     "oem_number": "343398",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "e664da8d-6dba-438e-9be1-32a33db1b45e",
+  "part_id": "8f981d90-70aa-4757-adbd-32156f6d1841",
+  "article": "35259",
+  "owner_brand": "ORIGINAL IMPERIUM",
+  "foreign_brands": [
+   "A.B.S."
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "8f981d90-70aa-4757-adbd-32156f6d1841",
+   "name": "BMW Z8 E52 Top strut mount bearing ORIGINAL IMPERIUM 35259",
+   "oem_number": "35259",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-35259",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/bmw/z8-e52/damping-auto",
+   "is_active": true
+  },
+  "title_brand": "ORIGINAL IMPERIUM",
+  "offers": [
+   {
+    "id": "e664da8d-6dba-438e-9be1-32a33db1b45e",
+    "supplier_sku": "35259",
+    "price_ils": "150.09",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/amarok-platform-chassis-s1b/brake-pads",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "61cea58a-ff83-479f-9ff5-e11528d736e4",
+     "name": "Switch 152sa; Speed",
+     "oem_number": "35259",
+     "part_type": "aftermarket",
+     "manufacturer": "Jaguar",
+     "mid": "fde0f2dc-c6fb-4ab6-b699-765044fbc073"
+    },
+    "verdict": "uncertain",
+    "reason": "brand_unknown"
+   },
+   {
+    "sibling": {
+     "id": "8d2ed746-3eeb-4e82-9a95-8a43ddaed418",
+     "name": "TGE UZ Brake pad set A.B.S. 35259",
+     "oem_number": "35259",
+     "part_type": "aftermarket",
+     "manufacturer": "MAN",
+     "mid": "acbc4f17-07da-4a43-ae91-d30e10a5eb74"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "d0274c45-6c80-4e1a-bad3-1d856c20d3e5",
+     "name": "A.B.S. 35259 VW Amarok Platform brake pads",
+     "oem_number": "35259",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "ff9fc9d8-ef9e-4662-88cd-f3e2ca1586a4",
+  "part_id": "fcb19fb1-9886-4cee-8195-30f0e9966ec7",
+  "article": "38854",
+  "owner_brand": "MAPCO",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "fcb19fb1-9886-4cee-8195-30f0e9966ec7",
+   "name": "Mercedes W168 damping MAPCO 38854",
+   "oem_number": "38854",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-38854",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mercedes-benz/a-class-w168/damping-auto",
+   "is_active": true
+  },
+  "title_brand": "MAPCO",
+  "offers": [
+   {
+    "id": "ff9fc9d8-ef9e-4662-88cd-f3e2ca1586a4",
+    "supplier_sku": "38854",
+    "price_ils": "47.47",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a8-4d2-4d8/tie-rod",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "40ba2ffb-27f2-42f4-9f02-375014c3d8c7",
+     "name": "febi bilstein 38854 Audi A8 D2 tie rod",
+     "oem_number": "38854",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3fd3861a-8c1b-4af0-9627-4f2b5d284a23",
+     "name": "febi bilstein 38854 Skoda Superb 3u tie rod",
+     "oem_number": "38854",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1d771742-0031-475c-b544-66f117eb8365",
+     "name": "febi bilstein 38854 VW Passat 3bg Saloon tie rod",
+     "oem_number": "38854",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "1c48ed65-6268-4a21-a0e2-d07fed719f43",
+  "part_id": "8bb26853-07da-4cc7-94e3-05daf4d5636f",
+  "article": "3922",
+  "owner_brand": "VICMA",
+  "foreign_brands": [
+   "NGK"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "8bb26853-07da-4cc7-94e3-05daf4d5636f",
+   "name": "VICMA 3922 Big End Bearings",
+   "oem_number": "3922",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-3922",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "VICMA",
+  "offers": [
+   {
+    "id": "1c48ed65-6268-4a21-a0e2-d07fed719f43",
+    "supplier_sku": "3922",
+    "price_ils": "18.55",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vw/1500-1600-hatchback-31/spark-plug",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "9e13c997-8afd-463e-bfc9-724edb6d1589",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "49c150bb-4913-451f-97e7-cb8642280956",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "b8ee8584-4589-41bd-9d1e-dcbbd20fe1b9",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0bf23106-52d5-4e56-ad06-5a6178f5feb7",
+     "name": "NGK 3922 CITRO\u00cbN Dyane Hatchback spark plug",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "17afb2c8-920d-4f96-8565-1408fcd0661b",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "adad5a48-2823-4339-9ef5-6481c4a642f1",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "66d1b1ba-7a2e-49f2-8a28-39f3127a0948",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "2d664837-a223-4c27-94bf-c7ac9c3a0d06",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "b583ed59-131f-4618-b535-6ad00be810e2",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "06edba52-cc48-4b0b-ab2d-73bb751e3d8b",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "6624e1f5-7bf9-4b8d-96aa-0fff4cf4d604",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "8e0a640e-01f0-4c37-a501-1b742d141f2b",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "a9e733a6-9b5f-4a8d-9373-32f2e2725e56",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "c1dfeba0-56db-4427-bb30-fa01e2c70249",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Peugeot",
+     "mid": "2b6a2687-8227-4307-9c88-500545fc96ca"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "4370066b-691f-4d44-a0cd-91774acd7e8b",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "9967c2e4-ca51-4871-a75c-d5db68fa7718",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "d9461bca-ddb2-46e1-af9b-ff81fff08b0c",
+     "name": "SKODA 110 Coupe (R) Spark plug NGK 3922",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "60d413d7-1632-4a3e-b40b-16d72b534f81",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Subaru",
+     "mid": "88a04aee-d7d5-45ff-8308-4c6b50c67c0e"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "4e47c4c8-2fef-443b-a232-1f011d807e37",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Suzuki",
+     "mid": "f2f6913a-7ea6-4a99-b65a-c9b1d548e38c"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "c946f338-6372-43a8-a546-c84a380b3cbb",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "737aea92-a2db-4b10-8571-d376bfb60348",
+     "name": "VICMA 3922 Big End Bearings",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "56d1f10e-1de1-4907-836a-ce4f38a5fd21",
+     "name": "NGK 3922 Volkswagen 1500/1600 Hatchback (31) spark plug",
+     "oem_number": "3922",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "f41301da-d903-46f1-be04-79492922e30d",
+  "part_id": "c14ac651-cddc-434c-ba78-85a8e75ab470",
+  "article": "40500",
+  "owner_brand": "SPIDAN CHASSIS PARTS",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "c14ac651-cddc-434c-ba78-85a8e75ab470",
+   "name": "Patrol Y60 Platform / Chassis suspension SPIDAN CHASSIS PARTS 40500",
+   "oem_number": "40500",
+   "part_type": "aftermarket",
+   "manufacturer": "Nissan",
+   "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90",
+   "sku": "NISSA-40500",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/nissan/patrol-platform-chassis-y60/suspension-auto",
+   "is_active": true
+  },
+  "title_brand": "SPIDAN CHASSIS PARTS",
+  "offers": [
+   {
+    "id": "f41301da-d903-46f1-be04-79492922e30d",
+    "supplier_sku": "40500",
+    "price_ils": "90.10",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volvo/v40-estate-vw/tie-rod",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "26742ef1-0177-4c7c-9e69-ff4229012164",
+     "name": "febi bilstein 40500 Volvo v40 tie rod",
+     "oem_number": "40500",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "91eddb49-47a4-46d7-a06a-41c492a179a7",
+  "part_id": "0e3244b8-3597-45bf-a5ef-14dff516e714",
+  "article": "42022",
+  "owner_brand": "MONROE",
+  "foreign_brands": [
+   "CARCOMMERCE",
+   "SIDEM"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "0e3244b8-3597-45bf-a5ef-14dff516e714",
+   "name": "MONROE 42022 Starlet P60 Estate shock absorber",
+   "oem_number": "42022",
+   "part_type": "aftermarket",
+   "manufacturer": "Toyota",
+   "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4",
+   "sku": "TOYOT-42022",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/carcommerce/p-15766438",
+   "is_active": true
+  },
+  "title_brand": "MONROE",
+  "offers": [
+   {
+    "id": "91eddb49-47a4-46d7-a06a-41c492a179a7",
+    "supplier_sku": "42022",
+    "price_ils": "11.41",
+    "supplier_url": "https://www.car-parts.ie/car-parts/askam-fargo-desoto/fora/battery",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "a3f3c3d6-c184-4bde-99b0-83ae29c509fe",
+     "name": "CARCOMMERCE 42022 ALVIS TD Saloon car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Alvis",
+     "mid": "63589e36-8255-41ee-98d6-c1c405526eca"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "355b91c1-7a68-4df9-bc7c-13113b91a90d",
+     "name": "CARCOMMERCE 42022 Fora car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Askam Fargo Desoto",
+     "mid": "ba818b55-f606-4518-b4b6-7913ac7d80f7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "dd547170-ebf7-4823-9d93-24691a7a175d",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1efad261-32d4-41d4-bf59-9c0e8356f483",
+     "name": "CARCOMMERCE 42022 BESTURN (FAW) B50 Saloon car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Besturn Faw",
+     "mid": "87d364cc-1294-42a7-b3ae-05a1bf13270c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "7e868d0f-b921-4ecc-a66e-b0d51210a8e8",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2deb29f9-bdfb-41ac-9f44-ed005ec5321c",
+     "name": "CARCOMMERCE 42022 BORGWARD Isabella Estate car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Borgward",
+     "mid": "64b34f85-fa70-4d29-9db4-a10ab91e16f5"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6d4d2125-4932-4b39-85a4-292077eda378",
+     "name": "CARCOMMERCE 42022 BRABUS 40S (W221) car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Brabus",
+     "mid": "0a0374ab-8ec6-4121-85d5-0bd5fe735aeb"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "ce14be31-30d7-4416-a0c8-9eae79f68f7d",
+     "name": "CARCOMMERCE 42022 BUICK (SGM) Regal III car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Buick Sgm",
+     "mid": "873c3066-d811-4275-a897-36eb06251b0c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2a2c7642-2e7c-4ef7-b1b4-74ac78521df3",
+     "name": "CARCOMMERCE 42022 CARBODIES FX4R Saloon car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Carbodies",
+     "mid": "8a3bde90-6679-4fbc-9616-c67f83ed3df2"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "d6a10a5d-465b-4872-adaa-349803818354",
+     "name": "CARCOMMERCE 42022 CASALINI M14 Hatchback car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Casalini",
+     "mid": "aeec287b-ea48-4125-a03d-0d794ad88740"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "88c2dd41-2647-48d3-885e-4128646ce9d0",
+     "name": "CARCOMMERCE 42022 CATERHAM 21 Convertible car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Caterham",
+     "mid": "ecbdf3db-23fe-463f-a4bd-15b0bbbf9a9c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "2cdc6751-51ec-4cf4-a9b0-9eb9d8b152d6",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "42b73097-a7c0-4b87-851b-6ff05c09afcd",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "b7b30135-f190-4ec5-b112-5c99353d326a",
+     "name": "CARCOMMERCE 42022 DR DR Zero 2 car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Dr",
+     "mid": "87feb50c-475e-4205-9b2f-de0c31f34704"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a25bf09b-2a34-4a62-a21e-53368bd4f395",
+     "name": "CARCOMMERCE 42022 EBRO Patrol Off-Road car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Ebro",
+     "mid": "ca927b86-bdb2-41fa-9652-c5c0ac9e2d04"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "12bfb439-98aa-4831-acea-880aa8940135",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Fiat",
+     "mid": "471408c0-527b-49d3-a964-fb108916d586"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "215b15c6-518c-400c-b308-d9e809554f33",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "9abb6c93-adaf-47c2-abf0-756f199853d5",
+     "name": "CARCOMMERCE 42022 FORD ASIA / OCEANIA Festiva (BA_2, BJ_2) car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford Asia Ozeania",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5309d28b-0cd0-4e00-a076-aa2d7e4c3033",
+     "name": "CARCOMMERCE 42022 GERMAN E-CARS Plantos Platform/Chassis car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "German E Cars",
+     "mid": "9f3d6805-cf34-4943-ba98-ec57a3a5ad74"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "78d64d5c-758d-4393-81bf-53e1b403ec3e",
+     "name": "CARCOMMERCE 42022 Vision Saloon car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Gleagle Geely",
+     "mid": "9a5341c9-8452-408a-b763-e92e46a19500"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f65bf78e-82d6-4fd7-93b0-d75db3376582",
+     "name": "CARCOMMERCE 42022 GOUPIL G4 Dumptruck car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Goupil",
+     "mid": "36c94f6d-f559-4dda-9ac0-589bf8334b91"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "4c549b21-a0ff-4f0e-93e9-74537eb1ea88",
+     "name": "CARCOMMERCE 42022 HOLDEN Camira Saloon (JD) car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Holden",
+     "mid": "6b25767b-23b9-460c-bef3-81a8f92f5e49"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "13f3eeec-f899-4b8f-9ba4-71295ff663c0",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "6bec1a81-e9a9-4b3e-8d47-b462561f2112",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "893ea69c-fced-43e5-a6eb-cd7ee8ab73d4",
+     "name": "CARCOMMERCE 42022 INDIGO 3000 Convertible car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Indigo",
+     "mid": "e4ceb187-3ae3-41f0-a67e-824b63df30f8"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f675ab1c-2325-4d1e-9ffa-1b3e58753c4d",
+     "name": "CARCOMMERCE 42022 JINBEI F50 MPV car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Jinbei",
+     "mid": "d4973c3c-3e3d-4fe1-a385-e882abc7dd8f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "473d3dd1-7060-4f26-9a6d-9d60a3613ae9",
+     "name": "CARCOMMERCE 42022 Battery Post Clamp",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Kia",
+     "mid": "626947bf-be3f-4dd1-a52e-fbcff8168cfc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "9e25063b-4fb2-4fb0-91eb-e959608344ab",
+     "name": "CARCOMMERCE 42022 KOENIGSEGG One:1 Targa car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Koenigsegg",
+     "mid": "7b2fdc6e-273a-40e3-ad05-bcb0659fecbe"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "df860a0e-55da-4292-9c40-d9c3aa3d4a87",
+     "name": "CARCOMMERCE 42022 LEVC TX (HRE) car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Levc",
+     "mid": "c43bd026-a27d-457f-8f2d-33b992d55616"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "ae7b6920-9d41-482b-9221-7e691c01f378",
+     "name": "CARCOMMERCE 42022 LINCOLN Town Car II car battery",
+     "oem_number": "42022",
+     "part_type": "aftermarket",
+     "manufacturer": "Lincoln",
+     "mid": "41a549ed-6217-4b82-b5c0-0a0cf636ae89"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "8504718f-26ed-4333-9369-a9e5d69dc733",
+  "part_id": "ed2bbd08-fbce-4280-ab48-235ce326698d",
+  "article": "45308",
+  "owner_brand": "MEAT & DORIA",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "ed2bbd08-fbce-4280-ab48-235ce326698d",
+   "name": "MEAT & DORIA 45308 Alternator clutch pulley \u00d8: 60mm",
+   "oem_number": "45308",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-45308",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "MEAT & DORIA",
+  "offers": [
+   {
+    "id": "e1465393-a779-4d8e-8499-16b6f82cf7dd",
+    "supplier_sku": "P_45308",
+    "price_ils": "None",
+    "supplier_url": "https://www.sngbarratt.com/English/UK/Products/41322565-f67b-4a62-acda-12bd459b81cb",
+    "part_type": "aftermarket",
+    "is_available": false,
+    "sname": "SNG Barratt"
+   },
+   {
+    "id": "8504718f-26ed-4333-9369-a9e5d69dc733",
+    "supplier_sku": "45308",
+    "price_ils": "83.80",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/a6-e-tron-sportback-gha/engine-mount",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "aff2f3a4-dde7-4ea3-847f-bdade8db659f",
+     "name": "febi bilstein 45308 AUDI Q6 e-tron SUV engine mount",
+     "oem_number": "45308",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "09ffe1f0-2cc9-40a7-8e2d-a1261ec5cee6",
+     "name": "febi bilstein 45308 Volkswagen Variant II engine mount",
+     "oem_number": "45308",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "67a2afca-51eb-4aea-b5be-30f8386a6af6",
+  "part_id": "2bfcf91e-2084-43d2-9ce4-80ba2719e2bf",
+  "article": "49066",
+  "owner_brand": "NGK",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "2bfcf91e-2084-43d2-9ce4-80ba2719e2bf",
+   "name": "NGK 49066 Ignition coil",
+   "oem_number": "49066",
+   "part_type": "aftermarket",
+   "manufacturer": "Saab",
+   "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88",
+   "sku": "SAAB-49066",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/ngk/p-9803741",
+   "is_active": true
+  },
+  "title_brand": "NGK",
+  "offers": [
+   {
+    "id": "67a2afca-51eb-4aea-b5be-30f8386a6af6",
+    "supplier_sku": "49066",
+    "price_ils": "146.93",
+    "supplier_url": "https://www.car-parts.ie/car-parts/audi/tt-roadster-8j9/tie-rod",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8f4168dc-fe82-4c0a-ba0d-5986795530da",
+     "name": "febi bilstein 49066 Audi TT 8J tie rod",
+     "oem_number": "49066",
+     "part_type": "aftermarket",
+     "manufacturer": "Audi",
+     "mid": "4a718e3c-5b47-478d-9c62-0b6b5135593e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "82a832fa-4459-40bc-bc6d-218e8304d146",
+  "part_id": "71857053-88e8-4e6e-9006-4bfe145c92cd",
+  "article": "49191",
+  "owner_brand": "OSSCA",
+  "foreign_brands": [
+   "MAPCO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "71857053-88e8-4e6e-9006-4bfe145c92cd",
+   "name": "OSSCA 49191 Coolant expansion tank",
+   "oem_number": "49191",
+   "part_type": "aftermarket",
+   "manufacturer": "Jaguar",
+   "mid": "fde0f2dc-c6fb-4ab6-b699-765044fbc073",
+   "sku": "JAGUA-49191",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "OSSCA",
+  "offers": [
+   {
+    "id": "82a832fa-4459-40bc-bc6d-218e8304d146",
+    "supplier_sku": "49191",
+    "price_ils": "103.56",
+    "supplier_url": "https://www.car-parts.ie/car-parts/dacia/logan/control-arm",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   },
+   {
+    "id": "b6fb6886-61a7-4307-989c-f5c4856e60bf",
+    "supplier_sku": "P_49191",
+    "price_ils": "None",
+    "supplier_url": "https://www.sngbarratt.com/English/UK/Products/d7eb1df4-93c5-4aa7-9579-f93141542c9a",
+    "part_type": "aftermarket",
+    "is_available": false,
+    "sname": "SNG Barratt"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "e7c9392d-bf70-4b1f-be1d-6bf5ab07e1d7",
+     "name": "Ram-Air Cold-Air Intake System Oiled Filter 06-18 Ford 6.8L Class-A Motorhome Banks Power",
+     "oem_number": "49191",
+     "part_type": "aftermarket",
+     "manufacturer": "Banks Power",
+     "mid": "1a609331-f768-44e2-ae55-9f837218609b"
+    },
+    "verdict": "uncertain",
+    "reason": "brand_unknown"
+   },
+   {
+    "sibling": {
+     "id": "32c15f3f-8e83-4f97-a319-cbabbf13cd54",
+     "name": "MAPCO 49191 Dacia Sandero sd control arm",
+     "oem_number": "49191",
+     "part_type": "aftermarket",
+     "manufacturer": "Dacia",
+     "mid": "0091b0e2-d37b-419d-af8d-dc118a707d07"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a36015f8-6df8-4aac-9a5e-a76f582c9ab4",
+     "name": "MAPCO 49191 LADA Largus Estate (KS0_, RS0_, KSA_) control arm",
+     "oem_number": "49191",
+     "part_type": "aftermarket",
+     "manufacturer": "Lada",
+     "mid": "2b548295-c78b-41c6-a992-aa0dd070f347"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "83c7abbf-c004-489e-a097-e1f14215235e",
+     "name": "MAPCO 49191 RENAULT Logan I Saloon control arm",
+     "oem_number": "49191",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "ae828d4d-6c59-457b-9e10-33128602bf51",
+  "part_id": "286cc6e6-e41a-4842-8dc9-e8ec4c7764cd",
+  "article": "49665",
+  "owner_brand": "NGK",
+  "foreign_brands": [
+   "FEBI BILSTEIN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "286cc6e6-e41a-4842-8dc9-e8ec4c7764cd",
+   "name": "MITSUBISHI Outlander III Van (GF, GG) ignition / preheating NGK 49665",
+   "oem_number": "49665",
+   "part_type": "aftermarket",
+   "manufacturer": "Mitsubishi",
+   "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f",
+   "sku": "MITSU-49665",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mitsubishi/outlander-iii-van-gf-w-gg-w-2010/ignition-system-auto",
+   "is_active": true
+  },
+  "title_brand": "NGK",
+  "offers": [
+   {
+    "id": "ae828d4d-6c59-457b-9e10-33128602bf51",
+    "supplier_sku": "49665",
+    "price_ils": "44.61",
+    "supplier_url": "https://www.car-parts.ie/car-parts/byd/tang/oil-filter",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8673509a-ce66-4ea3-a9d2-d671d1ff94cc",
+     "name": "Oil filter (febi bilstein, 49665)",
+     "oem_number": "49665",
+     "part_type": "aftermarket",
+     "manufacturer": "Byd",
+     "mid": "0e1dae22-60b4-49e1-b2f6-71f786e46f6e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "b6205331-f19d-471c-916b-7f877d2f38d1",
+     "name": "Oil filter (febi bilstein, 49665)",
+     "oem_number": "49665",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1b557d91-a470-4f16-afc7-fc750734ea79",
+     "name": "Oil filter (febi bilstein, 49665)",
+     "oem_number": "49665",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "e565c8ce-9cde-457d-a76f-b0c5f945fa5a",
+     "name": "Oil filter (febi bilstein, 49665)",
+     "oem_number": "49665",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "31e1166c-5243-453f-b01d-9b2ca42f4cf0",
+  "part_id": "f1c22b78-1801-413a-a754-291bdcf2f24d",
+  "article": "49678",
+  "owner_brand": "NGK",
+  "foreign_brands": [
+   "MAPCO"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "f1c22b78-1801-413a-a754-291bdcf2f24d",
+   "name": "Mitsubishi Eclipse Cross ignition / preheating NGK 49678",
+   "oem_number": "49678",
+   "part_type": "aftermarket",
+   "manufacturer": "Mitsubishi",
+   "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f",
+   "sku": "MITSU-49678",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mitsubishi/eclipse-cross-gk/ignition-system-auto",
+   "is_active": true
+  },
+  "title_brand": "NGK",
+  "offers": [
+   {
+    "id": "31e1166c-5243-453f-b01d-9b2ca42f4cf0",
+    "supplier_sku": "49678",
+    "price_ils": "110.25",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/b12-e32/control-arm",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "09092e92-c3aa-4787-9447-9a03f1e6021d",
+     "name": "MAPCO 49678 ALPINA B12 Saloon (E32) control arm",
+     "oem_number": "49678",
+     "part_type": "aftermarket",
+     "manufacturer": "Alpina",
+     "mid": "df194b75-a79c-448b-8485-a4c9fbff584e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "815c0ab0-c23c-43b8-bee1-61b8edf24082",
+     "name": "MAPCO 49678 BMW E31 control arm",
+     "oem_number": "49678",
+     "part_type": "aftermarket",
+     "manufacturer": "BMW",
+     "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "0f97360c-4878-4305-ad81-366fe607cf2b",
+  "part_id": "529160c0-282a-4cd7-9992-b3ec29e0ae3a",
+  "article": "51538",
+  "owner_brand": "MAPCO",
+  "foreign_brands": [
+   "NRF",
+   "SPIDAN"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "529160c0-282a-4cd7-9992-b3ec29e0ae3a",
+   "name": "MAZDA 626 III Estate (GV) Suspension arm MAPCO 51538",
+   "oem_number": "51538",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-51538",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mazda/626-iii-station-wagon-gv/suspension-auto",
+   "is_active": true
+  },
+  "title_brand": "MAPCO",
+  "offers": [
+   {
+    "id": "0f97360c-4878-4305-ad81-366fe607cf2b",
+    "supplier_sku": "51538",
+    "price_ils": "293.99",
+    "supplier_url": "https://www.car-parts.ie/car-parts/santana/samurai/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8b4729f7-5e20-42d7-b027-263de2dc2614",
+     "name": "SPIDAN 51538 W204 steering rack",
+     "oem_number": "51538",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "377cb748-a0d8-4cf5-903c-3cbacc8bcc09",
+     "name": "NRF 51538 Samurai engine radiator",
+     "oem_number": "51538",
+     "part_type": "aftermarket",
+     "manufacturer": "Santana",
+     "mid": "40519ab8-1f53-445d-b6f2-dc57bad19ef6"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "b0bee926-889c-4bc4-bd75-4eb328946d83",
+  "part_id": "44c1bf85-e451-4f8c-91b8-d204e8c97c23",
+  "article": "52887",
+  "owner_brand": "MAPCO",
+  "foreign_brands": [
+   "AIC"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "44c1bf85-e451-4f8c-91b8-d204e8c97c23",
+   "name": "Mercedes W414 Track rod assembly MAPCO 52887",
+   "oem_number": "52887",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-52887",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mercedes-benz/vaneo-414/steering-auto",
+   "is_active": true
+  },
+  "title_brand": "MAPCO",
+  "offers": [
+   {
+    "id": "b0bee926-889c-4bc4-bd75-4eb328946d83",
+    "supplier_sku": "52887",
+    "price_ils": "145.67",
+    "supplier_url": "https://www.car-parts.ie/car-parts/skoda/fabia/wiper-motor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "eef36d79-c9a1-42ff-b8ca-934d1521050a",
+     "name": "AIC 52887 Skoda Fabia Mk1 wiper motor",
+     "oem_number": "52887",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "fd08d803-a869-4e37-bf21-079cd0cdda62",
+  "part_id": "38e6249a-4c6b-4663-bd7d-9a4ad3eb9399",
+  "article": "53039",
+  "owner_brand": "SIDEM",
+  "foreign_brands": [
+   "NRF"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "38e6249a-4c6b-4663-bd7d-9a4ad3eb9399",
+   "name": "Citroen C3 SX Track rod end SIDEM 53039",
+   "oem_number": "53039",
+   "part_type": "aftermarket",
+   "manufacturer": "Citroen",
+   "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66",
+   "sku": "CITRO-53039",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/citroen/c3-iii-sx/steering-auto",
+   "is_active": true
+  },
+  "title_brand": "SIDEM",
+  "offers": [
+   {
+    "id": "fd08d803-a869-4e37-bf21-079cd0cdda62",
+    "supplier_sku": "53039",
+    "price_ils": "248.30",
+    "supplier_url": "https://www.car-parts.ie/car-parts/lexus/lexus-ls500h/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "059854b8-4c3e-453d-bc4e-c370411c3f47",
+     "name": "LEXUS engine radiator NRF 53039",
+     "oem_number": "53039",
+     "part_type": "aftermarket",
+     "manufacturer": "Lexus",
+     "mid": "adbe811b-c063-40b7-9cc4-d28b600880c1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "2b6f89bf-cdfc-4cf9-818d-abbc4e6d25a8",
+  "part_id": "8e8e5d57-5538-45f1-9d25-5a4651916ff3",
+  "article": "53159",
+  "owner_brand": "AIC",
+  "foreign_brands": [
+   "NRF"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "8e8e5d57-5538-45f1-9d25-5a4651916ff3",
+   "name": "AIC 53159 Axle bush Rear Axle Left, Rear Axle Right, Control/Trailing Arm Type: for trailing arm",
+   "oem_number": "53159",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-53159",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "AIC",
+  "offers": [
+   {
+    "id": "2b6f89bf-cdfc-4cf9-818d-abbc4e6d25a8",
+    "supplier_sku": "53159",
+    "price_ils": "347.86",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/astra-mk-vi-j-estate/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   },
+   {
+    "id": "9194a728-ed53-4eb4-b930-e5dbcf6b7dcb",
+    "supplier_sku": "P_53159",
+    "price_ils": "None",
+    "supplier_url": "https://www.sngbarratt.com/English/UK/Products/bf3c9c5e-f873-4019-a317-346e9b86244e",
+    "part_type": "aftermarket",
+    "is_available": false,
+    "sname": "SNG Barratt"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "22d670fd-8ed9-455a-a26d-2500eaf9a258",
+     "name": "NRF 53159 Chevrolet Cruze j305 engine radiator",
+     "oem_number": "53159",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "f64dcd99-79c4-4127-b64e-afc73929ec63",
+     "name": "AIC 53159 Axle bush Rear Axle Left, Rear Axle Right, Control/Trailing Arm Type: for trailing arm",
+     "oem_number": "53159",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "2ac18a7f-7eb1-4337-b212-a2dd65182e88",
+     "name": "NRF 53159 Opel Astra J engine radiator",
+     "oem_number": "53159",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "ad436b06-6ae0-455a-b662-162dfe2da60f",
+     "name": "NRF 53159 VAUXHALL Astra Mk6 (J) Estate (P10) engine radiator",
+     "oem_number": "53159",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "0f46dade-4ec5-4c80-8acd-f5896895e8f5",
+  "part_id": "f7dd24e5-4eb5-46cd-892c-7a24c06826e1",
+  "article": "54210",
+  "owner_brand": "NRF",
+  "foreign_brands": [
+   "AIC"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "f7dd24e5-4eb5-46cd-892c-7a24c06826e1",
+   "name": "NRF 54210 Heater matrix with fastening/mounting material",
+   "oem_number": "54210",
+   "part_type": "aftermarket",
+   "manufacturer": "Citroen",
+   "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66",
+   "sku": "CITRO-54210",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/nrf/p-2391405",
+   "is_active": true
+  },
+  "title_brand": "NRF",
+  "offers": [
+   {
+    "id": "0f46dade-4ec5-4c80-8acd-f5896895e8f5",
+    "supplier_sku": "54210",
+    "price_ils": "20.81",
+    "supplier_url": "https://www.car-parts.ie/car-parts/rover/montego-estate-xe/abs-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "38fcf0b5-897c-48cd-9102-f17790877a42",
+     "name": "AIC 54210 Honda Civic Fastback abs sensor",
+     "oem_number": "54210",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "1377b57f-ebc4-4797-9951-95aee8f460ec",
+     "name": "AIC 54210 Montego Estate abs sensor",
+     "oem_number": "54210",
+     "part_type": "aftermarket",
+     "manufacturer": "Rover",
+     "mid": "9e3b7475-c104-4f75-a006-26c5858b9c37"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "7b3b7b18-86fe-4a7f-b94a-744b2118255b",
+  "part_id": "2a524617-c05f-4cd0-821b-6a54da45f840",
+  "article": "59008Set",
+  "owner_brand": "IWIS MOTORSYSTEME",
+  "foreign_brands": [
+   "AIC"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "2a524617-c05f-4cd0-821b-6a54da45f840",
+   "name": "iwis Motorsysteme 59008Set CHEVROLET Volt I timing chain",
+   "oem_number": "59008Set",
+   "part_type": "aftermarket",
+   "manufacturer": "Chevrolet",
+   "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1",
+   "sku": "CHEVR-59008Set",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/chevrolet/volt-2011/timing-chain",
+   "is_active": true
+  },
+  "title_brand": "IWIS MOTORSYSTEME",
+  "offers": [
+   {
+    "id": "7b3b7b18-86fe-4a7f-b94a-744b2118255b",
+    "supplier_sku": "59008Set",
+    "price_ils": "679.26",
+    "supplier_url": "https://www.car-parts.ie/car-parts/chevrolet/volt-2011/timing-chain",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8068715b-104d-48e1-a3da-d675c981e8a3",
+     "name": "AIC 59008Set CHEVROLET Volt I timing chain",
+     "oem_number": "59008Set",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "5cd93b72-b14c-4b17-96ec-7dba040cacf3",
+  "part_id": "2e5047c2-d0a4-418b-bae0-16f7eba045bd",
+  "article": "59322",
+  "owner_brand": "SPIDAN CHASSIS PARTS",
+  "foreign_brands": [
+   "NRF"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "2e5047c2-d0a4-418b-bae0-16f7eba045bd",
+   "name": "Mazda 2 DJ steering SPIDAN CHASSIS PARTS 59322",
+   "oem_number": "59322",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-59322",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/mazda/2-saloon-dl-dj/steering-auto",
+   "is_active": true
+  },
+  "title_brand": "SPIDAN CHASSIS PARTS",
+  "offers": [
+   {
+    "id": "5cd93b72-b14c-4b17-96ec-7dba040cacf3",
+    "supplier_sku": "59322",
+    "price_ils": "381.86",
+    "supplier_url": "https://www.car-parts.ie/car-parts/saab/900-ii-convertible/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "6e2e27bf-986a-4ddb-ab51-9991e62cf6b9",
+     "name": "NRF 59322 Saab 900 II Convertible engine radiator",
+     "oem_number": "59322",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "37b6da32-9aee-42a3-9ac9-370cf4b6acc0",
+  "part_id": "a453fb69-f12a-4717-a7e3-0505f57a1a10",
+  "article": "6085",
+  "owner_brand": "KAWE",
+  "foreign_brands": [
+   "KAMOKA"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "a453fb69-f12a-4717-a7e3-0505f57a1a10",
+   "name": "VOLVO clutch pressure plate KAWE 6085",
+   "oem_number": "6085",
+   "part_type": "aftermarket",
+   "manufacturer": "Volvo",
+   "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25",
+   "sku": "VOLVO-6085",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/volvo/v60-recharge-t8/clutch-pressure-plate",
+   "is_active": true
+  },
+  "title_brand": "KAWE",
+  "offers": [
+   {
+    "id": "37b6da32-9aee-42a3-9ac9-370cf4b6acc0",
+    "supplier_sku": "6085",
+    "price_ils": "118.98",
+    "supplier_url": "https://www.car-parts.ie/car-parts/chevrolet/cruze-1-8lt/cv-joint",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "e9c19690-b808-4c3c-a93a-ceb5b9beee52",
+     "name": "KAMOKA 6085 Chevrolet Aveo Schr\u00e4gheck cv joint",
+     "oem_number": "6085",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "570de5d2-0c13-406a-96c0-b1cffc443682",
+     "name": "KAMOKA 6085 Nexia N150 cv joint",
+     "oem_number": "6085",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "98a11bad-f3bc-4200-ae27-c828c6bfafc3",
+  "part_id": "16628161-48d4-461d-807c-a39f7bc5af2f",
+  "article": "63124",
+  "owner_brand": "MEAT & DORIA",
+  "foreign_brands": [
+   "NISSENS"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "16628161-48d4-461d-807c-a39f7bc5af2f",
+   "name": "MEAT & DORIA 63124 Oil Pipe, charger",
+   "oem_number": "63124",
+   "part_type": "aftermarket",
+   "manufacturer": "Vw",
+   "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25",
+   "sku": "VW-63124",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/hoffer/p-18768414",
+   "is_active": true
+  },
+  "title_brand": "MEAT & DORIA",
+  "offers": [
+   {
+    "id": "98a11bad-f3bc-4200-ae27-c828c6bfafc3",
+    "supplier_sku": "63124",
+    "price_ils": "483.02",
+    "supplier_url": "https://www.car-parts.ie/car-parts/vauxhall/vivaro-combi-j7/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "43ab83cb-5a67-46a0-8f96-98ae5edf07a7",
+     "name": "NISSENS 63124 VAUXHALL Vivaro Minibus (J7) engine radiator",
+     "oem_number": "63124",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "5969032b-2d95-4d71-9206-236b8f07358b",
+  "part_id": "634896e1-5cc5-4965-b623-e53d560947c5",
+  "article": "6530",
+  "owner_brand": "KAMOKA",
+  "foreign_brands": [
+   "MAPCO"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "634896e1-5cc5-4965-b623-e53d560947c5",
+   "name": "KAMOKA 6530 MAZDA 3 Saloon (BL) cv joint",
+   "oem_number": "6530",
+   "part_type": "oem",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-6530",
+   "src": "delek-motors.co.il",
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "KAMOKA",
+  "offers": [
+   {
+    "id": "59c60b40-3564-4310-bd4e-a59ee2207197",
+    "supplier_sku": "MAZDA-6530",
+    "price_ils": "790.60",
+    "supplier_url": "https://www.mazda.co.il",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Mazda Israel - Delek Motors"
+   },
+   {
+    "id": "5969032b-2d95-4d71-9206-236b8f07358b",
+    "supplier_sku": "6530",
+    "price_ils": "50.88",
+    "supplier_url": "https://www.car-parts.ie/car-parts/rover/200-hatchback-xw/brake-pads",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   },
+   {
+    "id": "3a023e89-378b-430e-9fe6-a079888c74e9",
+    "supplier_sku": "6530",
+    "price_ils": "670.00",
+    "supplier_url": "https://www.delek-motors.co.il",
+    "part_type": null,
+    "is_available": true,
+    "sname": "JLR Delek Motors"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "e52e0c5e-1bac-4a1c-b6bc-02eb318dffb6",
+     "name": "M3+323L 25 \u05de\u05e6\u05d1\u05e8",
+     "oem_number": "6530",
+     "part_type": "oem",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "uncertain",
+    "reason": "manufacturer_missing_or_different"
+   },
+   {
+    "sibling": {
+     "id": "d1703c66-37f9-43ff-8995-736c763c85d3",
+     "name": "Honda Accord 3 Brake pad set MAPCO 6530",
+     "oem_number": "6530",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "9e854f36-b1a3-4099-9a61-72475e4a37f6",
+     "name": "MAPCO 6530 ROVER 200 Hatchback (XW) brake pads",
+     "oem_number": "6530",
+     "part_type": "aftermarket",
+     "manufacturer": "Rover",
+     "mid": "9e3b7475-c104-4f75-a006-26c5858b9c37"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "f076ff1c-0788-4c6c-b8a9-2ead9dda36d9",
+  "part_id": "8d862757-ee18-43a7-8897-fe83010f1001",
+  "article": "6PK1217",
+  "owner_brand": "DENCKERMANN",
+  "foreign_brands": [
+   "CONTITECH"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "8d862757-ee18-43a7-8897-fe83010f1001",
+   "name": "DENCKERMANN 6PK1217 Serpentine belt",
+   "oem_number": "6PK1217",
+   "part_type": "aftermarket",
+   "manufacturer": "Ford",
+   "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41",
+   "sku": "FORD-6PK1217",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/bga/p-13489303",
+   "is_active": true
+  },
+  "title_brand": "DENCKERMANN",
+  "offers": [
+   {
+    "id": "f076ff1c-0788-4c6c-b8a9-2ead9dda36d9",
+    "supplier_sku": "6PK1217",
+    "price_ils": "40.79",
+    "supplier_url": "https://www.car-parts.ie/car-parts/uaz/simbir-3162-closed-off-road-vehicle/poly-v-belt",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "d63d5f78-c9dc-4795-aacf-a749f51776a4",
+     "name": "CONTITECH 6PK1217 UAZ Simbir (3162) v ribbed belt",
+     "oem_number": "6PK1217",
+     "part_type": "aftermarket",
+     "manufacturer": "Uaz",
+     "mid": "757f557f-38d7-4eae-890c-23242da78396"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "490c7621-fe53-4ca6-9a32-57c1aea478b3",
+  "part_id": "5edbdcd8-21af-4f31-8b09-97668ceaaa31",
+  "article": "6PK1698",
+  "owner_brand": "DAYCO",
+  "foreign_brands": [
+   "BGA",
+   "CONTITECH"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "5edbdcd8-21af-4f31-8b09-97668ceaaa31",
+   "name": "DAYCO 6PK1698 Serpentine belt",
+   "oem_number": "6PK1698",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-6PK1698",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/bga/p-13489341",
+   "is_active": true
+  },
+  "title_brand": "DAYCO",
+  "offers": [
+   {
+    "id": "490c7621-fe53-4ca6-9a32-57c1aea478b3",
+    "supplier_sku": "6PK1698",
+    "price_ils": "82.55",
+    "supplier_url": "https://www.car-parts.ie/car-parts/alpina/d3-f30/poly-v-belt",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8e2dbe75-1b3e-466a-b2f2-1bc6ec5c7202",
+     "name": "BGA 6PK1698 ALPINA D3 Saloon (F30) v ribbed belt",
+     "oem_number": "6PK1698",
+     "part_type": "aftermarket",
+     "manufacturer": "Alpina",
+     "mid": "df194b75-a79c-448b-8485-a4c9fbff584e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "ce67bacd-6861-4b21-ba32-232930895859",
+  "part_id": "f90850fc-d172-444a-aacc-04e1682a5a13",
+  "article": "71226",
+  "owner_brand": "SIDAT",
+  "foreign_brands": [
+   "AS"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "f90850fc-d172-444a-aacc-04e1682a5a13",
+   "name": "SIDAT 71226 Fuel level sensor",
+   "oem_number": "71226",
+   "part_type": "aftermarket",
+   "manufacturer": "Renault",
+   "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d",
+   "sku": "RENAU-71226",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/fispa/p-10155982",
+   "is_active": true
+  },
+  "title_brand": "SIDAT",
+  "offers": [
+   {
+    "id": "ce67bacd-6861-4b21-ba32-232930895859",
+    "supplier_sku": "71226",
+    "price_ils": "974.05",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/crossblade-450/catalytic-converter",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "f4126947-0146-4c8d-b4ee-3875972aad97",
+     "name": "AS 71226 Smart 450 Crossblade catalytic converter",
+     "oem_number": "71226",
+     "part_type": "aftermarket",
+     "manufacturer": "Smart",
+     "mid": "aed142ae-b9a1-41f9-b394-9754d2ea1aaa"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "232a8082-b615-4e7c-91dd-44a321ecaf0b",
+  "part_id": "408fc673-a81f-4701-96ba-d443b53691e9",
+  "article": "71280",
+  "owner_brand": "SIDAT",
+  "foreign_brands": [
+   "AS"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "408fc673-a81f-4701-96ba-d443b53691e9",
+   "name": "SIDAT 71280 Fuel level sensor",
+   "oem_number": "71280",
+   "part_type": "aftermarket",
+   "manufacturer": "Peugeot",
+   "mid": "2b6a2687-8227-4307-9c88-500545fc96ca",
+   "sku": "PEUGE-71280",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/fispa/p-10156705",
+   "is_active": true
+  },
+  "title_brand": "SIDAT",
+  "offers": [
+   {
+    "id": "232a8082-b615-4e7c-91dd-44a321ecaf0b",
+    "supplier_sku": "71280",
+    "price_ils": "1514.36",
+    "supplier_url": "https://www.car-parts.ie/car-parts/smart/fortwo-cabrio-451/catalytic-converter",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b4322783-068a-42f6-933f-bfcc2aa5b856",
+     "name": "AS 71280 SMART Fortwo II Convertible (451) catalytic converter",
+     "oem_number": "71280",
+     "part_type": "aftermarket",
+     "manufacturer": "Smart",
+     "mid": "aed142ae-b9a1-41f9-b394-9754d2ea1aaa"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "9b61d40e-054f-4e20-a3a2-78fad0e51e5c",
+  "part_id": "d351a4c2-5605-4dbe-ae70-18946916e27b",
+  "article": "71462",
+  "owner_brand": "SIDAT",
+  "foreign_brands": [
+   "AIC"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "d351a4c2-5605-4dbe-ae70-18946916e27b",
+   "name": "SIDAT 71462 Fuel level sensor",
+   "oem_number": "71462",
+   "part_type": "aftermarket",
+   "manufacturer": "Ford",
+   "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41",
+   "sku": "FORD-71462",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/fispa/p-13962204",
+   "is_active": true
+  },
+  "title_brand": "SIDAT",
+  "offers": [
+   {
+    "id": "9b61d40e-054f-4e20-a3a2-78fad0e51e5c",
+    "supplier_sku": "71462",
+    "price_ils": "785.44",
+    "supplier_url": "https://www.car-parts.ie/car-parts/seat/mii/steering-rack",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "b4d0edc1-4fd2-4c7a-bdb6-babe92bfdd05",
+     "name": "AIC 71462 Seat Mii kf1 steering rack",
+     "oem_number": "71462",
+     "part_type": "aftermarket",
+     "manufacturer": "Seat",
+     "mid": "ebb4521b-6742-4cc2-b1d0-207903ea085a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "973141a6-bdb4-49c8-9a4c-4d724ac938e1",
+     "name": "AIC 71462 SKODA Citigo Hatchback steering rack",
+     "oem_number": "71462",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "da22b2c8-457a-42f8-b29a-0d838dbd0352",
+     "name": "AIC 71462 VW UP 121 steering rack",
+     "oem_number": "71462",
+     "part_type": "aftermarket",
+     "manufacturer": "Vw",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "1bbbe9a4-30ce-43bc-b8ce-faaae431d51a",
+  "part_id": "6968cfde-0b65-489d-b0a4-93f6f5b4bc9e",
+  "article": "7780004",
+  "owner_brand": "DIEDERICHS",
+  "foreign_brands": [
+   "KAMOKA"
+  ],
+  "group": "H|creator=third_brand",
+  "part": {
+   "id": "6968cfde-0b65-489d-b0a4-93f6f5b4bc9e",
+   "name": "DIEDERICHS 7780004 Wheel spacer",
+   "oem_number": "7780004",
+   "part_type": "aftermarket",
+   "manufacturer": "Mercedes-Benz",
+   "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce",
+   "sku": "MERCE-7780004",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/hd-karosserieteile/p-7042860",
+   "is_active": true
+  },
+  "title_brand": "DIEDERICHS",
+  "offers": [
+   {
+    "id": "1bbbe9a4-30ce-43bc-b8ce-faaae431d51a",
+    "supplier_sku": "7780004",
+    "price_ils": "654.55",
+    "supplier_url": "https://www.car-parts.ie/car-parts/nissan/note/radiator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "8b404a43-fdbc-4477-9ac4-27b0eded7395",
+     "name": "KAMOKA 7780004 Nissan Micra k12 Convertible engine radiator",
+     "oem_number": "7780004",
+     "part_type": "aftermarket",
+     "manufacturer": "Nissan",
+     "mid": "98ca408f-19b6-48f9-a756-18b2387b0b90"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "d1db1658-c575-48a8-8346-e8f91ec1e74d",
+  "part_id": "d23ff85b-45de-461c-b5b7-2755ad9fcb7f",
+  "article": "8540 10403",
+  "owner_brand": "KAWE",
+  "foreign_brands": [
+   "TRISCAN"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "d23ff85b-45de-461c-b5b7-2755ad9fcb7f",
+   "name": "KAWE 8540 10403 ABS sensor ring Rear Axle both sides, \u00d8: 83mm",
+   "oem_number": "8540 10403",
+   "part_type": "aftermarket",
+   "manufacturer": "BMW",
+   "mid": "caa6ba39-02aa-4394-969d-a15f3f19104c",
+   "sku": "BMW-8540 10403",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/triscan/p-7231863",
+   "is_active": true
+  },
+  "title_brand": "KAWE",
+  "offers": [
+   {
+    "id": "d1db1658-c575-48a8-8346-e8f91ec1e74d",
+    "supplier_sku": "8540 10403",
+    "price_ils": "15.69",
+    "supplier_url": "https://www.car-parts.ie/car-parts/volkswagen/passat-plug-in/abs-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "eb193a3d-5d06-421a-89f8-6ebda13670f8",
+     "name": "TRISCAN 8540 10403 Ford Transit Connect mk1 reluctor ring",
+     "oem_number": "8540 10403",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "b38b7d9e-b8b5-47b2-b4b8-96bca27fa2d1",
+     "name": "SEAT abs sensor TRISCAN 8540 10403",
+     "oem_number": "8540 10403",
+     "part_type": "aftermarket",
+     "manufacturer": "Seat",
+     "mid": "ebb4521b-6742-4cc2-b1d0-207903ea085a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "8f9c7e88-9a22-4def-9595-cb2beeef5447",
+     "name": "Volkswagen abs sensor TRISCAN 8540 10403",
+     "oem_number": "8540 10403",
+     "part_type": "aftermarket",
+     "manufacturer": "Volkswagen",
+     "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "ab99b0dc-ec9f-4ede-9aab-311cfb330ae8",
+  "part_id": "0fa6c5e1-2b33-4bbc-b438-c8a76368383d",
+  "article": "902750",
+  "owner_brand": "SEIM",
+  "foreign_brands": [
+   "OPTIMAL"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "0fa6c5e1-2b33-4bbc-b438-c8a76368383d",
+   "name": "SEIM 902750 Volkswagen Tiguan Allspace (BW2) window regulator",
+   "oem_number": "902750",
+   "part_type": "aftermarket",
+   "manufacturer": "Volkswagen",
+   "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25",
+   "sku": "VOLKS-902750",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "SEIM",
+  "offers": [
+   {
+    "id": "ab99b0dc-ec9f-4ede-9aab-311cfb330ae8",
+    "supplier_sku": "902750",
+    "price_ils": "244.30",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/avanza-f602-f601/wheel-bearing",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "9a2b8f09-f6cf-4351-93e1-e3c0195a1e12",
+     "name": "OPTIMAL 902750 DAIHATSU Terios Kid (J100) wheel bearing",
+     "oem_number": "902750",
+     "part_type": "aftermarket",
+     "manufacturer": "Daihatsu",
+     "mid": "873dbe55-4602-4c5f-a713-f2cbe7b9feb7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "22c9b3b7-8e29-450c-bd14-89d33cf77a7b",
+     "name": "OPTIMAL 902750 TOYOTA Avanza I (F600) wheel bearing",
+     "oem_number": "902750",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "a8d0cbe5-c6d5-48f8-af38-88f0487d6553",
+  "part_id": "dcb682a7-be16-445e-9a53-e02e541b8183",
+  "article": "908836",
+  "owner_brand": "AMC",
+  "foreign_brands": [
+   "VALVOLINE"
+  ],
+  "group": "H|offer_not_created_with_part",
+  "part": {
+   "id": "dcb682a7-be16-445e-9a53-e02e541b8183",
+   "name": "AMC 908836 Volkswagen T-Cross (C11_) cylinder head",
+   "oem_number": "908836",
+   "part_type": "aftermarket",
+   "manufacturer": "Volkswagen",
+   "mid": "04877cea-0889-4b57-978a-cff0a8f1ed25",
+   "sku": "VOLKS-908836",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "AMC",
+  "offers": [
+   {
+    "id": "a8d0cbe5-c6d5-48f8-af38-88f0487d6553",
+    "supplier_sku": "908836",
+    "price_ils": "282.96",
+    "supplier_url": "https://www.car-parts.ie/car-parts/aston-martin/vantage-roadster/engine-oil",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "d60cf8c2-1ea4-4af8-a7d7-c9d8382fae50",
+     "name": "Valvoline 908836 ALFA ROMEO Tonale (965) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Alfa Romeo",
+     "mid": "d1fc4810-f764-4ff2-b5f1-c06f0e9bf9db"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "48c10e2a-0fef-4393-86c8-84298cae6ed2",
+     "name": "Valvoline 908836 ASTON MARTIN Vantage Roadster engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Aston Martin",
+     "mid": "e13a6cde-168a-4c6a-865e-75042c3a531d"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "fb1fd646-7efa-4b77-8e57-5d2fb6b35c74",
+     "name": "Valvoline 908836 BYD Seal U engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Byd",
+     "mid": "0e1dae22-60b4-49e1-b2f6-71f786e46f6e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "03294469-7ec5-4df4-92d0-52b434049eeb",
+     "name": "Valvoline 908836 CADILLAC Escalade V (GMT1XL) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Cadillac",
+     "mid": "6f18818a-3c94-4a70-bab1-1384c19a94fc"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "bae121b4-3f28-4bcb-9034-02c71f720ea7",
+     "name": "Valvoline 908836 CHEVROLET Silverado 1500 IV Crew Cab Pickup (GMT1CC) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "49830ff1-a7db-48eb-91f4-eaef15eb4473",
+     "name": "Valvoline 908836 GENESIS GV70 (JK1) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Genesis",
+     "mid": "5953b086-9982-471a-af0b-92f0e079ccaf"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "17b8a177-ddd7-4df1-90c4-c7d5c3657e58",
+     "name": "Valvoline 908836 HYUNDAI i10 III Saloon (AI3) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "8e76d6e7-086f-4a02-8508-e166ea14f5ec",
+     "name": "Valvoline 908836 LAND ROVER Range Rover Sport (L461) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Land Rover",
+     "mid": "7f060acf-2382-42e1-8413-f9b045cb0836"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "ed5cf943-26a2-40b5-9ad7-a7d940a45def",
+     "name": "Valvoline 908836 MERCEDES-BENZ AMG GT (C192) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Mercedes-Benz",
+     "mid": "c8ae1952-9e77-4acb-bf79-88271cf9bbce"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "c65cddb8-8df8-45d3-aad8-a2412a528f2a",
+     "name": "Valvoline 908836 MITSUBISHI Outlander IV (GN) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "5ffcebf6-3067-42bf-b648-111499d1b64c",
+     "name": "Valvoline 908836 OPEL Astra K Box Body / Estate (B16) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "c307f3e0-7b90-4d7b-bf23-9ce8991a7961",
+     "name": "AMC 908836 SKODA Scala Hatchback cylinder head",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Skoda",
+     "mid": "e062ba07-930c-489f-b43e-48bf90a42d11"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "0d6ec7e7-3b59-4fbf-a6c5-3821e8c2eabe",
+     "name": "Valvoline 908836 SUBARU Crosstrek III (GU) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Subaru",
+     "mid": "88a04aee-d7d5-45ff-8308-4c6b50c67c0e"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "a54770e7-3933-4842-bf95-cc86c0cf3bdc",
+     "name": "Valvoline 908836 TOYOTA Avalon Saloon (_X5_) engine oil",
+     "oem_number": "908836",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "85fdb6a1-ead9-41d1-8aee-bcc4b839e998",
+  "part_id": "dd85c86d-016b-4507-9683-bd8bb06aa508",
+  "article": "9170",
+  "owner_brand": "MEAT & DORIA",
+  "foreign_brands": [
+   "SIDEM"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "dd85c86d-016b-4507-9683-bd8bb06aa508",
+   "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+   "oem_number": "9170",
+   "part_type": "aftermarket",
+   "manufacturer": "Mazda",
+   "mid": "72dd2cd7-a452-471c-8ea8-a376ff905c45",
+   "sku": "MAZDA-9170",
+   "src": null,
+   "purl": null,
+   "is_active": true
+  },
+  "title_brand": "MEAT & DORIA",
+  "offers": [
+   {
+    "id": "85fdb6a1-ead9-41d1-8aee-bcc4b839e998",
+    "supplier_sku": "9170",
+    "price_ils": "75.97",
+    "supplier_url": "https://www.car-parts.ie/car-parts/opel/insignia/control-arm",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "c1415f2c-561f-484b-854f-994eb1fd6c2d",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Ford",
+     "mid": "73fc77ef-5414-4270-9476-2444d8b7eb41"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "f7f99caf-4139-43a3-b20b-83380ba4afaa",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Honda",
+     "mid": "6034f4f4-6dfa-4c88-998c-e62f45956ea9"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "826148cf-dde5-446a-a72b-667ab5652430",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Hyundai",
+     "mid": "eb828e88-d955-45a8-8b53-3b3677238b5a"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "78006f41-3771-46a3-8123-0866c6817277",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Mitsubishi",
+     "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "d61e8310-c5cd-4947-be79-1bc5da8086d6",
+     "name": "SIDEM 9170 Opel Insignia A Sports Tourer control arm",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "56b41bb1-ebf1-4a56-a28d-e0f227c5ce0e",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Renault",
+     "mid": "d193f27e-f0c4-4de8-b7a6-8ecb24589c6d"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "e4b4db45-4acf-43bc-af8b-9ff6742d4136",
+     "name": "SIDEM 9170 Saab 900 I Convertible control arm",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Saab",
+     "mid": "c21a289d-5b3e-411f-afbb-5f7a4d022a88"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "bf4863e9-e801-455a-bd5a-7f6af79ed9be",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "35f58ad2-010f-4cad-b41d-e094b2542b39",
+     "name": "SIDEM 9170 VAUXHALL Insignia Mk1 (A) Saloon (G09) control arm",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "3e72d300-8c9b-4bda-bdb6-b98401346378",
+     "name": "MEAT & DORIA 9170 Seal Ring, injector shaft",
+     "oem_number": "9170",
+     "part_type": "aftermarket",
+     "manufacturer": "Volvo",
+     "mid": "2714a52d-fb43-4af5-bf96-6e677f0f8a25"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   }
+  ]
+ },
+ {
+  "offer_id": "5f78ad57-bd05-4462-b5a0-65ae1d3ea0c3",
+  "part_id": "128b0bdb-feb3-4c92-9563-313b03bec2cc",
+  "article": "93822",
+  "owner_brand": "NTK",
+  "foreign_brands": [
+   "NGK"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "128b0bdb-feb3-4c92-9563-313b03bec2cc",
+   "name": "NTK 93822 OPEL Insignia B Sports Tourer Box Body / Estate (Z18) lambda sensor",
+   "oem_number": "93822",
+   "part_type": "aftermarket",
+   "manufacturer": "Opel",
+   "mid": "86106424-41ba-434b-b107-4b6db23523b7",
+   "sku": "OPEL-93822",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/opel/astra-k/lambda-sensor",
+   "is_active": true
+  },
+  "title_brand": "NTK",
+  "offers": [
+   {
+    "id": "5f78ad57-bd05-4462-b5a0-65ae1d3ea0c3",
+    "supplier_sku": "93822",
+    "price_ils": "268.31",
+    "supplier_url": "https://www.car-parts.ie/car-parts/opel/insignia-b-sports-tourer-combi-van-z18/lambda-sensor",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "01ad565a-e601-46b7-b3b1-aa80d9325a46",
+     "name": "NGK 93822 Opel Insignia B Sports Tourer lambda sensor",
+     "oem_number": "93822",
+     "part_type": "aftermarket",
+     "manufacturer": "Opel",
+     "mid": "86106424-41ba-434b-b107-4b6db23523b7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "825c337c-8b21-43df-add8-9f090ac3a3f7",
+     "name": "NGK 93822 VAUXHALL Astra Mk7 (K) Hatchback (B16) lambda sensor",
+     "oem_number": "93822",
+     "part_type": "aftermarket",
+     "manufacturer": "Vauxhall",
+     "mid": "2a4c921d-62e3-42ee-9872-34a26c5d8cc4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "634fd760-e918-4cb6-96af-f3059e9407e1",
+  "part_id": "cfffd612-6459-4193-8363-0e14975a475b",
+  "article": "PT154",
+  "owner_brand": "ASHIKA",
+  "foreign_brands": [
+   "JAPKO"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "cfffd612-6459-4193-8363-0e14975a475b",
+   "name": "ASHIKA PT154 Glow plug Voltage: 11V",
+   "oem_number": "PT154",
+   "part_type": "aftermarket",
+   "manufacturer": "Mitsubishi",
+   "mid": "0e31fccd-8abf-4eb9-ac0c-5584f626a20f",
+   "sku": "MITSU-PT154",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/japko/p-11926238",
+   "is_active": true
+  },
+  "title_brand": "ASHIKA",
+  "offers": [
+   {
+    "id": "634fd760-e918-4cb6-96af-f3059e9407e1",
+    "supplier_sku": "PT154",
+    "price_ils": "55.02",
+    "supplier_url": "https://www.car-parts.ie/car-parts/toyota/land-cruiser-pickup-j7/ignition-system-auto",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "89da55b4-0f6c-4ea3-8dd6-f708f93a7487",
+     "name": "DAIHATSU Wildcat / Rocky Off-Road Cabrio (F70) Glow plug JAPKO PT154",
+     "oem_number": "PT154",
+     "part_type": "aftermarket",
+     "manufacturer": "Daihatsu",
+     "mid": "873dbe55-4602-4c5f-a713-f2cbe7b9feb7"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "edcfdeaf-dc2b-45e2-8e21-95b4566db189",
+     "name": "Toyota Land Cruiser J7 Pickup Glow plug JAPKO PT154",
+     "oem_number": "PT154",
+     "part_type": "aftermarket",
+     "manufacturer": "Toyota",
+     "mid": "01954786-65c7-4ff4-a6ad-4836b31da9f4"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "00eb6949-6181-45ac-93b6-ddf98d28d595",
+  "part_id": "55e8c295-c1c0-4bc5-b8ce-7e68e9c43bd5",
+  "article": "ZR CT724 L",
+  "owner_brand": "ELECTRIC LIFE",
+  "foreign_brands": [
+   "JUMASA"
+  ],
+  "group": "H|creator=current_foreign_writer(part renamed: offer content matches part ORIGIN, name does not)",
+  "part": {
+   "id": "55e8c295-c1c0-4bc5-b8ce-7e68e9c43bd5",
+   "name": "ELECTRIC LIFE ZR CT724 L CITRO\u00cbN DS5 Hatchback window regulator",
+   "oem_number": "ZR CT724 L",
+   "part_type": "aftermarket",
+   "manufacturer": "Citroen",
+   "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66",
+   "sku": "CITRO-ZR CT724 L",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/citroen/ds5-2011/window-regulator",
+   "is_active": true
+  },
+  "title_brand": "ELECTRIC LIFE",
+  "offers": [
+   {
+    "id": "00eb6949-6181-45ac-93b6-ddf98d28d595",
+    "supplier_sku": "ZR CT724 L",
+    "price_ils": "461.62",
+    "supplier_url": "https://www.car-parts.ie/car-parts/citroen/ds5-2011/window-regulator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "14ad629c-a2b3-487d-84ff-68337879f648",
+     "name": "JUMASA ZR CT724 L CITRO\u00cbN DS5 Hatchback window regulator",
+     "oem_number": "ZR CT724 L",
+     "part_type": "aftermarket",
+     "manufacturer": "Citroen",
+     "mid": "c9fba999-3265-4d99-99ec-3a959ac0ac66"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ },
+ {
+  "offer_id": "e49d390b-9e5d-436d-aa78-fce4c7109103",
+  "part_id": "5fef2279-1c5d-4e96-9da4-a79b5002c519",
+  "article": "ZR GM106 R",
+  "owner_brand": "ELECTRIC LIFE",
+  "foreign_brands": [
+   "JUMASA"
+  ],
+  "group": "H|creator_unknown",
+  "part": {
+   "id": "5fef2279-1c5d-4e96-9da4-a79b5002c519",
+   "name": "ELECTRIC LIFE ZR GM106 R Chevrolet Aveo Schr\u00e4gheck window regulator",
+   "oem_number": "ZR GM106 R",
+   "part_type": "aftermarket",
+   "manufacturer": "Chevrolet",
+   "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1",
+   "sku": "CHEVR-ZR GM106 R",
+   "src": "Car-Parts.ie",
+   "purl": "https://www.car-parts.ie/car-parts/chevrolet/optra-ls/window-regulator",
+   "is_active": true
+  },
+  "title_brand": "ELECTRIC LIFE",
+  "offers": [
+   {
+    "id": "e49d390b-9e5d-436d-aa78-fce4c7109103",
+    "supplier_sku": "ZR GM106 R",
+    "price_ils": "398.70",
+    "supplier_url": "https://www.car-parts.ie/car-parts/daewoo/kalos-saloon-klas/window-regulator",
+    "part_type": null,
+    "is_available": true,
+    "sname": "Car-Parts.ie"
+   }
+  ],
+  "siblings": [
+   {
+    "sibling": {
+     "id": "154bd02a-c0d5-4600-a054-b20119b7bff3",
+     "name": "JUMASA ZR GM106 R Chevrolet Aveo Schr\u00e4gheck window regulator",
+     "oem_number": "ZR GM106 R",
+     "part_type": "aftermarket",
+     "manufacturer": "Chevrolet",
+     "mid": "a0b9a4d9-6334-40c3-8e2a-f84f9fdd11a1"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   },
+   {
+    "sibling": {
+     "id": "b725b1f7-07fa-4849-98ce-1ca168a6324c",
+     "name": "ELECTRIC LIFE ZR GM106 R DAEWOO Kalos Saloon window regulator",
+     "oem_number": "ZR GM106 R",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "same",
+    "reason": "same_brand_same_number"
+   },
+   {
+    "sibling": {
+     "id": "a01bf724-5ef4-49db-bc8a-316d1e53dcee",
+     "name": "JUMASA ZR GM106 R DAEWOO Kalos Saloon window regulator",
+     "oem_number": "ZR GM106 R",
+     "part_type": "aftermarket",
+     "manufacturer": "Daewoo",
+     "mid": "3b2a1c64-76ef-4960-ab3d-8b2337ea3409"
+    },
+    "verdict": "different",
+    "reason": "different_brands"
+   }
+  ]
+ }
+]

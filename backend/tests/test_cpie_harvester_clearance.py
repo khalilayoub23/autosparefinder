@@ -158,3 +158,23 @@ def test_released_model_is_cooled_down_for_this_process(monkeypatch):
     assert "q-fail" in h._cooling_ids()
     h._RELEASED_AT["q-fail"] = time.time() - h.RELEASE_COOLDOWN_S - 1
     assert "q-fail" not in h._cooling_ids()
+
+
+def test_final_relay_refusal_after_partial_delivery_is_not_done(tmp_path, monkeypatch):
+    _reset(tmp_path)
+    h._CLEARANCE.update(cookie="cf_clearance=ok", ts=time.time())
+    monkeypatch.setattr(h.time, "sleep", lambda s: None)
+    monkeypatch.setattr(h, "BASE_SLUGS", ["a"])
+    html = "<html></html>"
+    monkeypatch.setattr(h, "http_get", lambda *a, **k: (setattr(h._FETCH_TL, "c", {"ok": 9, "blocked": 0}) or html))
+    monkeypatch.setattr(h, "get_additional_slugs", lambda *a, **k: [])
+    monkeypatch.setattr(h, "BATCH_SIZE", 2)
+    monkeypatch.setattr(h, "parse_parts", lambda html, path: [{"sku": str(i)} for i in range(3)])
+    calls = []
+    def relay(v, b, done=False):
+        calls.append(len(b)); return len(calls) == 1          # first chunk delivered, the final chunk refused
+    monkeypatch.setattr(h, "post_relay", relay)
+    try:
+        h.harvest_model("", "bmw/x5", {}); assert False, "must raise"
+    except h.HarvestFetchFailed as e:
+        assert "final relay" in str(e)

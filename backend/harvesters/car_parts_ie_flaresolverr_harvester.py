@@ -1002,9 +1002,13 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     if batch:
         if post_relay(vehicle, batch):
             sent += len(batch)
+            batch = []
+        else:
+            # the last chunk was refused: dropping it silently would record a partially delivered model as 'done'
+            raise HarvestFetchFailed(f"{vehicle}: final relay of {len(batch)} parts refused after {sent} delivered; model released")
 
     _c = _FETCH_TL.c
-    if sent == 0 and (_c["blocked"] > 0 or batch):
+    if sent == 0 and _c["blocked"] > 0:
         # nothing was delivered AND something failed (a page blocked by Cloudflare/transport, or collected parts the relay did
         # not accept): NOT an empty model - the worker releases it for a retry
         raise HarvestFetchFailed(f"{vehicle}: nothing delivered; {_c['blocked']} blocked fetches, {len(batch)} undelivered parts, {_c['ok']} ok")
