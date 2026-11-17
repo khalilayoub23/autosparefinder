@@ -73,14 +73,11 @@ SUPPLIER_URL = "https://www.car-parts.ie"
 
 from car_brand_resolver import resolve_source_brand
 import cpie_identity
+import cpie_fitment_guard
 import base_price_rule
 
-from category_map import CATCH_ALL, categorize_on_ingest, categorize_slug
 from warranty_policy import resolve as _warranty_resolve
 
-# Category slug -> canonical id: see category_map.CATEGORY_SLUG_MAP.
-# The local copy removed here was already dead (nothing read it after
-# _map_category switched to categorize_slug) and had drifted out of sync.
 
 
 def _clean(s: str | None) -> str:
@@ -99,11 +96,6 @@ def _extract_years(text: str) -> tuple[int | None, int | None]:
     if years:
         return years[0], years[0]
     return None, None
-
-
-def _map_category(slug: str) -> str:
-    """car-parts.ie URL slug -> canonical category (category_map is the truth)."""
-    return categorize_slug(slug or "")
 
 
 async def _ensure_supplier(conn: asyncpg.Connection) -> str:
@@ -223,6 +215,7 @@ async def import_file(
         skip_reasons: dict = {}      # 'ErrorClass: first line' -> count (parts_catalog rows that could not be written)
         checkpoint_at: int | None = None
 
+        _payload_size = len(parts_list)   # before any resume slice: the guard judges the whole listing payload
         if start_from > 0:
             print(f"[car_parts_ie_import] Resuming from index {start_from} (skipping {start_from} parts)")
             parts_list = parts_list[start_from:]
@@ -260,18 +253,10 @@ async def import_file(
             image_url = _clean(product.get("image_url") or "")
             in_stock = bool(product.get("in_stock", True))
 
-            # Category: the URL slug is car-parts.ie's OWN taxonomy, so it is the
-            # most reliable signal — but MANY harvested blocks carry no slug (or one
-            # we do not map), and this used to fall straight to the catch-all while
-            # the name said "brake pads" in plain English. Measured 2026-08-05:
-            # 49.3% of parts harvested in the previous 2 days landed in כללי that way.
-            # Fall back to the NAME (the same categorize_on_ingest every other
-            # importer calls) before giving up on the catch-all.
-            category = _map_category(product.get("category") or "")
-            if category == CATCH_ALL:
-                category = categorize_on_ingest(
-                    name=name, url=url, extra=description_text
-                )
+            # Category + fitment evidence: cpie_fitment_guard (2026-11-17) - the product NAME decides the category (the listing-page
+            # slug only as a fallback) and a page-wide block item in a small payload creates no fitment.
+            category = cpie_fitment_guard.category_for(name, product.get("category") or "", url, description_text)
+            _fit_ok = cpie_fitment_guard.fitment_allowed(_payload_size, name, product.get("category") or "", description_text)
             # EUR→ILS: Car-Parts.ie prices are our supplier cost in EUR (NOT consumer prices
             # with Israeli VAT). Convert to ILS and apply 45% margin for the customer price.
             # The /1.18 that was here was wrong — it stripped phantom Israeli VAT from a
@@ -315,6 +300,11 @@ async def import_file(
                             "year_to": fit_yt,
                             "engine": _clean(fit.get("engine") or engine_text or ""),
                         })
+
+            if not _fit_ok and compatible_vehicles:   # page-wide block item: no vehicle-specific evidence -> no positive fitment
+                skip_reasons["fitment_generic_block"] = skip_reasons.get("fitment_generic_block", 0) + 1
+                fitment_skipped += 1
+                compatible_vehicles = []
 
             try:
                 row = await conn.fetchrow(
