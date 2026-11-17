@@ -85,3 +85,10 @@ def test_ai_catalog_builder_cannot_write_fabricated_prices():
         assert False, "must refuse"
     except RuntimeError as e:
         assert "fabricates prices" in str(e)
+
+
+def test_importer_recomputes_base_price_of_the_part_that_owns_the_updated_offer():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "importers", "car_parts_ie_import_generic.py")).read()
+    i = src.index("ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key")
+    assert "RETURNING part_id::text" in src[i:i + 900]                       # the offer's real owner comes back from the upsert
+    assert "touched_part_ids.append(_offer_part)" in src[i:i + 2000]         # and joins the set the rule is applied to

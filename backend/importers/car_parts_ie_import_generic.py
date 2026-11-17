@@ -427,7 +427,7 @@ async def import_file(
                     "SELECT id, price_ils, price_usd FROM supplier_parts WHERE supplier_id=$1::uuid AND supplier_sku=$2",
                     supplier_id, offer_sku,
                 )
-                await conn.execute(
+                _offer_part = await conn.fetchval(
                     """
                     INSERT INTO supplier_parts(
                         id, supplier_id, part_id, supplier_sku,
@@ -446,9 +446,14 @@ async def import_file(
                         warranty_source=EXCLUDED.warranty_source,
                         supplier_url=EXCLUDED.supplier_url,
                         updated_at=NOW()
+                    RETURNING part_id::text
                     """,
                     supplier_id, part_id, offer_sku, price_ils, _wmonths, _wsource, url,
                 )
+                # the offer may belong to ANOTHER part than the one just upserted (existing owner of the key): its
+                # base_price must follow the offer price too (2026-11-17: 32 of 754 post-fix parts diverged for this reason)
+                if _offer_part and _offer_part not in touched_part_ids:
+                    touched_part_ids.append(_offer_part)
                 supplier_rows += 1
                 await _record_price_change(conn, _old_offer, price_ils, "car_parts_ie_import")
             except _SkipOffer:
