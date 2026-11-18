@@ -140,3 +140,10 @@ def test_supplier_still_wired():
     from services.suppliers import ebay_supplier
     src = inspect.getsource(ebay_supplier)
     assert 'check("browse/item_summary/search"' in src and 'check("browse/item"' in src
+
+
+def test_redirect_in_history_is_a_signal():
+    r = R(200)
+    r.history = [R(301)]
+    assert w.detect(r, "browse/item_summary/search") == "HTTP 301 redirect"
+    assert w.detect(R(200), "browse/item_summary/search") == ""

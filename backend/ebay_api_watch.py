@@ -3,8 +3,8 @@ Script: ebay_api_watch.py
 Purpose: Early warning that eBay is retiring / changing an endpoint we depend on
          (Buy Browse API: item_summary/search, item/{id}), so a retirement does
          not show up as a silent "0 results" in the supplier search / price sync.
-Process: ebay_supplier, ebay_brand_importer (async `check`) and
-         external_fitment_providers.classify_external_payload (sync `check_sync`) call `await check(endpoint, response)` on every Browse
+Process: ebay_supplier and ebay_brand_importer call `await check(endpoint, response)`;
+         external_fitment_providers.classify_external_payload calls the sync `check_sync` (task on the running loop) - on every Browse
          response BEFORE raise_for_status(). A signal is (a) a Deprecation /
          Sunset / Warning header, (b) a redirect, 404, 410 or 501 on the
          endpoint, or (c) a 4xx body that says deprecated / decommissioned /
@@ -41,6 +41,9 @@ def detect(response, endpoint: str = "") -> str:
     404/410 on item/{id} is an ENDED LISTING (normal), so those only count on search."""
     try:
         status = int(response.status_code)
+        for hop in (getattr(response, "history", None) or []):  # callers that follow redirects (catalog_scraper._get)
+            if int(hop.status_code) in (301, 302, 307, 308):
+                return f"HTTP {int(hop.status_code)} redirect"
         for h in _HEADER_SIGNALS:
             val = response.headers.get(h)
             if val:
