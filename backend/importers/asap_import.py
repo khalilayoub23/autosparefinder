@@ -353,6 +353,23 @@ async def import_fitment(conn: asyncpg.Connection, rows: List[Dict[str, str]]) -
     return stats
 
 
+async def live_usd_ils(conn) -> float:
+    """The platform's live USD->ILS rate (system_settings.ils_per_usd, refreshed daily) via THIS connection.
+    Root-fixed 2026-11-18: the importer called currency_rate.get_usd_to_ils_rate() WITHOUT its required `db`
+    argument; the TypeError was swallowed and every ASAP cost was priced at a hard-coded 3.72 while the live
+    rate was 3.25 (+14.5%). A missing/invalid setting still falls back, but LOUDLY."""
+    from currency_rate import FX_KEYS, _normalize_rate
+    for key in FX_KEYS:
+        raw = await conn.fetchval("SELECT value FROM system_settings WHERE key = $1", key)
+        if raw is not None:
+            rate = _normalize_rate(raw, fallback=0.0)
+            if rate > 0:
+                return rate
+    fb = float(os.getenv("ILS_PER_USD", "3.72"))
+    print(f"[asap_import] WARNING: no valid live USD->ILS rate in system_settings; using fallback {fb}", flush=True)
+    return fb
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("csv_path")
@@ -387,11 +404,7 @@ async def main() -> None:
         if is_fitment:
             stats = await import_fitment(conn, rows)
         else:
-            try:
-                from currency_rate import get_usd_to_ils_rate
-                usd_ils = await get_usd_to_ils_rate()
-            except Exception:
-                usd_ils = float(os.getenv("ILS_PER_USD", "3.72"))
+            usd_ils = await live_usd_ils(conn)
             print(f"[asap_import] USD→ILS = {usd_ils}", flush=True)
             stats = await import_products(conn, rows, args.brand_name, usd_ils)
         print(f"[asap_import] {'DRY-RUN (rolled back)' if args.dry_run else 'DONE'} {kind}: {stats}", flush=True)
