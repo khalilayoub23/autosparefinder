@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime
 
 import asyncpg
+import base_price_rule
 from dotenv import load_dotenv
 
 from manufacturer_normalization import normalize_manufacturer_name
@@ -261,6 +262,7 @@ async def run(brands=None, dry_run=False):
         print(f"=== {sheet_name} ({manufacturer}) ===")
         stats = dict(sheet=sheet_name, parsed=0, matched=0, not_found=0,
                      sp_ins=0, cat_fixed=0, errors=0)
+        touched_part_ids = []
 
         # Build SKU/name lookup: key → (part_id_str, base_price)
         mfr_variants = sorted({
@@ -324,8 +326,7 @@ async def run(brands=None, dry_run=False):
                 await conn.execute("""
                     UPDATE parts_catalog
                     SET part_type = COALESCE($1::text, part_type),
-                        base_price = CASE WHEN $2 > 0 THEN $2 ELSE base_price END,
-                        max_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE max_price_ils END,
+                        max_price_ils = CASE WHEN $2::numeric > 0 THEN $2::numeric ELSE max_price_ils END,
                         importer_price_ils = CASE WHEN importer_price_ils > 0 THEN importer_price_ils ELSE 0 END,
                         online_price_ils=0, updated_at=NOW()
                     WHERE id=$3
@@ -344,11 +345,14 @@ async def run(brands=None, dry_run=False):
                 )
                 await conn.execute(supplier_insert_sql, *payload)
                 stats["sp_ins"] += 1
+                touched_part_ids.append(str(part_id))
             except Exception as e:
                 stats["errors"] += 1
                 if stats["errors"] <= 3:
                     print(f"  ERR: {e}")
 
+        if not dry_run:
+            stats["base_price"] = await base_price_rule.apply_and_report(conn, touched_part_ids, f"import_from_excel:{sheet_name}")   # ONE base_price rule (after the offers exist)
         all_stats.append(stats)
         print(f"  Result: matched={stats['matched']}, not_found={stats['not_found']}, "
               f"sp_ins={stats['sp_ins']}, cat_fixed={stats['cat_fixed']}, err={stats['errors']}\n")

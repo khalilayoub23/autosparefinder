@@ -5,10 +5,11 @@ and crash pdfplumber. Format: {OEM}{BRAND_HE}\n{description}{PRICE}    {STOCK}
 Prices in these PDFs are retail ILS (incl. 17% VAT = מחיר לצרכן).
   importer_price_ils = price / 1.17
   max_price_ils = price
-  base_price = price
+  base_price = NOT written here (base_price_rule.apply_to_parts); retail incl. VAT stays in max_price_ils
 """
 import asyncio, json, os, re, sys, time, asyncpg
 import fitz  # PyMuPDF
+import base_price_rule
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 
@@ -74,21 +75,24 @@ async def import_brand(conn, brand: str, pdf_path: str, importer: str) -> dict:
     spec = json.dumps({"importer": importer, "source": f"{brand} IL official price list (fitz)",
                        "vat_included": True, "vat_rate": VAT}, ensure_ascii=False)
     updated = not_found = errors = 0
+    touched_part_ids = []
     for p in parts:
         oem = p['oem']
         retail = p['price']               # incl. VAT
         cost = round(retail / (1 + VAT), 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
-                    importer_price_ils=$1, max_price_ils=$2, base_price=$2,
+                    importer_price_ils=$1, max_price_ils=$2,
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE oem_number=$4 AND manufacturer=$5 AND is_active=true
+                RETURNING id::text
             """, cost, retail, spec, oem, brand)
-            n = int(res.split()[-1])
+            n = len(res)
             if n > 0:
                 updated += n
+                touched_part_ids.extend(r[0] for r in res)
             else:
                 not_found += 1
         except Exception as e:
@@ -96,6 +100,7 @@ async def import_brand(conn, brand: str, pdf_path: str, importer: str) -> dict:
             if errors <= 3:
                 print(f"  err [{oem}]: {e}")
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"fitz_pdf_import:{brand}")
     elapsed = time.monotonic() - t0
     pct = 100 * updated // max(len(parts), 1)
     print(f"  [{brand}] updated={updated:,} not_found={not_found:,} errors={errors} "

@@ -241,6 +241,9 @@ async def import_products(conn: asyncpg.Connection, products: list[dict]) -> dic
         eng_name = translate_name(name_heb)
         category = categorize(name_heb)
 
+        # A RETAILER's consumer price: a retail REFERENCE (min/max_price_ils), NOT a supplier cost - this scraper creates no offer and has
+        # no importer cost, so base_price is never written from it (was: base_price = this retail price; 2026-11-18). The part stays
+        # unpriced until a real offer/cost exists; the count is reported below.
         # Israeli consumer price incl. VAT, kept as quoted (no 17%->18% re-grossing: Israeli VAT is 18% since 2025-01-01; FIXES_TRACKER #151)
         il_retail = round(price, 2)
 
@@ -262,12 +265,11 @@ async def import_products(conn: asyncpg.Connection, products: list[dict]) -> dic
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, '{}'::jsonb,
-                        $8, 0, $8, $8,
+                        0.0, 0, $8, $8,
                         'aftermarket', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
-                        base_price = EXCLUDED.base_price,
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
@@ -285,7 +287,9 @@ async def import_products(conn: asyncpg.Connection, products: list[dict]) -> dic
             log.warning("Failed %s (%s): %s", sku, oem, e)
             skipped += 1
 
-    return {'inserted': inserted, 'updated': updated, 'skipped': skipped}
+    if inserted or updated:
+        log.warning("selected_parts_scraper: %d parts carry only a retail reference (no supplier cost evidence): base_price NOT written", inserted + updated)
+    return {'inserted': inserted, 'updated': updated, 'skipped': skipped, 'reference_only_no_cost': inserted + updated}
 
 
 async def main() -> None:

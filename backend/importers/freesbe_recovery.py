@@ -15,7 +15,7 @@ Contract (verified live against the FREESBE API):
   price               = VAT-inclusive
   priceWithoutVat     = EX-VAT (authoritative supplier cost)
   importer_price_ils  = priceWithoutVat
-  base_price          = priceWithoutVat * 1.45
+  base_price          = NOT written here (base_price_rule.apply_to_parts); the EXPECTED value used for classification is price_policy's net
   max_price_ils       = price
 
 Why a dedicated tool instead of re-running freesbe_importer.py: the FREESBE
@@ -67,6 +67,8 @@ sys.path.insert(0, "/app/importers")
 
 import asyncpg
 import httpx
+import base_price_rule
+import price_policy as pp
 
 API_BASE = "https://admin.freesbe.com/api/parts"
 PAGE_SIZE = 100
@@ -170,7 +172,9 @@ def parse_freesbe_item(item: dict) -> "dict | None":
 
 
 def expected_values(record: dict) -> dict:
-    base = (record["price_without_vat"] * Decimal("1.45")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    # the EXPECTED base_price is the central price policy's own net for this cost (local supplier, no offer) - the same value
+    # base_price_rule.apply_to_parts writes - never a literal formula of this tool
+    base = Decimal(str(pp.unit_price(float(record["price_without_vat"]), supplier_country="il").net)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return {
         "expected_importer_price": record["price_without_vat"],
         "expected_base_price": base,
@@ -757,6 +761,8 @@ async def apply_recovery(from_report: str, confirm: bool, max_rows: "int | None"
         "skip_inactive", "skip_proven_other_source", "skip_reclassified", "error",
     ]}
     detail = []
+    applied_ids: list = []
+    bp_result: dict = {}
 
     conn = await asyncpg.connect(DB_URL, timeout=15)
     try:
@@ -847,20 +853,24 @@ async def apply_recovery(from_report: str, confirm: bool, max_rows: "int | None"
                         if write_needed:
                             await conn.execute(
                                 """UPDATE parts_catalog
-                                   SET importer_price_ils = $1, base_price = $2, max_price_ils = $3, updated_at = NOW()
-                                   WHERE id = $4""",
-                                fresh_exp["expected_importer_price"], fresh_exp["expected_base_price"],
+                                   SET importer_price_ils = $1, max_price_ils = $2, updated_at = NOW()
+                                   WHERE id = $3""",
+                                fresh_exp["expected_importer_price"],
                                 fresh_exp["expected_max_price"], cand["catalog_row_id"],
                             )
+                            applied_ids.append(str(cand["catalog_row_id"]))
                 outcomes[key] = outcomes.get(key, 0) + 1
                 detail.append(entry)
             except Exception as exc:
                 outcomes["error"] += 1
                 detail.append({"id": cand["catalog_row_id"], "outcome": "ERROR", "reason": str(exc)[:200]})
     finally:
+        # base_price is written ONLY by the ONE rule (base_price_rule), after the importer/max prices above are committed
+        if applied_ids:
+            bp_result = await base_price_rule.apply_and_report(conn, applied_ids, "freesbe_recovery")
         await conn.close()
 
-    return {"candidates_considered": len(candidates), "outcomes": outcomes, "detail": detail}
+    return {"candidates_considered": len(candidates), "outcomes": outcomes, "base_price": bp_result, "detail": detail}
 
 
 # ─────────────────────────── CLI ────────────────────────────────────────────

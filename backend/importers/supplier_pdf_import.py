@@ -42,7 +42,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - Israeli official importer PDFs: prices are INCL. 18% VAT
-    → store as base_price; importer_price_ils = price / 1.18; max_price_ils = price
+    → importer_price_ils = price / 1.18; max_price_ils = price; base_price: base_price_rule.apply_to_parts
 
 Confidence tier: 1.00 (Official Israeli importer price lists)
 
@@ -76,6 +76,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import pdfplumber
 from dotenv import load_dotenv
@@ -639,52 +640,42 @@ INTERNATIONAL_BRANDS = {
 KGM_BRANDS = {"KGM", "SSANGYONG"}
 
 
-def compute_price_triple(raw_price: float, manufacturer: str) -> tuple[float, float, float]:
+def compute_prices(raw_price: float, manufacturer: str) -> tuple[float, float]:
     """
-    MANDATORY VAT CHECK — called before writing any price to the DB.
+    MANDATORY VAT CHECK - called before writing any price to the DB.
 
-    Returns (importer_price_ils, max_price_ils, base_price).
+    Returns (importer_price_ils, max_price_ils). base_price is NOT computed here: base_price_rule.apply_to_parts owns it.
 
     Pricing rules:
-      - International (Rover/Saab etc.): no IL VAT, base = raw * 1.45
-      - KGM/SsangYong: actual wholesale trade price, base = il_retail * 1.45
-      - IL official importers (Porsche, Toyota, etc.): dealer retail reference,
-        base = max_price_ils (no extra markup — customer sees official retail to compare)
+      - International (Rover/Saab etc.): foreign price, no IL VAT: importer cost stays 0 (the foreign buy price is the
+        supplier offer), max = the quoted price
+      - KGM/SsangYong: actual wholesale trade price (embedded VAT stripped) = importer cost; max = cost + 18% VAT
+      - IL official importers (Porsche, Toyota, etc.): the list's ex-VAT price is the importer cost (embedded VAT stripped when the
+        list carries it); the dealer retail (cost + 18% VAT) is the consumer REFERENCE in max_price_ils
     """
     brand_upper = manufacturer.upper()
     embedded_vat = PRICES_INCL_VAT.get(brand_upper, 0.0)
 
     if brand_upper in INTERNATIONAL_BRANDS:
-        # International source: no IL VAT, apply margin
         importer_price = 0.0
         max_price      = round(raw_price, 2)
-        base_price     = round(raw_price * 1.45, 2)
     elif brand_upper in KGM_BRANDS and embedded_vat > 0:
-        # Actual wholesale trade price — importer cost is real
         importer_price = round(raw_price / (1 + embedded_vat), 2)
         max_price      = round(importer_price * 1.18, 2)
-        base_price     = round(max_price * 1.45, 2)
     elif embedded_vat > 0:
-        # IL official importer, price includes VAT — normalize to IL retail reference
-        importer_price = 0.0
-        excl           = round(raw_price / (1 + embedded_vat), 2)
-        max_price      = round(excl * 1.18, 2)
-        base_price     = max_price  # show dealer retail as reference, no extra markup
+        importer_price = round(raw_price / (1 + embedded_vat), 2)
+        max_price      = round(importer_price * 1.18, 2)
     else:
-        # IL official importer, price excludes VAT
-        importer_price = 0.0
+        importer_price = round(raw_price, 2)
         max_price      = round(raw_price * 1.18, 2)
-        base_price     = max_price  # show dealer retail as reference, no extra markup
 
-    # Sanity assertion — catch misconfiguration
-    expected_base = base_price  # no longer always max * 1.45
-    if abs(base_price - expected_base) > 0.02:
-        raise ValueError(
-            f"compute_price_triple: base_price mismatch for {manufacturer}: "
-            f"got {base_price}, expected {expected_base}"
-        )
+    return importer_price, max_price
 
-    return importer_price, max_price, base_price
+
+def offer_cost(importer_price: float, max_price: float) -> float:
+    """The supplier offer's price: the ex-VAT importer cost, or - for an international source whose importer cost is 0 - the quoted
+    foreign price (max_price). It was `base_price` before 2026-11-18, i.e. the offer carried a retail/marked-up number as a cost."""
+    return importer_price if importer_price > 0 else max_price
 
 SUPPLIER_URL_MAP = {
     'ORA': 'https://ora-israel.co.il',
@@ -794,7 +785,7 @@ async def _create_rex_fitment_todo(conn, manufacturer: str, count: int, source: 
 async def fetch_manufacturer_rows(conn, manufacturer):
     rows = await conn.fetch(
         """SELECT id, sku, oem_number, name, name_he, category, base_price,
-                  is_active, manufacturer
+                  importer_price_ils, max_price_ils, is_active, manufacturer
            FROM parts_catalog WHERE LOWER(manufacturer)=LOWER($1)""",
         manufacturer,
     )
@@ -868,14 +859,12 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
             cat = categorize_on_ingest(name=f"{pdf_row.name or ''} {manufacturer}", name_he=pdf_row.name_he or "")
             metrics["category_counts"][cat] = metrics["category_counts"].get(cat, 0) + 1
             # Build specifications JSONB
-            # VAT logic — universal formula: base_price = max_price_ils × 1.45
-            #   max_price_ils = incl-VAT price (market price)
-            #   importer_price_ils = excl-VAT cost
+            # VAT logic: max_price_ils = incl-VAT price (market reference), importer_price_ils = excl-VAT cost; base_price: base_price_rule
             _raw_warranty = f"{pdf_row.warranty_years} years" if pdf_row.warranty_years else None
             warranty_months, warranty_source = _warranty_resolve(_raw_warranty)
             raw_price       = float(pdf_row.price or 0.0)
-            # MANDATORY VAT CHECK — use compute_price_triple (never inline)
-            importer_price, max_price, base_price = compute_price_triple(raw_price, manufacturer)
+            # MANDATORY VAT CHECK — use compute_prices (never inline)
+            importer_price, max_price = compute_prices(raw_price, manufacturer)
             embedded_vat = PRICES_INCL_VAT.get(manufacturer.upper(), 0.0)
             specs = json.dumps({
                 'vat_included':    embedded_vat > 0,
@@ -897,7 +886,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              "year_from":2020,"year_to":datetime.utcnow().year,
                              "source":"supplier_pdf_import"}],ensure_ascii=False),
                 pdf_row.oem_number[:100],
-                base_price,     # base_price = max_price_ils × 1.45   [11]
+                offer_cost(importer_price, max_price),  # supplier offer price (ex-VAT cost)  [11]
                 importer_price, # importer_price_ils = excl-VAT cost   [12]
                 max_price,      # max_price_ils = incl-VAT retail price [13]
                 pdf_row.available,  # [14]
@@ -915,11 +904,12 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
 
             if pdf_row.price is not None:
                 raw_price     = float(pdf_row.price)
-                # MANDATORY VAT CHECK — always use compute_price_triple
-                new_importer, new_max, new_base = compute_price_triple(raw_price, manufacturer)
-                db_base       = float(existing.get("base_price") or 0)
-                if abs(db_base - new_base) > 0.01:
-                    to_uprice.append((new_importer, new_max, new_base, rid))
+                # MANDATORY VAT CHECK — always use compute_prices
+                new_importer, new_max = compute_prices(raw_price, manufacturer)
+                db_importer   = float(existing.get("importer_price_ils") or 0)
+                db_max        = float(existing.get("max_price_ils") or 0)
+                if abs(db_max - new_max) > 0.01 or (new_importer > 0 and abs(db_importer - new_importer) > 0.01):
+                    to_uprice.append((new_importer, new_max, rid))
                     metrics["updated_price"] += 1
 
             if pdf_row.name and existing.get("name"):
@@ -944,6 +934,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
     if not dry_run:
         BATCH = 25
         inserted_ids = []
+        touched_part_ids: list = []
         for i in range(0, len(to_insert), BATCH):
             chunk = to_insert[i:i+BATCH]
             for row in chunk:
@@ -957,9 +948,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              min_price_ils,
                              created_at,updated_at)
                            VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,
-                                  $12,$13,$14,$15,'new',false,false,false,$16,NOW(),NOW())
+                                  0.0,$12,$13,$14,'new',false,false,false,$15,NOW(),NOW())
                            ON CONFLICT (sku) DO UPDATE SET
-                             base_price=EXCLUDED.base_price,
                              importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                              max_price_ils=EXCLUDED.max_price_ils,
                              min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
@@ -972,7 +962,7 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                              updated_at=NOW()
                            RETURNING id""",
                         row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-                        row[7], row[8], row[9], row[10], row[11], row[12], row[13], row[14], row[16]
+                        row[7], row[8], row[9], row[10], row[12], row[13], row[14], row[16]
                     )
                     if result:
                         inserted_ids.append((str(result['id']), row[10], row[11],
@@ -980,11 +970,12 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 except Exception as e:
                     log.debug(f'Insert skip: {e}')
         # Write supplier_parts for every inserted/updated part
-        # price in inserted_ids is importer_price_ils (excl. VAT) — correct cost basis
-        # calculate_customer_price_from_ils() will apply × 1.45 margin + IL VAT on top
+        # price in inserted_ids is the offer cost (importer_price_ils, ex-VAT; the foreign price for international brands) -
+        # NEVER base_price (it used to be, so an offer carried a retail/marked-up number as its cost)
         for pid, oem, price, warranty_months, warranty_source, available, sid, surl in inserted_ids:
             await _upsert_supplier_part(conn, pid, sid, oem, price,
                                         warranty_months, warranty_source, available, surl)
+            touched_part_ids.append(pid)
         # Delegate fitment to REX
         if inserted_ids:
             await _create_rex_fitment_todo(conn, manufacturer, len(inserted_ids),
@@ -992,9 +983,10 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
         if to_uprice:
             await conn.executemany(
                 """UPDATE parts_catalog
-                   SET importer_price_ils=$1, max_price_ils=$2, base_price=$3, updated_at=NOW()
-                   WHERE id=$4::uuid""",
+                   SET importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END, max_price_ils=$2, updated_at=NOW()
+                   WHERE id=$3::uuid""",
                 to_uprice)
+            touched_part_ids.extend(t[2] for t in to_uprice)
         if to_uname:
             await conn.executemany(
                 "UPDATE parts_catalog SET name=$1,name_he=$2,updated_at=NOW() WHERE id=$3::uuid", to_uname)
@@ -1011,6 +1003,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 "UPDATE parts_catalog SET is_active=TRUE,updated_at=NOW() WHERE id=ANY($1::uuid[])", to_react)
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    if not dry_run:
+        metrics["base_price"] = await base_price_rule.apply_and_report(conn, touched_part_ids, f"supplier_pdf_import:{manufacturer}")   # ONE base_price rule
     return metrics
 
 

@@ -32,7 +32,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - champion_motors_parts.json prices are ILS INCL. 18% VAT (consumer price)
-  - Store as-is in base_price; max_price_ils = same
+  - base_price: NOT written here (base_price_rule.apply_to_parts); max_price_ils = the consumer price
 
 Confidence tier: 0.95 (official Champion Motors catalog scrape)
 
@@ -46,6 +46,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 import asyncio, json, os, re, sys, uuid
 from pathlib import Path
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 from variant_identity import catalog_part_type
 import urllib.parse as up
@@ -142,12 +143,11 @@ async def run_import():
                             is_active,aftermarket_tier,specifications,
                             needs_oem_lookup,master_enriched,updated_at
                         ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                                 ROUND($11::numeric/1.18*1.45,2),ROUND($11::numeric/1.18,2),$11,$11,
+                                 0.0,ROUND($11::numeric/1.18,2),$11,$11,
                                  $12,$13,$14::jsonb,$15,$16,NOW())
                         ON CONFLICT(sku) DO UPDATE SET
                             oem_number=EXCLUDED.oem_number,
                             name_he=EXCLUDED.name_he,
-                            base_price=CASE WHEN EXCLUDED.base_price>0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                             importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             min_price_ils=CASE WHEN EXCLUDED.min_price_ils>0 THEN EXCLUDED.min_price_ils ELSE parts_catalog.min_price_ils END,
                             max_price_ils=CASE WHEN EXCLUDED.max_price_ils>0 THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
@@ -157,7 +157,7 @@ async def run_import():
                     row["id"],row["sku"],row["name"],row["name_he"],
                     row["manufacturer"],row["manufacturer_id"],
                     row["oem_number"],row["category"],row["part_type"],
-                    row["part_condition"],row["base_price"],True,
+                    row["part_condition"],row["consumer_price_ils"],True,
                     row["aftermarket_tier"],row["specifications"],False,False)
                     stats["inserted"] += 1
                     # Fitment: insert model from source data (model is a specific submodel e.g. 'Z4 SDRIVE 3.5I')
@@ -218,7 +218,7 @@ async def run_import():
             "category": categorise(name_he, part_type_he),
             "part_type": catalog_part_type("original" if is_orig else "oe_equivalent"),
             "part_condition": "new",
-            "base_price": raw_part.get("price_ils") or 0.0,
+            "consumer_price_ils": raw_part.get("price_ils") or 0.0,   # VAT-inclusive consumer price: importer cost/min/max derive from it
             "aftermarket_tier": None if is_orig else "OE_equivalent",
             "warranty_months": _wmonths,
             "warranty_source": _wsource,
@@ -245,6 +245,7 @@ async def run_import():
 
     # Upsert supplier_parts for all successfully-inserted CM parts
     sp_count = 0
+    touched_part_ids = []
     # Pull warranty from stored specs so each row carries the supplier-stated value.
     cm_parts = await conn.fetch(
         "SELECT id, oem_number, importer_price_ils, specifications FROM parts_catalog "
@@ -274,9 +275,11 @@ async def run_import():
                  str(part['oem_number'] or ''), float(part['importer_price_ils'] or 0),  # ex-VAT COST, never base_price (#129)
                  _wm, _ws, cm_url)
             sp_count += 1
+            touched_part_ids.append(str(part['id']))
         except Exception:
             pass
     print(f"[CM] supplier_parts upserted: {sp_count}")
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "import_champion_motors")   # ONE base_price rule (after the offers exist)
 
     # REX todo for missing fitment
     try:

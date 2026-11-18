@@ -8,6 +8,7 @@ Usage:
 """
 import asyncio, json, os, sys, time
 import asyncpg
+import base_price_rule
 from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
 
@@ -28,7 +29,6 @@ def prepare_part(p: dict):
 
     cost    = round(price_gbp * GBP_ILS, 2)
     retail  = round(cost * (1 + VAT), 2)
-    selling = round(cost * 1.45, 2)
     sku     = f"JAG-{oem[:58]}"
     _wmonths, _wsource = _warranty_resolve(None)
     cat     = categorize_on_ingest(name=title)
@@ -38,7 +38,7 @@ def prepare_part(p: dict):
         "warranty_months": _wmonths,
         "category_hint": "oe_equivalent",
     })
-    return (oem, part_num, title, selling, cost, retail, sku, spec, cat)
+    return (oem, part_num, title, cost, retail, sku, spec, cat)
 
 
 async def run():
@@ -50,7 +50,7 @@ async def run():
     await conn.execute("""
         CREATE TEMP TABLE _jag_prices (
             oem TEXT, part_num TEXT, title TEXT,
-            selling NUMERIC, cost NUMERIC, retail NUMERIC,
+            cost NUMERIC, retail NUMERIC,
             sku TEXT, spec TEXT, category TEXT
         )
     """)
@@ -73,12 +73,12 @@ async def run():
                 valid += 1
             if len(batch) >= BATCH:
                 await conn.executemany(
-                    "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", batch
+                    "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", batch
                 )
                 batch = []
     if batch:
         await conn.executemany(
-            "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", batch
+            "INSERT INTO _jag_prices VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", batch
         )
 
     print(f"Loaded {total_in:,} NDJSON lines, {valid:,} valid into temp table ({time.monotonic()-t0:.1f}s)")
@@ -88,7 +88,6 @@ async def run():
         UPDATE parts_catalog pc SET
             importer_price_ils = CASE WHEN pc.importer_price_ils IS NULL OR pc.importer_price_ils=0 THEN j.cost ELSE pc.importer_price_ils END,
             max_price_ils      = CASE WHEN pc.max_price_ils IS NULL OR pc.max_price_ils=0 THEN j.retail ELSE pc.max_price_ils END,
-            base_price         = CASE WHEN pc.base_price IS NULL OR pc.base_price=0 THEN j.selling ELSE pc.base_price END,
             specifications     = COALESCE(pc.specifications,'{}')::jsonb || j.spec::jsonb,
             updated_at         = NOW()
         FROM _jag_prices j
@@ -102,7 +101,6 @@ async def run():
         UPDATE parts_catalog pc SET
             importer_price_ils = CASE WHEN pc.importer_price_ils IS NULL OR pc.importer_price_ils=0 THEN j.cost ELSE pc.importer_price_ils END,
             max_price_ils      = CASE WHEN pc.max_price_ils IS NULL OR pc.max_price_ils=0 THEN j.retail ELSE pc.max_price_ils END,
-            base_price         = CASE WHEN pc.base_price IS NULL OR pc.base_price=0 THEN j.selling ELSE pc.base_price END,
             specifications     = COALESCE(pc.specifications,'{}')::jsonb || j.spec::jsonb,
             updated_at         = NOW()
         FROM _jag_prices j
@@ -121,7 +119,7 @@ async def run():
             specifications, created_at, updated_at
         )
         SELECT gen_random_uuid(), j.sku, j.oem, j.title, j.title, 'Jaguar', j.category,
-               j.selling, j.cost, j.retail, j.cost,
+               0.0, j.cost, j.retail, j.cost,
                'oe_equivalent', 'new', true, true, false,
                j.spec::jsonb, NOW(), NOW()
         FROM _jag_prices j
@@ -132,6 +130,11 @@ async def run():
     ins = int(r3.split()[-1])
     print(f"Inserted new: {ins:,}")
 
+    # ONE base_price rule over every Jaguar part this file priced (matched by oem_number, part_number or sku), before the temp table goes
+    touched = [r[0] for r in await conn.fetch("""
+        SELECT DISTINCT pc.id::text FROM parts_catalog pc JOIN _jag_prices j
+          ON pc.manufacturer = 'Jaguar' AND pc.is_active AND (pc.oem_number = j.oem OR pc.oem_number = j.part_num OR pc.sku = j.sku)""")]
+    await base_price_rule.apply_and_report(conn, touched, "jaguar_batch_import")
     await conn.execute("DROP TABLE _jag_prices")
 
     r = await conn.fetchrow(

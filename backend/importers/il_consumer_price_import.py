@@ -14,7 +14,7 @@ whether VAT is included (BDV's 'recommended consumer price' EXCLUDES it; Champio
 --vat-basis inclusive|exclusive AND --evidence "<where the source states it>"; without both the script refuses to run.
   inclusive: cost = price / (1 + VAT_RATE); max_price_ils = price
   exclusive: cost = price;                  max_price_ils = price * (1 + VAT_RATE)
-  base_price = cost * MARGIN in both cases (margin once). VAT_RATE / MARGIN come from price_policy.
+  base_price = NOT written here (base_price_rule.apply_to_parts). VAT_RATE comes from price_policy.
 
 Columns: 0 OEM (מספר קטלוגי) | 1 description | 2 type | 3 stock | 4 consumer price ILS | 5 warranty | 6 vehicle model
 
@@ -35,18 +35,19 @@ except ImportError:
     print("pip install openpyxl"); sys.exit(1)
 
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
-from price_policy import VAT_RATE as VAT, MARGIN
+from price_policy import VAT_RATE as VAT
+import base_price_rule
 
 
 def price_fields(price, vat_basis):
-    """The ONLY rule of this importer (tested): returns (cost_ex_vat, consumer_reference, base_price)."""
+    """The ONLY rule of this importer (tested): returns (cost_ex_vat, consumer_reference); base_price is base_price_rule's."""
     if vat_basis == "inclusive":
         cost, retail = round(price / (1 + VAT), 2), round(price, 2)
     elif vat_basis == "exclusive":
         cost, retail = round(price, 2), round(price * (1 + VAT), 2)
     else:
         raise ValueError("vat_basis must be 'inclusive' or 'exclusive' - it is never assumed")
-    return cost, retail, round(cost * MARGIN, 2)
+    return cost, retail
 
 def load_xlsx(path, brand, vat_basis):
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -123,7 +124,7 @@ def load_xlsx(path, brand, vat_basis):
         if price is None or price <= 0:
             continue
 
-        cost, retail, selling = price_fields(price, vat_basis)
+        cost, retail = price_fields(price, vat_basis)
 
         parts.append({
             "source_price": round(price, 2),
@@ -131,7 +132,6 @@ def load_xlsx(path, brand, vat_basis):
             "name": name,
             "cost": cost,
             "retail": retail,
-            "selling": selling,
         })
 
     wb.close()
@@ -147,11 +147,11 @@ async def run(brand, xlsx_path, vat_basis, evidence):
     conn = await asyncpg.connect(DB)
     t0 = time.monotonic()
     updated = inserted = skipped = 0
+    touched_part_ids = []
     for p in parts:
         oem     = p["oem"]
         cost    = p["cost"]
         retail  = p["retail"]
-        selling = p["selling"]
         spec = json.dumps({
             "importer": f"{brand} IL official (consumer price)",
             "source": os.path.basename(xlsx_path),
@@ -159,18 +159,19 @@ async def run(brand, xlsx_path, vat_basis, evidence):
             "vat_rate": VAT, "vat_included": vat_basis == "inclusive",
         }, ensure_ascii=False)
 
-        res = await conn.execute("""
+        res = await conn.fetch("""
             UPDATE parts_catalog SET
                 importer_price_ils = $1,
                 max_price_ils      = $2,
-                base_price         = $3,
-                specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                 updated_at         = NOW()
-            WHERE oem_number = $5 AND manufacturer = $6 AND is_active = true
-        """, cost, retail, selling, spec, oem, brand)
-        n = int(res.split()[-1])
+            WHERE oem_number = $4 AND manufacturer = $5 AND is_active = true
+            RETURNING id::text
+        """, cost, retail, spec, oem, brand)
+        n = len(res)
         if n > 0:
             updated += n
+            touched_part_ids.extend(r[0] for r in res)
         else:
             try:
                 await conn.execute("""
@@ -181,24 +182,25 @@ async def run(brand, xlsx_path, vat_basis, evidence):
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(), $1, $1, $2, $2, $3, $8,
-                        $4, $5, $6, $6,
+                        gen_random_uuid(), $1, $1, $2, $2, $3, $7,
+                        0.0, $4, $5, $5,
                         'original', 'new', true,
-                        true, false, $7::jsonb,
+                        true, false, $6::jsonb,
                         NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils      = EXCLUDED.max_price_ils,
-                        base_price         = EXCLUDED.base_price,
                         specifications     = EXCLUDED.specifications,
                         updated_at         = NOW()
-                """, oem, p["name"], brand, selling, cost, retail, spec,
+                """, oem, p["name"], brand, cost, retail, spec,
                     categorize_on_ingest(name=p["name"]))
                 inserted += 1
+                touched_part_ids.append(await conn.fetchval("SELECT id::text FROM parts_catalog WHERE sku = $1", oem))
             except Exception:
                 skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"il_consumer_price_import:{brand}")
     elapsed = time.monotonic() - t0
     print(f"[{brand}] Done {elapsed:.0f}s: updated={updated:,} inserted={inserted:,} skipped={skipped:,}")
 

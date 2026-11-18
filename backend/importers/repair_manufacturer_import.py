@@ -98,7 +98,7 @@ class SourceRow:
     key: str
     name: str | None
     category: str | None
-    base_price: float | None
+    source_price: float | None   # the sheet's price column: NO stated VAT basis / supplier -> provenance only, never a base_price
     source_name: str
     source_file: str
 
@@ -241,7 +241,7 @@ def load_source_rows(manufacturer: str) -> tuple[dict[str, SourceRow], dict[str,
                 key=key,
                 name=normalize_name(row.get(name_col)) if name_col else None,
                 category=clean(row.get(category_col)) if category_col else None,
-                base_price=parse_price(row.get(price_col)) if price_col else None,
+                source_price=parse_price(row.get(price_col)) if price_col else None,
                 source_name=source_name,
                 source_file=str(source_path),
             )
@@ -320,7 +320,7 @@ async def insert_missing_keys(
 
         name = src.name or f"{manufacturer.upper()} PART {key}"
         category = src.category or categorize_on_ingest(name=f"{name} {manufacturer}")
-        base_price = src.base_price if src.base_price is not None else 0.0
+        source_price = src.source_price if src.source_price is not None else 0.0
 
         to_insert.append(
             (
@@ -335,6 +335,7 @@ async def insert_missing_keys(
                     {
                         "source": "repair_manufacturer_import",
                         "source_file": src.source_file,
+                        **({"source_price_ils": float(source_price), "source_price_basis": "unverified"} if source_price > 0 else {}),
                         "reconciled_at": datetime.utcnow().isoformat(),
                     },
                     ensure_ascii=False,
@@ -352,7 +353,6 @@ async def insert_missing_keys(
                     ensure_ascii=False,
                 ),
                 key,
-                float(base_price),
             )
         )
         inserted_keys.append(key)
@@ -370,7 +370,7 @@ async def insert_missing_keys(
         VALUES
             ($1, $2, $3, $4, $5, $6,
              $7, $8::jsonb, $9::jsonb, $10,
-             $11, 'new', false, false,
+             0.0, 'new', false, false,
              false, true, NOW(), NOW())
         ON CONFLICT (sku) DO NOTHING
         """,

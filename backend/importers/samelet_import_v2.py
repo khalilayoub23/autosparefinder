@@ -14,7 +14,7 @@ Process:
 
 Data Imported / Modified:
   - parts_catalog: sku, name, name_he, category, manufacturer, manufacturer_id,
-                   part_type, base_price (IL retail incl. VAT), importer_price_ils (0 — no trade cost),
+                   part_type, importer_price_ils (0 — no trade cost),
                    max_price_ils, oem_number, specifications (JSONB), is_active
   - supplier_parts: supplier_id, part_id, supplier_sku, price_ils, availability,
                     is_available, warranty_months, estimated_delivery_days, supplier_url
@@ -39,7 +39,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - samelet.com returns PriceNoVat (excl.) and PriceWithVat (incl. 18%)
-  - Store: cost=PriceWithVat/1.18, base_price=cost×1.45, importer_price_ils=cost, max_price_ils=PriceWithVat
+  - Store: cost=PriceWithVat/1.18, importer_price_ils=cost, max_price_ils=PriceWithVat; base_price via base_price_rule.apply_to_parts
   - These are official IL importer retail prices (shown to customers as OEM reference, no extra markup)
 
 Confidence tier: 1.00 (Official Israeli importer price data)
@@ -49,6 +49,7 @@ Last Updated: 2026-06-01
 """
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, requests, time, re, os, string, json, uuid, sys
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 from warranty_policy import resolve as _warranty_resolve
 from variant_identity import variant_key
@@ -201,16 +202,14 @@ _CATALOG_UPSERT = """
         oem_number, specifications, aftermarket_tier, is_active,
         part_condition, needs_oem_lookup, master_enriched,
         created_at, updated_at)
-    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,$8,$9,$10,$13,$11,$12::jsonb,$14,TRUE,
-           'new',$15,FALSE,NOW(),NOW())
+    VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6::uuid,$7,0.0,$8,$9,$12,$10,$11::jsonb,$13,TRUE,
+           'new',$14,FALSE,NOW(),NOW())
     ON CONFLICT(sku) DO UPDATE SET
         name=EXCLUDED.name,
         name_he=COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
         category=CASE WHEN parts_catalog.category IS NULL OR parts_catalog.category IN ('', 'כללי')
                       THEN EXCLUDED.category ELSE parts_catalog.category END,
         manufacturer=EXCLUDED.manufacturer,
-        base_price=CASE WHEN EXCLUDED.base_price > 0 THEN EXCLUDED.base_price
-                        ELSE parts_catalog.base_price END,
         importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
         max_price_ils=CASE WHEN EXCLUDED.max_price_ils > 0
                           THEN EXCLUDED.max_price_ils
@@ -223,7 +222,7 @@ _CATALOG_UPSERT = """
                         || EXCLUDED.specifications::jsonb,
         part_type=COALESCE(NULLIF(parts_catalog.part_type, ''), EXCLUDED.part_type),
         updated_at=NOW()
-    RETURNING id, oem_number, base_price, (xmax = 0) AS inserted
+    RETURNING id, oem_number, (xmax = 0) AS inserted
 """
 
 async def import_brand(conn, slug, brand_name, prefix):
@@ -271,7 +270,7 @@ async def import_brand(conn, slug, brand_name, prefix):
     _ph = PriceHistoryTracker(conn, "samelet_import_v2"); await _ph.snapshot(supplier_id)
     ins = err = 0
     parts_new = parts_upd = 0
-    new_part_ids = []
+    upserted_part_ids = []
     batch = []
     for mid, p in parts_dict.items():
         try:
@@ -287,9 +286,8 @@ async def import_brand(conn, slug, brand_name, prefix):
                 il_retail = float(p.get("PriceWithVat","0") or "0")  # consumer retail incl. VAT
             except:
                 il_retail = 0.0
-            # CLAUDE.md formula: cost = price/1.18, base_price = cost*1.45, max_price = price
+            # cost = price/1.18, max_price = price; base_price is NOT written here (base_price_rule.apply_to_parts, docs/PRICE_POLICY.md)
             cost = round(il_retail / 1.18, 2) if il_retail > 0 else 0.0
-            base_price_val = round(cost * 1.45, 2) if cost > 0 else 0.0
             max_price = il_retail
             category  = classify_part(name_en, name_he)
             mat_type = p.get("MaterialType", "01")
@@ -313,7 +311,7 @@ async def import_brand(conn, slug, brand_name, prefix):
             }, ensure_ascii=False)
             tier = 'OE_equivalent' if part_type == 'aftermarket' else None
             batch.append((sku, name, name_he, category, brand_name, manufacturer_id,
-                          catalog_part_type, base_price_val, cost, max_price, mid, specs,
+                          catalog_part_type, cost, max_price, mid, specs,
                           max_price, tier, name_missing))
         except Exception as e:
             err += 1
@@ -328,7 +326,7 @@ async def import_brand(conn, slug, brand_name, prefix):
             async with conn.transaction():
                 result = await conn.fetchrow(_CATALOG_UPSERT, *row)
             if result and supplier_id:
-                new_part_ids.append((str(result["id"]), row[10], row[7], supplier_id))
+                upserted_part_ids.append(str(result["id"]))
             if result and result["inserted"]:
                 parts_new += 1
             else:
@@ -376,6 +374,9 @@ async def import_brand(conn, slug, brand_name, prefix):
                 sp_err += 1
                 if sp_err <= 5: print(f"  [ERR] supplier_parts {part['oem_number']}: {type(e3).__name__}: {str(e3)[:120]}", flush=True)
         print(f"  {brand_name}: supplier_parts upserted={sp_count} (new={sp_new}, updated={sp_count - sp_new}) errors={sp_err}")
+
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, upserted_part_ids, f"samelet_import_v2:{brand_name}")
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
 

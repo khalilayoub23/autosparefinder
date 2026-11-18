@@ -3,7 +3,7 @@
 Lexus Official Price List PDF Importer (Union Motors / יוניון מוטורס בע"מ)
 ==========================================================================
 Parses the official Union Motors Lexus parts price list PDF and imports:
-  - ILS prices (excl. VAT) → importer_price_ils, max_price_ils, base_price
+  - ILS prices (excl. VAT) → importer_price_ils, max_price_ils (base_price: base_price_rule)
   - Vehicle fitment (מתאים לדגמים column) → part_vehicle_fitment table
 
 PDF column structure (pdfplumber reads RTL columns left→right, text is reversed):
@@ -17,7 +17,7 @@ PDF column structure (pdfplumber reads RTL columns left→right, text is reverse
 Pricing:
   importer_price_ils = price_excl_vat   (official Union Motors list price)
   max_price_ils      = price * 1.17     (incl. 17% VAT)
-  base_price         = max_price_ils    (show official retail as reference)
+  base_price         = NOT written here (base_price_rule.apply_to_parts); retail stays in max_price_ils
 
 Usage:
   python3 lexus_pdf_import.py [--dry-run]
@@ -31,6 +31,7 @@ import sys
 import json
 import time
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import pdfplumber
 
@@ -256,12 +257,12 @@ async def run(dry_run: bool = False):
         inserted_new = 0
         inserted_fitment = 0
         errors = 0
+        touched_part_ids = []
 
         for i, r in enumerate(rows):
             oem = r["oem"]
             price_excl = r["price"]
             price_incl = round(price_excl * (1 + VAT), 2)  # incl. 17% VAT
-            base_price = round(price_excl * 1.45, 2)       # 45% margin over cost
 
             _wmonths, _wsource = _warranty_resolve(None)  # Lexus PDF has no warranty column
             vehicle_models_str = ", ".join(r["models"]) if r.get("models") else ""
@@ -285,29 +286,27 @@ async def run(dry_run: bool = False):
                     # Try update by oem_number match
                     res = await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
+                            importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END,
                             max_price_ils      = $2,
-                            base_price         = CASE WHEN $3 > 0 THEN $3 ELSE base_price END,
                             is_active          = true,
-                            specifications     = COALESCE(specifications, '{}')::jsonb || $4::jsonb,
+                            specifications     = COALESCE(specifications, '{}')::jsonb || $3::jsonb,
                             updated_at         = NOW()
-                        WHERE oem_number = $5 AND manufacturer = 'Lexus'
-                    """, price_excl, price_incl, base_price, specs, oem)
+                        WHERE oem_number = $4 AND manufacturer = 'Lexus'
+                    """, price_excl, price_incl, specs, oem)
                     n = int(res.split()[-1])
 
                     if n == 0:
                         # Try matching by sku
                         res2 = await conn.execute("""
                             UPDATE parts_catalog SET
-                                importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
+                                importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END,
                                 max_price_ils      = $2,
-                                base_price         = CASE WHEN $3 > 0 THEN $3 ELSE base_price END,
-                                oem_number         = $5,
+                                oem_number         = $4,
                                 is_active          = true,
-                                specifications     = COALESCE(specifications, '{}')::jsonb || $4::jsonb,
+                                specifications     = COALESCE(specifications, '{}')::jsonb || $3::jsonb,
                                 updated_at         = NOW()
-                            WHERE sku = $5 AND manufacturer = 'Lexus'
-                        """, price_excl, price_incl, base_price, specs, oem)
+                            WHERE sku = $4 AND manufacturer = 'Lexus'
+                        """, price_excl, price_incl, specs, oem)
                         n = int(res2.split()[-1])
 
                     if n > 0:
@@ -326,16 +325,23 @@ async def run(dry_run: bool = False):
                             ) VALUES (
                                 gen_random_uuid(), $1, $1, $2, $2,
                                 'Lexus', $3::uuid,
-                                $8, 'new', 'oem',
-                                $4, $5, $4, $7,
+                                $7, 'new', 'oem',
+                                $4, $5, $4, 0.0,
                                 $6::jsonb, true,
                                 true, false,
                                 NOW(), NOW()
                             ) ON CONFLICT (sku) DO NOTHING
                         """, oem, r["desc"], mfr_id,
-                            price_excl, price_incl, specs, base_price,
+                            price_excl, price_incl, specs,
                             categorize_on_ingest(name=r["desc"]))
                         inserted_new += 1
+
+                    # Resolve THIS row's part (the supplier offer + fitment below used to reuse the PREVIOUS row's part_id
+                    # whenever the row had no models) and queue it for the base_price rule.
+                    part_id = await conn.fetchval(
+                        "SELECT id FROM parts_catalog WHERE manufacturer='Lexus' AND (oem_number=$1 OR sku=$1) LIMIT 1", oem)
+                    if part_id:
+                        touched_part_ids.append(str(part_id))
 
                     # Now insert fitment for matched parts
                     if r["models"]:
@@ -403,6 +409,8 @@ async def run(dry_run: bool = False):
                 elapsed = time.monotonic() - t0
                 print(f"  {i+1}/{len(rows)} processed | price_upd={updated_price} ins={inserted_new} "
                       f"fitment={inserted_fitment} err={errors} [{elapsed:.0f}s]")
+
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "lexus_pdf_import")   # ONE base_price rule (after the offers exist)
 
         # Final counts
         after_price = await conn.fetchval(

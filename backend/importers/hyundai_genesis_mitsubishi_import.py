@@ -9,10 +9,11 @@ PDF format (all three brands):
 Prices = מחיר לצרכן (consumer retail incl. 18% VAT):
   importer_price_ils = price / 1.18
   max_price_ils      = price
-  base_price         = importer_price_ils * 1.45
+  base_price         = NOT written here (base_price_rule.apply_to_parts)
 """
 import asyncio, json, os, re, sys, time, asyncpg
 import fitz
+import base_price_rule
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
@@ -98,22 +99,23 @@ async def update_db(conn, brand: str, parts: list, importer: str) -> int:
     }, ensure_ascii=False)
 
     updated = not_found = errors = 0
+    touched_part_ids = []
     for p in parts:
         retail = p['price']
         cost = round(retail / (1 + VAT), 2)
-        selling = round(cost * 1.45, 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils = $1,
                     max_price_ils      = $2,
-                    base_price         = $3,
-                    specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                    specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at         = NOW()
-                WHERE oem_number = $5 AND manufacturer = $6 AND is_active = true
-            """, cost, retail, selling, spec, p['oem'], brand)
-            n = int(res.split()[-1])
+                WHERE oem_number = $4 AND manufacturer = $5 AND is_active = true
+                RETURNING id::text
+            """, cost, retail, spec, p['oem'], brand)
+            n = len(res)
             updated += n
+            touched_part_ids.extend(r[0] for r in res)
             if n == 0:
                 not_found += 1
         except Exception as e:
@@ -121,6 +123,7 @@ async def update_db(conn, brand: str, parts: list, importer: str) -> int:
             if errors <= 3:
                 print(f"  err [{p['oem']}]: {e}")
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"hyundai_genesis_mitsubishi_import:{brand}")
     pct = 100 * updated // max(len(parts), 1)
     print(f"  [{brand}] updated={updated:,} not_found={not_found:,} errors={errors} match={pct}%")
     return updated

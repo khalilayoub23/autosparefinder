@@ -24,7 +24,7 @@ PRICING (verified against the real Fox Factory sheet, 2026-07-28):
          margin off it. `list_price` is a US MSRP/MAP, NOT an Israeli consumer price, so (#127) it never
          populates `max_price_ils` (the Israeli consumer reference incl. 18% VAT; foreign sources never write it):
              cost  = list_price_ils / 1.18      (reference cost)
-             base  = cost * 1.45                (45% margin — uniform policy)
+             base  = NOT written here (base_price_rule.apply_to_parts)
          USD→ILS uses the live rate (currency_rate.get_usd_to_ils_rate).
 
 Process:
@@ -47,6 +47,7 @@ import sys
 from typing import Dict, List, Optional
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 from category_map import categorize_on_ingest
@@ -58,7 +59,6 @@ from warranty_policy import resolve as _warranty_resolve
 DB = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 SUPPLIER_NAME = "ASAP Network"
 VAT = 0.18
-MARGIN = 1.45
 
 # Header signatures — a fitment sheet has make/model/year, a product sheet has a price.
 _FITMENT_COLS = {"make", "model"}
@@ -149,6 +149,7 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
     _ph = PriceHistoryTracker(conn, "asap_import"); await _ph.snapshot(supplier_id)
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "priced": 0, "images": 0}
     brand_cache: Dict[str, str] = {}
+    touched_part_ids: List[str] = []
 
     for r in rows:
         sku = _f(r, "sku")
@@ -184,10 +185,9 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
         if consumer_usd > 0:
             max_ils = round(consumer_usd * usd_ils, 2)
             cost_ils = round(max_ils / (1 + VAT), 2)
-            base_ils = round(cost_ils * MARGIN, 2)
             stats["priced"] += 1
         else:
-            max_ils = cost_ils = base_ils = 0.0
+            max_ils = cost_ils = 0.0
 
         category = categorize_on_ingest(name=title)
         manufacturer_id = await _ensure_brand(conn, brand, brand_cache)
@@ -209,15 +209,14 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                             barcode = COALESCE($6, barcode),
                             category = CASE WHEN category IN ('כללי','general','service-general','accessories')
                                             THEN $7 ELSE category END,
-                            base_price    = CASE WHEN $8 > 0 THEN $8 ELSE base_price END,
-                            importer_price_ils = CASE WHEN $9 > 0
-                                                 THEN $9 ELSE importer_price_ils END,
+                            importer_price_ils = CASE WHEN $8::numeric > 0
+                                                 THEN $8::numeric ELSE importer_price_ils END,
                             is_active = TRUE,
                             updated_at = NOW()
                         WHERE id = $1
                         """,
                         part_id, title[:500], desc, brand[:120], oem, upc,
-                        category, base_ils, cost_ils,
+                        category, cost_ils,
                     )
                     stats["updated"] += 1
                 else:
@@ -231,12 +230,12 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                              base_price, importer_price_ils,
                              is_active, created_at, updated_at)
                         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::uuid, $6, $7, $8,
-                                'new', 'aftermarket', FALSE, FALSE, FALSE, $11::jsonb,
-                                $9, $10, TRUE, NOW(), NOW())
+                                'new', 'aftermarket', FALSE, FALSE, FALSE, $10::jsonb,
+                                0.0, $9, TRUE, NOW(), NOW())
                         RETURNING id
                         """,
                         sku, title[:500], desc, brand[:120], manufacturer_id,
-                        oem, upc, category, base_ils, cost_ils,
+                        oem, upc, category, cost_ils,
                         json.dumps({"source": "asap_network", "brand": brand,
                                     "sheet_brand": brand_name,
                                     "discontinued": discontinued}),
@@ -266,6 +265,8 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                                            _f(r, 'warranty')),
                     )
 
+                touched_part_ids.append(str(part_id))
+
                 img = _f(r, "images").split("|")[0].split(",")[0].strip()
                 if img.startswith("http"):
                     # Feeds the thumbnail pipeline (it scans parts lacking a
@@ -286,6 +287,7 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
             print(f"  [row error] {sku}: {str(exc)[:150]}", flush=True)
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    stats["base_price"] = await base_price_rule.apply_and_report(conn, touched_part_ids, "asap_import")   # ONE base_price rule (after the offers exist)
     return stats
 
 

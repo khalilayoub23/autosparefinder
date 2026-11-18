@@ -17,7 +17,7 @@ Response table columns:
 
 IMPORTANT: Prices are already ex-VAT (no 1.18 division needed for importer_price_ils)
   importer_price_ils = price (already ex-VAT)
-  base_price         = price × 1.45
+  base_price         = NOT written here (the import step runs base_price_rule.apply_to_parts)
   max_price_ils      = price × 1.18  (consumer reference with VAT)
 
 Run inside backend container:

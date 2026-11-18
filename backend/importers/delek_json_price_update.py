@@ -5,6 +5,7 @@ Matches by oem_number. Skips cross-contaminated model field (known scraping arti
 Sources: jlr_parts.json, ford_parts.json, mini_parts.json, land_rover_parts.json
 """
 import asyncio, json, os, sys, time, asyncpg
+import base_price_rule
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
@@ -50,35 +51,39 @@ async def update_from_json(conn, path, manufacturers, importer, price_field, ret
     updated = 0
     not_found = 0
     errors = 0
+    touched_part_ids = []
     spec_patch = json.dumps({"importer": importer, "vat_included": False, "vat_rate": VAT}, ensure_ascii=False)
 
     for oem, prices in deduped.items():
         try:
             for mfr in manufacturers:
-                res = await conn.execute("""
+                res = await conn.fetch("""
                     UPDATE parts_catalog SET
                         importer_price_ils = $1,
                         max_price_ils      = $2,
-                        base_price         = $2,
                         specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                         updated_at         = NOW()
                     WHERE oem_number = $4 AND manufacturer = $5 AND is_active = true
+                    RETURNING id::text
                 """, prices['cost'], prices['retail'], spec_patch, oem, mfr)
-                n = int(res.split()[-1])
+                n = len(res)
                 updated += n
+                touched_part_ids.extend(r_[0] for r_ in res)
                 if n == 0 and mfr == manufacturers[-1]:
                     # Also try SKU match (JLR-AJ...)
                     for prefix in ('JLR-', 'FORD-', 'MINI-', 'CM-'):
-                        res2 = await conn.execute("""
+                        res2 = await conn.fetch("""
                             UPDATE parts_catalog SET
-                                importer_price_ils = $1, max_price_ils = $2, base_price = $2,
+                                importer_price_ils = $1, max_price_ils = $2,
                                 specifications = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                                 updated_at = NOW()
                             WHERE sku = $4 AND is_active = true
+                            RETURNING id::text
                         """, prices['cost'], prices['retail'], spec_patch, f"{prefix}{oem}")
-                        n2 = int(res2.split()[-1])
+                        n2 = len(res2)
                         if n2 > 0:
                             updated += n2
+                            touched_part_ids.extend(r_[0] for r_ in res2)
                             break
                     else:
                         not_found += 1
@@ -88,6 +93,7 @@ async def update_from_json(conn, path, manufacturers, importer, price_field, ret
                 print(f"  error [{oem}]: {e}")
 
     print(f"  updated={updated:,} not_found={not_found:,} errors={errors}")
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"delek_json_price_update:{importer}")   # ONE base_price rule
     return updated
 
 

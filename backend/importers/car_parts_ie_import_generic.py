@@ -488,11 +488,8 @@ async def import_file(
                     if image_skipped <= _SKIP_LOG_LIMIT:
                         print(f"  [warn] image skip {sku_raw}: {type(_ie).__name__}: {str(_ie)[:120].replace(chr(10), ' ').replace('{', '(').replace('}', ')')}", flush=True)
 
-        try:   # ONE base_price rule (base_price_rule.py == the maintenance tasks); a failure is loud, never silent
-            bp = await base_price_rule.apply_to_parts(conn, touched_part_ids)
-        except Exception as _be:
-            bp = {"error": f"{type(_be).__name__}: {str(_be)[:160]}"}
-            print(f"ERROR car_parts_ie_import: base_price rule failed for {len(touched_part_ids)} parts: {bp['error']}", file=sys.stderr, flush=True)
+        # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+        bp = await base_price_rule.apply_and_report(conn, touched_part_ids, "car_parts_ie_import_generic", verbose=False)
 
         if parts_skipped:
             # LOUD, data behaviour unchanged (exit code stays 0, queue status untouched): a model whose parts could not be written

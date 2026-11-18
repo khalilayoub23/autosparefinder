@@ -46,7 +46,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - Delek JSON files: prices from price_ils_vat (incl. VAT) or price_ils (excl. VAT)
-  - If price_ils_vat present: base_price = price_ils_vat / 1.18; max_price_ils = price_ils_vat
+  - If price_ils_vat present: cost = price_ils_vat / 1.18; max_price_ils = price_ils_vat; base_price via base_price_rule
   - If only price_ils present: store as-is; max_price_ils = price_ils * 1.18
 
 Confidence tier: 1.00 (Official Israeli Delek Motors importer data)
@@ -58,6 +58,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 import asyncio, json, os, re, sys, uuid, argparse
 from pathlib import Path
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 from variant_identity import catalog_part_type
 import urllib.parse as up
@@ -177,6 +178,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
 
     stats = {"inserted": 0, "errors": 0, "skipped": 0}
     batch = []
+    touched_part_ids = []
 
     async def flush():
         if not batch: return
@@ -192,10 +194,9 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                         # retail_excl = Delek/Champion official retail price EXCL. 18% VAT (reference cost).
                         # importer_price_ils = retail_excl (IL reference cost excl. VAT)
                         # max_price_ils      = retail_excl * 1.18 (consumer IL reference price)
-                        # base_price         = retail_excl * 1.45 (our selling price = cost × 1.45)
+                        # base_price         = NOT written here (base_price_rule.apply_to_parts after the batch)
                         retail_excl  = row["retail_price_ils"]
                         il_retail    = round(retail_excl * 1.18, 2) if retail_excl > 0 else 0.0
-                        base_price_v = round(retail_excl * 1.45, 2) if retail_excl > 0 else 0.0
                         _wmonths, _wsource = _warranty_resolve(None)
                         specs = json.dumps({
                             'vat_included':       False,
@@ -230,13 +231,12 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                             # Update prices on existing catalog entry (may be OEMPartsOnline or older import)
                             await conn.execute("""
                                 UPDATE parts_catalog SET
-                                    importer_price_ils = CASE WHEN $1>0 THEN $1 ELSE importer_price_ils END,
-                                    max_price_ils      = CASE WHEN $2>0 THEN $2 ELSE max_price_ils END,
-                                    base_price         = CASE WHEN $3>0 THEN $3 ELSE base_price END,
-                                    specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                                    importer_price_ils = CASE WHEN $1::numeric>0 THEN $1::numeric ELSE importer_price_ils END,
+                                    max_price_ils      = CASE WHEN $2::numeric>0 THEN $2::numeric ELSE max_price_ils END,
+                                    specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                                     updated_at         = NOW()
-                                WHERE id=$5
-                            """, retail_excl, il_retail, base_price_v, specs, existing_id)
+                                WHERE id=$4
+                            """, retail_excl, il_retail, specs, existing_id)
                             stats["inserted"] += 1
                         else:
                             catalog_id = await conn.fetchval("""
@@ -248,15 +248,12 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                     specifications,
                                     needs_oem_lookup, master_enriched, updated_at
                                 ) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                                         $11, $12, $12, $13,
-                                         TRUE, $14,
-                                         $15::jsonb, FALSE, FALSE, NOW())
+                                         0.0, $11, $11, $12,
+                                         TRUE, $13,
+                                         $14::jsonb, FALSE, FALSE, NOW())
                                 ON CONFLICT(sku) DO UPDATE SET
                                     oem_number    = EXCLUDED.oem_number,
                                     name_he       = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
-                                    base_price    = CASE WHEN EXCLUDED.base_price > 0
-                                                   THEN EXCLUDED.base_price
-                                                   ELSE parts_catalog.base_price END,
                                     importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
                                                    THEN EXCLUDED.importer_price_ils
                                                    ELSE parts_catalog.importer_price_ils END,
@@ -273,11 +270,10 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                             row["manufacturer"], row["brand_id"],
                             row["oem_number"], row["category"], row["part_type"],
                             "new",
-                            base_price_v,       # $11: base_price = cost × 1.45
-                            retail_excl,        # $12: importer_price_ils = min_price_ils = excl-VAT cost
-                            il_retail,          # $13: max_price_ils = consumer price incl. 18% VAT
-                            row["tier"],        # $14: aftermarket_tier
-                            specs)              # $15: specifications
+                            retail_excl,        # $11: importer_price_ils = min_price_ils = excl-VAT cost
+                            il_retail,          # $12: max_price_ils = consumer price incl. 18% VAT
+                            row["tier"],        # $13: aftermarket_tier
+                            specs)              # $14: specifications
                             stats["inserted"] += 1
 
                         # supplier_parts — Delek supplier price = retail excl. VAT (their trade reference)
@@ -299,6 +295,7 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                                     updated_at=NOW()
                             """, supplier_id, pid, row["oem_number"],
                                  float(retail_excl or 0), _wmonths, _wsource, url)
+                            touched_part_ids.append(pid)
 
                         # part_vehicle_fitment
                         if catalog_id and row.get("models"):
@@ -328,6 +325,9 @@ async def import_brand(conn, make, sku_prefix, json_file, supplier_name):
                 except Exception as e:
                     print(f"    [ERR] {row.get('sku','?')}: {e}")
                     stats["errors"] += 1
+        # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+        await base_price_rule.apply_and_report(conn, touched_part_ids, f"import_delek_brands:{make}", verbose=False)
+        touched_part_ids.clear()
         batch.clear()
 
     for p in parts_raw:

@@ -7,6 +7,7 @@ import re
 import uuid
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import openpyxl
 
@@ -131,7 +132,6 @@ async def main() -> None:
                 "manufacturer_id": MANUFACTURER_ID,
                 "part_type": "oem",       # catalog class (variant_identity.catalog_part_type)
                 "part_condition": "new",
-                "base_price": round(il_retail / 1.18 * 1.45, 2) if il_retail else 0.0,
                 "importer_price_ils": round(il_retail / 1.18, 2) if il_retail else 0.0,
                 "online_price_ils": None,
                 "max_price_ils": il_retail,
@@ -166,6 +166,7 @@ async def main() -> None:
     inserted = updated = errors = 0
     fitment_rows = 0
     supplier_rows = 0
+    touched_part_ids = []
 
     try:
         for r in rows:
@@ -181,14 +182,13 @@ async def main() -> None:
                             master_enriched, category, specifications
                         ) VALUES (
                             $1::uuid, $2, $3, $4, $5, $6, $7::uuid,
-                            $8, $9, $10, $11, $12, $12,
-                            $13, $14::jsonb, $15, $16, $17, $18, $19::jsonb
+                            $8, $9, 0.0, $10, $11, $11,
+                            $12, $13::jsonb, $14, $15, $16, $17, $18::jsonb
                         )
                         ON CONFLICT (sku) DO UPDATE SET
                             oem_number         = EXCLUDED.oem_number,
                             name_he            = COALESCE(EXCLUDED.name_he, parts_catalog.name_he),
                             manufacturer_id    = EXCLUDED.manufacturer_id,
-                            base_price         = EXCLUDED.base_price,
                             importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             max_price_ils      = EXCLUDED.max_price_ils,
                             min_price_ils      = EXCLUDED.min_price_ils,
@@ -204,7 +204,7 @@ async def main() -> None:
                         r["id"], r["sku"], r["oem_number"], r["name"], r["name_he"],
                         r["manufacturer"], r["manufacturer_id"],
                         r["part_type"], r["part_condition"],
-                        r["base_price"], r["importer_price_ils"], r["max_price_ils"],
+                        r["importer_price_ils"], r["max_price_ils"],
                         r["is_active"], json.dumps(r["compatible_vehicles"]),
                         r["is_safety_critical"], r["needs_oem_lookup"], r["master_enriched"],
                         categorize_on_ingest(name=r["name"], name_he=r["name_he"]),
@@ -275,11 +275,13 @@ async def main() -> None:
                             DELIVERY_DAYS, SUPPLIER_URL,
                         )
                         supplier_rows += 1
+                        touched_part_ids.append(str(part_id))
 
             except Exception as e:
                 print(f"  Error [{r['sku']}]: {e}")
                 errors += 1
         await _ph.flush()  # price_history for changed prices (price_history_writer)
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "isuzu_excel_import")   # ONE base_price rule (after the offers exist)
     finally:
         await conn.close()
 

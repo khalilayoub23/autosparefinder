@@ -16,7 +16,7 @@ PDF column structure (RTL, 35 pages):
 Pricing: Porsche IL prices are INCL. 18% VAT
   importer_price_ils = price / 1.18   (excl. VAT = our cost reference)
   max_price_ils      = price           (incl. VAT = official retail)
-  base_price         = price           (match official retail)
+  base_price         = NOT written here (base_price_rule.apply_to_parts); retail stays in max_price_ils
 """
 
 import asyncio
@@ -26,6 +26,7 @@ import sys
 import json
 import time
 import asyncpg
+import base_price_rule
 import pdfplumber
 
 # ONE category source of truth — the literal that used to sit in this
@@ -199,12 +200,12 @@ async def import_pdf_prices(conn, parts: list[dict], mfr_id: str, dry_run: bool 
     updated = 0
     inserted = 0
     errors = 0
+    touched_part_ids = []
 
     for r in parts:
         oem = r["oem"]
         price_incl = r["price_incl_vat"]
         price_excl  = round(price_incl / (1 + VAT), 2)
-        base_price  = round(price_excl * 1.45, 2)
 
         specs = json.dumps({
             "vat_included": True,
@@ -220,35 +221,37 @@ async def import_pdf_prices(conn, parts: list[dict], mfr_id: str, dry_run: bool 
                 updated += 1
                 continue
 
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils = $1,
                     max_price_ils      = $2,
-                    base_price         = $5,
                     specifications     = COALESCE(specifications, '{}')::jsonb || $3::jsonb,
                     updated_at         = NOW()
                 WHERE oem_number = $4 AND manufacturer = 'Porsche'
-            """, price_excl, price_incl, specs, oem, base_price)
-            n = int(res.split()[-1])
+                RETURNING id::text
+            """, price_excl, price_incl, specs, oem)
+            n = len(res)
+            touched_part_ids.extend(r_[0] for r_ in res)
 
             if n == 0:
-                res2 = await conn.execute("""
+                res2 = await conn.fetch("""
                     UPDATE parts_catalog SET
                         importer_price_ils = $1,
                         max_price_ils      = $2,
-                        base_price         = $5,
                         oem_number         = $4,
                         specifications     = COALESCE(specifications, '{}')::jsonb || $3::jsonb,
                         updated_at         = NOW()
                     WHERE sku = $4 AND manufacturer = 'Porsche'
-                """, price_excl, price_incl, specs, oem, base_price)
-                n = int(res2.split()[-1])
+                    RETURNING id::text
+                """, price_excl, price_incl, specs, oem)
+                n = len(res2)
+                touched_part_ids.extend(r_[0] for r_ in res2)
 
             if n > 0:
                 updated += n
             else:
                 # Insert as new part
-                await conn.execute("""
+                new_id = await conn.fetchval("""
                     INSERT INTO parts_catalog (
                         id, sku, oem_number, name, manufacturer, manufacturer_id,
                         category, part_condition, part_type,
@@ -257,19 +260,24 @@ async def import_pdf_prices(conn, parts: list[dict], mfr_id: str, dry_run: bool 
                         created_at, updated_at
                     ) VALUES (
                         gen_random_uuid(), $1, $1, $2, 'Porsche', $3::uuid,
-                        $8, 'new', 'original',
-                        $4, $5, $4, $7,
+                        $7, 'new', 'original',
+                        $4, $5, $4, 0.0,
                         $6::jsonb, true, true, false,
                         NOW(), NOW()
                     ) ON CONFLICT (sku) DO NOTHING
-                """, oem, r["desc"], mfr_id, price_excl, price_incl, specs, base_price,
+                    RETURNING id::text
+                """, oem, r["desc"], mfr_id, price_excl, price_incl, specs,
                     categorize_on_ingest(name=r["desc"]))
                 inserted += 1
+                if new_id:
+                    touched_part_ids.append(new_id)
         except Exception as e:
             errors += 1
             if errors <= 3:
                 print(f"  price error [{oem}]: {e}")
 
+    if not dry_run:
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "porsche_import")   # ONE base_price rule
     return updated, inserted, errors
 
 

@@ -51,6 +51,7 @@ from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -235,6 +236,7 @@ async def main():
 
     inserted = 0
     updated = 0
+    touched_part_ids = []
     fitment_count = 0
     errors = []
     skipped = 0
@@ -259,8 +261,6 @@ async def main():
         il_retail = round(price * (1 + VAT_RATE), 2) if price > 0 else 0.0
         min_price = il_retail if il_retail > 0 else None
         max_price = il_retail if il_retail > 0 else None
-        # Policy: base_price = cost * 1.45 (45% margin over excl-VAT cost)
-        il_base_price = round(price * 1.45, 2) if price > 0 else 0.0
 
         sku = f"TOYOTA-{oem}"
         category = guess_category(name_he)
@@ -309,11 +309,11 @@ async def main():
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            base_price=$1, importer_price_ils = CASE WHEN $2 > 0 THEN $2 ELSE parts_catalog.importer_price_ils END, min_price_ils=$3, max_price_ils=$3,
-                            specifications=$4::jsonb, compatible_vehicles=$5::jsonb,
-                            is_safety_critical=$6, updated_at=NOW()
-                        WHERE id=$7
-                    """, il_base_price, price, il_retail,
+                            importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE parts_catalog.importer_price_ils END, min_price_ils=$2, max_price_ils=$2,
+                            specifications=$3::jsonb, compatible_vehicles=$4::jsonb,
+                            is_safety_critical=$5, updated_at=NOW()
+                        WHERE id=$6
+                    """, price, il_retail,
                         specs, json.dumps(compat_vehicles),
                         safety, part_id)
                     updated += 1
@@ -328,15 +328,15 @@ async def main():
                             is_active, created_at, updated_at
                         ) VALUES(
                             $1,$2,$3,$4,$5,$6,$7::uuid,
-                            $8,$9,$10,$11,$11,
-                            $12::jsonb,$13::jsonb,$14,NULL,
-                            $15,FALSE,FALSE,
+                            $8,0.0,$9,$10,$10,
+                            $11::jsonb,$12::jsonb,$13,NULL,
+                            $14,FALSE,FALSE,
                             TRUE,NOW(),NOW()
                         )
                     """, part_id, sku, oem,
                         name_he, name_he,   # name = name_he until AI translates
                         MANUFACTURER, MANUFACTURER_ID,
-                        category, il_base_price, price, il_retail,
+                        category, price, il_retail,
                         specs, json.dumps(compat_vehicles),
                         "new", safety)
                     inserted += 1
@@ -384,6 +384,7 @@ async def main():
                     price, avail, in_stock,
                     _wmonths, _wsource,
                     DELIVERY_DAYS, SUPPLIER_URL)
+                touched_part_ids.append(part_id)
 
         except Exception as e:
             errors.append({"oem": oem, "error": str(e)})
@@ -395,6 +396,8 @@ async def main():
                      i + 1, len(parts), inserted, updated, fitment_count, len(errors))
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "toyota_il_importer")
     await conn.close()
 
     elapsed = round(time.time() - start, 1)

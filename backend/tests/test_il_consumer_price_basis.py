@@ -7,14 +7,14 @@ sys.path.insert(0, str(pathlib.Path(SCRIPT).parent))
 import il_consumer_price_import as imp
 
 
-def test_inclusive_strips_vat_once_and_applies_margin_once():
-    cost, retail, base = imp.price_fields(118.0, "inclusive")
-    assert (cost, retail, base) == (100.0, 118.0, round(100.0 * pp.MARGIN, 2))
+def test_inclusive_strips_vat_once():
+    cost, retail = imp.price_fields(118.0, "inclusive")
+    assert (cost, retail) == (100.0, 118.0)   # base_price is base_price_rule's (the importer no longer computes it)
 
 
 def test_exclusive_adds_vat_once_to_the_reference_only():
-    cost, retail, base = imp.price_fields(100.0, "exclusive")
-    assert (cost, retail, base) == (100.0, 118.0, 145.0)
+    cost, retail = imp.price_fields(100.0, "exclusive")
+    assert (cost, retail) == (100.0, 118.0)
 
 
 def test_unknown_or_missing_basis_is_refused():

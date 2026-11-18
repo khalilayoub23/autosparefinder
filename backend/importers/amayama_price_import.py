@@ -24,7 +24,7 @@ and keeps ALL offers in parts_catalog.specifications->'amayama_options'.
 Pricing (international/ex-VAT, CLAUDE.md policy):
     price_ils        = price_usd * usd_to_ils      # our cost (ex-VAT)
     shipping_cost_ils= shipping_usd * usd_to_ils    # REAL per-offer IL shipping
-    base_price       = price_ils * 1.45             # 45% margin  (only if unpriced)
+    base_price       = NOT written here - base_price_rule.apply_to_parts (the one ownership rule, docs/PRICE_POLICY.md)
     # max_price_ils is NOT written: a foreign (JP) source never sets the Israeli consumer reference (#127)
 """
 import asyncio
@@ -35,6 +35,7 @@ import sys
 from collections import defaultdict
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 # ONE warranty source of truth — resolve() returns (months, source);
@@ -139,7 +140,8 @@ async def main(path: str) -> None:
                 "shipping_ils": ship_ils,
             })
 
-        matched = filled = supplier_offers = unmatched = variant_rejected = 0
+        matched = supplier_offers = unmatched = variant_rejected = 0
+        touched_part_ids = []
         for norm, opts in by_oem.items():
             part_id = await conn.fetchval(
                 """
@@ -195,19 +197,19 @@ async def main(path: str) -> None:
                 SET specifications = jsonb_set(COALESCE(specifications, '{}'::jsonb),
                                                '{amayama_options}', $2::jsonb, true),
                     online_price_ils = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE online_price_ils END,
-                    base_price       = CASE WHEN (base_price IS NULL OR base_price=0) THEN $4 ELSE base_price END,
                     min_price_ils    = CASE WHEN (base_price IS NULL OR base_price=0) THEN $3 ELSE min_price_ils END,
                     updated_at       = NOW()
                 WHERE id = $1
-                RETURNING (base_price = $4) AS was_filled
                 """,
-                part_id, opts_json, cp_ils, round(cp_ils * 1.45, 2),
+                part_id, opts_json, cp_ils,
             )
             if upd.endswith(" 1"):
-                filled += 1
+                touched_part_ids.append(str(part_id))
 
+        # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+        bp = await base_price_rule.apply_and_report(conn, touched_part_ids, "amayama_price_import")
         print(f"[amayama_import] input_rows={len(parts)} unique_oems={len(by_oem)} "
-              f"matched={matched} price_filled={filled} supplier_offers={supplier_offers} "
+              f"matched={matched} base_price_rule={bp} supplier_offers={supplier_offers} "
               f"unmatched={unmatched} skipped={skipped} variant_rejected={variant_rejected} rate={rate}")
         await _ph.flush()  # price_history for changed prices (price_history_writer)
     finally:

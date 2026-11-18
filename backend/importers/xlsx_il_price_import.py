@@ -5,13 +5,14 @@ Handles both column formats found in our catalog xlsx files.
 Pricing policy: treat Importer Price (or Base Price when no importer col) as excl-VAT cost.
   importer_price_ils = cost
   max_price_ils      = cost * 1.17
-  base_price         = cost * 1.45
+  base_price         = NOT written here (base_price_rule.apply_to_parts)
 Usage:
   python3 xlsx_il_price_import.py --file /app/uploads/honda_parts_catalog.xlsx --brand Honda
   python3 xlsx_il_price_import.py --file /app/uploads/volvo_parts_catalog.xlsx --brand Volvo
 """
 import asyncio, os, sys, time, json, argparse
 import asyncpg
+import base_price_rule
 
 # ONE category source of truth. This INSERT used to hardcode 'accessories'
 # positionally, which is a REAL category — so the self-healing categorizer
@@ -108,41 +109,44 @@ async def run(brand, xlsx_path):
                        "vat_rate": VAT, "vat_included": False}, ensure_ascii=False)
 
     updated = inserted = skipped = 0
+    touched_part_ids = []
     for p in parts:
         cost    = round(p["cost"], 2)
         # If we have a consumer price from the xlsx, use it as max_price; else derive from cost
         retail  = round(p["consumer"], 2) if p.get("consumer") else round(cost * (1 + VAT), 2)
-        selling = round(cost * 1.45, 2)
         oem = p["oem"]
 
-        res = await conn.execute("""
+        res = await conn.fetch("""
             UPDATE parts_catalog SET
                 importer_price_ils = $1,
                 max_price_ils      = $2,
-                base_price         = $3,
-                specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                 updated_at         = NOW()
-            WHERE oem_number = $5 AND manufacturer = $6 AND is_active = true
-        """, cost, retail, selling, spec, oem, brand)
-        n = int(res.split()[-1])
+            WHERE oem_number = $4 AND manufacturer = $5 AND is_active = true
+            RETURNING id::text
+        """, cost, retail, spec, oem, brand)
+        n = len(res)
         if n > 0:
             updated += n
+            touched_part_ids.extend(r_[0] for r_ in res)
         else:
             # Try SKU as OEM fallback
             if p["sku"] and p["sku"] != oem:
-                res2 = await conn.execute("""
+                res2 = await conn.fetch("""
                     UPDATE parts_catalog SET
-                        importer_price_ils=$1, max_price_ils=$2, base_price=$3,
-                        specifications=COALESCE(specifications,'{}')::jsonb||$4::jsonb, updated_at=NOW()
-                    WHERE oem_number=$5 AND manufacturer=$6 AND is_active=true
-                """, cost, retail, selling, spec, p["sku"], brand)
-                n2 = int(res2.split()[-1])
+                        importer_price_ils=$1, max_price_ils=$2,
+                        specifications=COALESCE(specifications,'{}')::jsonb||$3::jsonb, updated_at=NOW()
+                    WHERE oem_number=$4 AND manufacturer=$5 AND is_active=true
+                    RETURNING id::text
+                """, cost, retail, spec, p["sku"], brand)
+                n2 = len(res2)
                 if n2 > 0:
                     updated += n2
+                    touched_part_ids.extend(r_[0] for r_ in res2)
                     continue
             # Insert new
             try:
-                await conn.execute("""
+                new_id = await conn.fetchval("""
                     INSERT INTO parts_catalog(
                         id, sku, oem_number, name, name_he, manufacturer, category,
                         base_price, importer_price_ils, max_price_ils, min_price_ils,
@@ -150,24 +154,27 @@ async def run(brand, xlsx_path):
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(),$1,$2,$3,$3,$4,$9,
-                        $5,$6,$7,$7,
+                        gen_random_uuid(),$1,$2,$3,$3,$4,$8,
+                        0.0,$5,$6,$6,
                         'oem','new',true,
-                        true,false,$8::jsonb,
+                        true,false,$7::jsonb,
                         NOW(),NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils=EXCLUDED.max_price_ils,
-                        base_price=EXCLUDED.base_price,
                         specifications=EXCLUDED.specifications,
                         updated_at=NOW()
-                """, oem, oem, p["name"], brand, selling, cost, retail, spec,
+                    RETURNING id::text
+                """, oem, oem, p["name"], brand, cost, retail, spec,
                     categorize_on_ingest(name=p["name"]))
                 inserted += 1
+                if new_id:
+                    touched_part_ids.append(new_id)
             except Exception:
                 skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"xlsx_il_price_import:{brand}")
     elapsed = time.monotonic() - t0
     pct = 100 * updated // max(len(parts), 1)
     print(f"[{brand}] Done {elapsed:.0f}s: updated={updated:,} inserted={inserted:,} skipped={skipped:,} match={pct}%")

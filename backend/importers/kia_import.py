@@ -36,7 +36,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - kia-israel.co.il prices are ILS EXCL. 18% VAT
-  - Store: base_price = price (excl. VAT), importer_price_ils = price,
+  - Store: importer_price_ils = price (base_price: base_price_rule.apply_to_parts),
            max_price_ils = price * 1.18
 
 Confidence tier: 1.00 (Official Israeli importer price data)
@@ -46,6 +46,7 @@ Last Updated: 2026-06-01
 """
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, json, urllib.request, urllib.parse, sys, uuid
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 from html.parser import HTMLParser
 
@@ -157,7 +158,7 @@ INSERT_SQL = """
         $5::uuid,              -- manufacturer_id
         'original'::varchar,
         'new'::varchar,
-        ROUND($6::numeric * 1.18, 2),  -- base_price = il_retail (consumer retail incl. VAT)
+        0.0,                           -- base_price: set by base_price_rule.apply_to_parts after the offer exists
         $6::numeric,                   -- importer_price_ils = ex-VAT cost (CLAUDE.md formula)
         ROUND($6::numeric * 1.18, 2),  -- min_price_ils = il_retail
         ROUND($6::numeric * 1.18, 2),  -- max_price_ils = il_retail
@@ -173,7 +174,6 @@ INSERT_SQL = """
         name               = EXCLUDED.name,
         name_he            = EXCLUDED.name_he,
         description        = EXCLUDED.description,
-        base_price         = EXCLUDED.base_price,
         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
         min_price_ils      = EXCLUDED.min_price_ils,
         max_price_ils      = EXCLUDED.max_price_ils,
@@ -194,7 +194,7 @@ async def run():
         _ph = PriceHistoryTracker(conn, "kia_import"); await _ph.snapshot(supplier_id)
         ex=await conn.fetchval("SELECT COUNT(*) FROM parts_catalog WHERE manufacturer_id=$1::uuid",KIA_MFR_ID)
         print(f"Existing Kia parts in DB: {ex}")
-        ins=upd=err=0;errs=[]
+        ins=upd=err=0;errs=[];touched_part_ids=[]
         for i in range(0,len(parts),BATCH):
             batch=parts[i:i+BATCH]
             for p in batch:
@@ -234,9 +234,11 @@ async def run():
                                     updated_at=NOW()
                             """, supplier_id, str(r['id']), p['sku'],
                                  float(p['price']), *_warranty_resolve(None), KIA_SUPPLIER_URL)
+                            touched_part_ids.append(str(r['id']))
                 except Exception as e:
                     err+=1;errs.append(f"sku={p['sku']}:{type(e).__name__}:{e}")
             print(f"  Batch {i//BATCH+1}/{-(-len(parts)//BATCH)} done (+{ins}ins ~{upd}upd {err}err)")
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "kia_import")   # ONE base_price rule (after the offers exist)
         # REX todo for missing fitment
         try:
             await conn.execute("""

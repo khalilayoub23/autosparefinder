@@ -11,7 +11,7 @@ Pricing rules:
   - Prices in PDF are EXCL. VAT (explicitly stated in PDF footer)
   - importer_price_ils = price (excl. VAT)
   - max_price_ils      = price * 1.18 (incl. VAT)
-  - base_price         = price * 1.18 * 1.45 (customer price with 45% margin)
+  - base_price         = NOT written here (base_price_rule.apply_to_parts)
 
 Usage:
   python3 il_importer_pdf_import.py --pdf /path/to/price_list.pdf --brand Porsche \
@@ -30,6 +30,7 @@ import time
 from typing import Optional
 
 import asyncpg
+import base_price_rule
 import pdfplumber
 
 from variant_identity import canonical_part_type
@@ -41,7 +42,6 @@ from category_map import categorize_on_ingest
 from warranty_policy import resolve as _warranty_resolve
 
 
-MARGIN = 1.45
 
 # VAT rate embedded IN the PDF price per brand (0 = prices are EXCL. VAT).
 # MANDATORY: update when adding a new brand. Never assume.
@@ -59,16 +59,15 @@ INTERNATIONAL_BRANDS = {
 KGM_BRANDS = {"KGM", "SsangYong"}
 
 
-def compute_price_triple(raw_price: float, brand: str) -> tuple[float, float, float]:
+def compute_prices(raw_price: float, brand: str) -> tuple[float, float]:
     """
     MANDATORY VAT CHECK — call before writing any price to the DB.
-    Returns (importer_price_ils, max_price_ils, base_price).
+    Returns (importer_price_ils, max_price_ils). base_price is NOT computed here: base_price_rule.apply_to_parts owns it.
 
     Pricing rules per source type:
-      - International (Rover/Saab/Daewoo/Maserati): no IL VAT, base = raw * 1.45
-      - KGM/SsangYong: actual wholesale trade price, base = il_retail * 1.45
-      - IL official importers (Porsche, Lexus, Toyota, etc.): dealer retail reference,
-        base = max_price_ils (no extra markup — customer sees official retail to compare)
+      - International (Rover/Saab/Daewoo/Maserati): no IL VAT, cost = raw
+      - KGM/SsangYong: actual wholesale trade price (embedded VAT stripped) = cost
+      - IL official importers (Porsche, Lexus, Toyota, etc.): cost ex-VAT; the dealer retail stays in max_price_ils
     """
     brand_key = next((k for k in PRICES_INCL_VAT if k.lower() == brand.lower()), None)
     emb_vat = PRICES_INCL_VAT.get(brand_key, 0.0) if brand_key else 0.0
@@ -79,25 +78,21 @@ def compute_price_triple(raw_price: float, brand: str) -> tuple[float, float, fl
         # eBay/international source — no IL VAT, apply 45% margin
         importer = round(raw_price, 2)
         max_p    = round(raw_price * (1 + IL_VAT), 2)
-        base     = round(raw_price * MARGIN, 2)
     elif brand in KGM_BRANDS and emb_vat > 0:
         # Actual wholesale trade price with embedded VAT — keep importer cost, compute il_retail
         wholesale = round(raw_price / (1 + emb_vat), 2)
         max_p     = round(wholesale * (1 + IL_VAT), 2)
         importer  = wholesale
-        base      = round(importer * MARGIN, 2)
     elif emb_vat > 0:
         # IL official importer PDF with VAT embedded — extract excl-VAT cost
         importer = round(raw_price / (1 + emb_vat), 2)
         max_p    = round(importer * (1 + IL_VAT), 2)
-        base     = round(importer * MARGIN, 2)
     else:
         # IL official importer PDF, prices excl. VAT
         importer = round(raw_price, 2)
         max_p    = round(raw_price * (1 + IL_VAT), 2)
-        base     = round(raw_price * MARGIN, 2)
 
-    return importer, max_p, base
+    return importer, max_p
 
 # Words that indicate "in stock"
 IN_STOCK_WORDS = {"זמין", "yes", "available", "in stock", "במלאי"}
@@ -274,6 +269,7 @@ async def import_prices(
     print(f"\nConnected to DB. Starting upsert...")
 
     updated = 0
+    touched_part_ids = []
     inserted = 0
     skipped = 0
     errors = 0
@@ -283,8 +279,8 @@ async def import_prices(
         for row in rows:
             oem = row["oem_number"]
             price_raw = row["price"]
-            # MANDATORY VAT CHECK — always use compute_price_triple
-            price_excl, price_incl, base = compute_price_triple(price_raw, brand)
+            # MANDATORY VAT CHECK — always use compute_prices
+            price_excl, price_incl = compute_prices(price_raw, brand)
 
             _wmonths, _wsource = _warranty_resolve(row.get("warranty_text"))
             specs = json.dumps({
@@ -302,54 +298,56 @@ async def import_prices(
 
             try:
                 # Try to update existing parts by oem_number
-                result = await conn.execute(
+                result = await conn.fetch(
                     """
                     UPDATE parts_catalog
                     SET
                         importer_price_ils = $1,
                         max_price_ils      = $2,
-                        base_price         = $3,
-                        is_active          = $4,
-                        specifications     = specifications || $5::jsonb,
+                        is_active          = $3,
+                        specifications     = specifications || $4::jsonb,
                         updated_at         = NOW()
-                    WHERE oem_number = $6
-                      AND manufacturer = $7
+                    WHERE oem_number = $5
+                      AND manufacturer = $6
+                    RETURNING id::text
                     """,
-                    price_excl, price_incl, base,
+                    price_excl, price_incl,
                     row["in_stock"],
                     specs,
                     oem, brand,
                 )
-                rows_affected = int(result.split()[-1])
+                rows_affected = len(result)
 
                 if rows_affected > 0:
                     updated += rows_affected
+                    touched_part_ids.extend(r[0] for r in result)
                 else:
                     # Also try matching by sku
-                    result2 = await conn.execute(
+                    result2 = await conn.fetch(
                         """
                         UPDATE parts_catalog
                         SET
                             importer_price_ils = $1,
                             max_price_ils      = $2,
-                            base_price         = $3,
-                            is_active          = $4,
-                            specifications     = specifications || $5::jsonb,
-                            oem_number         = $6,
+                            is_active          = $3,
+                            specifications     = specifications || $4::jsonb,
+                            oem_number         = $5,
                             updated_at         = NOW()
-                        WHERE sku = $6
-                          AND manufacturer = $7
+                        WHERE sku = $5
+                          AND manufacturer = $6
+                        RETURNING id::text
                         """,
-                        price_excl, price_incl, base,
+                        price_excl, price_incl,
                         row["in_stock"],
                         specs, oem, brand,
                     )
-                    rows_affected2 = int(result2.split()[-1])
+                    rows_affected2 = len(result2)
                     if rows_affected2 > 0:
                         updated += rows_affected2
+                        touched_part_ids.extend(r[0] for r in result2)
                     else:
                         # Insert new part
-                        await conn.execute(
+                        new_id = await conn.fetchval(
                             """
                             INSERT INTO parts_catalog (
                                 id, sku, oem_number, name, manufacturer,
@@ -359,27 +357,30 @@ async def import_prices(
                                 needs_oem_lookup, master_enriched, created_at, updated_at
                             )
                             SELECT
-                                gen_random_uuid(), $1, $1, $2, $3,
-                                $10, $2,
-                                $4, $5, $4, $6,
-                                $7, $8::jsonb, $9,
+                                gen_random_uuid(), $1::varchar, $1::varchar, $2::varchar, $3::varchar,
+                                $9::varchar, $2::text,
+                                $4, $5, $4, 0.0,
+                                $6, $7::jsonb, $8,
                                 TRUE, FALSE, NOW(), NOW()
                             WHERE NOT EXISTS (
-                                SELECT 1 FROM parts_catalog WHERE sku = $1
+                                SELECT 1 FROM parts_catalog WHERE sku = $1::varchar
                             )
+                            RETURNING id::text
                             """,
                             oem, row["name"], brand,
-                            price_excl, price_incl, base,
+                            price_excl, price_incl,
                             row["part_type"], specs, row["in_stock"],
                             categorize_on_ingest(name=row["name"]),
                         )
                         inserted += 1
+                        if new_id:
+                            touched_part_ids.append(new_id)
             except Exception as e:
                 errors += 1
                 if errors <= 5:
                     print(f"  ERROR on [{oem}]: {e}")
 
-        await conn.execute("SELECT 1")  # keep-alive flush
+        await base_price_rule.apply_and_report(conn, touched_part_ids, f"il_importer_pdf_import:{brand}")   # ONE base_price rule
 
     finally:
         await conn.close()

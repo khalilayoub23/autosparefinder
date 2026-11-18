@@ -33,7 +33,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - bydauto.co.il prices are ILS INCL. 18% VAT (consumer price)
-  - Store in base_price as-is (incl. VAT); price_ils_vat also stored in specifications
+  - price_ils = page price / 1.18 = the ex-VAT cost -> importer_price_ils; max_price_ils = cost x 1.18; base_price: base_price_rule
 
 Confidence tier: 0.85 (scraped from official dealer API)
 
@@ -59,6 +59,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import httpx
 
@@ -317,7 +318,7 @@ INSERT INTO parts_catalog(
 ) VALUES(
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10,
-    $11, ROUND($11::numeric/1.18,2), $11, $11::numeric,
+    0.0, $11::numeric, $11::numeric, ROUND($11::numeric*1.18,2),
     TRUE, $12,
     FALSE, FALSE,
     $13, NOW()
@@ -326,9 +327,6 @@ ON CONFLICT(sku) DO UPDATE SET
     oem_number   = EXCLUDED.oem_number,
     name_he      = EXCLUDED.name_he,
     category     = EXCLUDED.category,
-    base_price   = CASE WHEN EXCLUDED.base_price > 0
-                        THEN EXCLUDED.base_price
-                        ELSE parts_catalog.base_price END,
     min_price_ils = CASE WHEN EXCLUDED.min_price_ils > 0
                     THEN EXCLUDED.min_price_ils
                     ELSE parts_catalog.min_price_ils END,
@@ -391,6 +389,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
     batch_parts = []
     batch_fitment = []
     sku_to_id: dict[str, str] = {}   # sku → new uuid
+    touched_part_ids: list = []
 
     def make_sku(catalog: str) -> str:
         clean = re.sub(r"[^A-Za-z0-9]", "", catalog).upper()[:50]
@@ -441,6 +440,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
                             updated_at=NOW()
                     """, supplier_id, part_id, row[1],
                          float(row[10] or 0), 'https://bydauto.co.il')
+                touched_part_ids.append(part_id)
             except Exception as e:
                 log.debug("supplier_parts error %s: %s", row[1], e)
 
@@ -457,6 +457,9 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
                 except Exception as e:
                     log.debug("Fitment error %s/%s: %s", part_sku, model, e)
 
+        # ONE base_price rule, after this batch's offers exist (a failure is loud and queued for retry)
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "bydil_scraper", verbose=False)
+        touched_part_ids.clear()
         batch_parts.clear(); batch_fitment.clear(); sku_to_id.clear()
 
     for part in parts:
@@ -491,7 +494,7 @@ async def import_to_db(parts: list[dict], dry_run: bool = False) -> dict:
             categorise(name_he, catalog),# $8 category
             "original" if is_orig else "oe_equivalent",  # $9 part_type
             "new",                      # $10 part_condition
-            price,                      # $11 base_price (incl. VAT; importer/min/max computed in SQL)
+            price,                      # $11 the EX-VAT cost (page price / 1.18): importer_price_ils and min; max = cost x 1.18 in SQL
             None if is_orig else "OE_equivalent",        # $12 aftermarket_tier
             json.dumps(specs, ensure_ascii=False),        # $13 specifications
         ))

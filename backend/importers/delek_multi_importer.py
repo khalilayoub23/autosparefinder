@@ -19,7 +19,7 @@ Response field priceWithTax = ILS price INCLUDING 18% VAT.
 Formula:
     importer_price_ils = priceWithTax / 1.18   (ex-VAT cost)
     max_price_ils      = priceWithTax           (consumer reference)
-    base_price         = (priceWithTax/1.18) * 1.45  (45% margin)
+    base_price         = NOT written here - base_price_rule.apply_to_parts (one ownership rule, docs/PRICE_POLICY.md)
 
 Run inside backend container:
     docker exec autospare_backend python /app/importers/delek_multi_importer.py           # all brands
@@ -31,6 +31,7 @@ Author: AutoSpareFinder Agent — 2026-07-01
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 
 import asyncio
+import base_price_rule
 import json
 import logging
 import os
@@ -109,7 +110,6 @@ SEEDS = (
 )
 
 VAT = 0.18
-MARGIN = 0.45
 
 # Brand configuration: brand_id → {name, manufacturer_name, supplier_name}
 BRAND_CONFIG = {
@@ -179,7 +179,6 @@ def parse_part(raw: dict, manufacturer: str) -> dict | None:
         "manufacturer": manufacturer,
         "importer_price_ils": cost,
         "max_price_ils": round(price_with_vat, 2),
-        "base_price": round(cost * (1 + MARGIN), 2),
         "is_available": (raw.get("isWithQuantity") or "") == "יש",
         "vehicle_model": raw.get("modelDescription") or "",
     }
@@ -217,6 +216,7 @@ async def upsert_parts(
 ) -> tuple[int, int, int]:
     inserted = updated = errors = 0
     fitment_rows = 0
+    touched_part_ids: list[str] = []
     for i in range(0, len(parts), batch_size):
         batch = parts[i : i + batch_size]
         for p in batch:
@@ -232,12 +232,11 @@ async def upsert_parts(
                     if existing_id:
                         await conn.execute(
                             """UPDATE parts_catalog SET
-                                importer_price_ils = CASE WHEN $1>0 THEN $1 ELSE importer_price_ils END,
-                                max_price_ils      = CASE WHEN $2>0 THEN $2 ELSE max_price_ils END,
-                                base_price         = CASE WHEN $3>0 THEN $3 ELSE base_price END,
+                                importer_price_ils = CASE WHEN $1::numeric>0 THEN $1::numeric ELSE importer_price_ils END,
+                                max_price_ils      = CASE WHEN $2::numeric>0 THEN $2::numeric ELSE max_price_ils END,
                                 updated_at         = NOW()
-                               WHERE id=$4""",
-                            p["importer_price_ils"], p["max_price_ils"], p["base_price"], existing_id,
+                               WHERE id=$3""",
+                            p["importer_price_ils"], p["max_price_ils"], existing_id,
                         )
                         part_id = existing_id
                         updated += 1
@@ -247,18 +246,16 @@ async def upsert_parts(
                                 (id,sku,oem_number,name,name_he,manufacturer,manufacturer_id,
                                  part_type,part_condition,category,importer_price_ils,max_price_ils,
                                  base_price,is_active,specifications,created_at,updated_at)
-                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10,NOW(),NOW())
+                               VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$10,$7,$8,0.0,true,$9,NOW(),NOW())
                                ON CONFLICT (sku) DO UPDATE SET
                                  importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0
                                    THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                                  max_price_ils=CASE WHEN EXCLUDED.max_price_ils>0
                                    THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
-                                 base_price=CASE WHEN EXCLUDED.base_price>0
-                                   THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                                  updated_at=NOW()
                                RETURNING id""",
                             sku, oem, p["name_en"], p["name_he"], mfr, manufacturer_id,
-                            p["importer_price_ils"], p["max_price_ils"], p["base_price"],
+                            p["importer_price_ils"], p["max_price_ils"],
                             json.dumps({
                                 "source": "delek_multi_importer",
                                 "part_brand": mfr,
@@ -318,12 +315,15 @@ async def upsert_parts(
                         p["is_available"],
                         *_warranty_resolve(p.get("warranty_months"), p.get("warranty")),
                     )
+                    touched_part_ids.append(str(part_id))
             except Exception as exc:
                 log.warning("Row error %s: %s", oem, exc)
                 errors += 1
         if (i + batch_size) % 500 == 0 or i + batch_size >= len(parts):
             log.info("  DB progress: %d/%d | ins=%d upd=%d err=%d",
                      min(i + batch_size, len(parts)), len(parts), inserted, updated, errors)
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "delek_multi_importer", verbose=False)
     return inserted, updated, errors
 
 

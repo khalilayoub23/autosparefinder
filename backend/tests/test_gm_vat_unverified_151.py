@@ -21,22 +21,21 @@ def gmc():
 
 def test_unknown_basis_derives_nothing(cad, gmc):
     assert cad.GM_PRICE_BASIS is None and gmc.GM_PRICE_BASIS is None          # the shipped default
-    assert cad.price_columns(46.54) == (None, None, None)
+    assert cad.price_columns(46.54) == (None, None)
     assert gmc._gm_reference(46.54) is None and gmc._gm_importer_cost(46.54) is None
 
 
-def test_inclusive_removes_vat_once_and_adds_margin_once(cad, monkeypatch):
+def test_inclusive_removes_vat_once(cad, monkeypatch):
     monkeypatch.setattr(cad, "GM_PRICE_BASIS", "inclusive")
-    cost, ref, base = cad.price_columns(118.00)
-    assert (cost, ref, base) == (100.00, 118.00, 145.00)                         # 118 / 1.18 ; reference = the quoted price ; 100 x 1.45
-    assert ref / cost == pytest.approx(1 + pp.VAT_RATE)                          # VAT once, not twice
-    assert base / cost == pytest.approx(pp.MARGIN)                               # margin once
+    cost, ref = cad.price_columns(118.00)
+    assert (cost, ref) == (100.00, 118.00)                                       # 118 / 1.18 ; reference = the quoted price
+    assert ref / cost == pytest.approx(1 + pp.VAT_RATE)                          # VAT once, not twice (base_price is base_price_rule's)
 
 
-def test_exclusive_adds_vat_once_and_margin_once(cad, monkeypatch):
+def test_exclusive_adds_vat_once(cad, monkeypatch):
     monkeypatch.setattr(cad, "GM_PRICE_BASIS", "exclusive")
-    cost, ref, base = cad.price_columns(100.00)
-    assert (cost, ref, base) == (100.00, 118.00, 145.00)
+    cost, ref = cad.price_columns(100.00)
+    assert (cost, ref) == (100.00, 118.00)
 
 
 def test_gmc_helpers_follow_the_same_basis(gmc, monkeypatch):

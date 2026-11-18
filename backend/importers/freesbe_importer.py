@@ -25,7 +25,7 @@ all assume `importer_price_ils` holds the ex-VAT supplier cost). Freesbe is an
 Israeli supplier, so the policy is:
     supplier_cost_ex_vat = priceWithoutVat            (from the API directly)
     importer_price_ils   = supplier_cost_ex_vat        (ex-VAT cost, per contract)
-    base_price            = supplier_cost_ex_vat × 1.45 (45% markup, per policy)
+    base_price            = NOT written here (base_price_rule.apply_to_parts, per page)
     max_price_ils         = price                       (VAT-inclusive reference)
 Previously: the INSERT branch stored the VAT-INCLUSIVE `price` directly into
 `importer_price_ils` (only compensating inside this file's own `/1.18`
@@ -37,11 +37,10 @@ conversion at all and never touched `base_price`. Both are fixed below to use
 `priceWithoutVat` (falling back to `price/1.18` only if the API ever omits it)
 and to set `importer_price_ils`/`base_price`/`max_price_ils` together, in one
 write, matching the same contract every other IL importer already follows
-(colmobil_import_v2.py, kia_israel_harvester.py, etc.). This makes freesbe's
-own post-loop `normalize_base_price_batched()` a pure redundant safety net for
-its own writes going forward (kept for defense-in-depth, formula corrected to
-match db_update_agent's canonical `importer_price_ils × 1.45` — it no longer
-divides by 1.18, since `importer_price_ils` is now already ex-VAT).
+(colmobil_import_v2.py, kia_israel_harvester.py, etc.). 2026-11-18: the post-loop
+catalogue-wide `normalize_base_price_batched()` backfill was REMOVED (a second base_price writer
+with its own formula); base_price is now set per page for exactly the parts the page wrote, through
+base_price_rule.apply_to_parts.
 
 Hardened 2026-09-05 (forensic investigation of a 2.5-month-hung invocation
 found on the same day the P1 stuck-orders fix was deployed):
@@ -64,6 +63,7 @@ process_page() is unchanged — it was already correctly idempotent.
 """
 import asyncio
 import asyncpg
+import base_price_rule
 import httpx
 import json
 import os
@@ -89,8 +89,6 @@ PROGRESS_FILE = "/app/state/freesbe_import_progress.json"
 
 # Hardening knobs (env-overridable, safe defaults for this project's box).
 DB_CONNECT_TIMEOUT_S = float(os.getenv("FREESBE_DB_CONNECT_TIMEOUT_S", "15"))
-NORMALIZE_BATCH_SIZE = int(os.getenv("FREESBE_NORMALIZE_BATCH_SIZE", "2000"))
-NORMALIZE_STATEMENT_TIMEOUT_MS = int(os.getenv("FREESBE_NORMALIZE_STATEMENT_TIMEOUT_MS", "30000"))
 LOCK_NAME = "freesbe_importer"
 LOCK_TTL_SECONDS = int(os.getenv("FREESBE_LOCK_TTL_SECONDS", "7200"))  # 2h — crash-safe expiry
 
@@ -250,7 +248,7 @@ async def process_page(conn, parts: list, stats: dict, brand_id_cache: dict,
     # Batch DB lookup — uses idx_parts_oem_normalized (partial index on is_active=true)
     db_rows = await conn.fetch(
         """
-        SELECT id, oem_number, manufacturer, importer_price_ils, base_price
+        SELECT id, oem_number, manufacturer, importer_price_ils
         FROM parts_catalog
         WHERE regexp_replace(upper(COALESCE(oem_number, '')), '[^A-Z0-9]', '', 'g') = ANY($1::text[])
           AND is_active = TRUE
@@ -259,6 +257,7 @@ async def process_page(conn, parts: list, stats: dict, brand_id_cache: dict,
     )
 
     matched_oems = set()
+    touched_part_ids: list = []
     for db_row in db_rows:
         norm = normalize_oem(db_row["oem_number"] or "")
         source_parts = lookup_map.get(norm, [])
@@ -271,14 +270,14 @@ async def process_page(conn, parts: list, stats: dict, brand_id_cache: dict,
             # old_price against a VAT-inclusive new_price, an 18%-skewed comparison.
             if old_price and old_price > 0 and old_price > new_cost_ex_vat * 2:
                 continue
-            new_base_price = round(new_cost_ex_vat * 1.45, 2)
             await conn.execute(
                 """UPDATE parts_catalog
-                   SET importer_price_ils = $1, base_price = $2, max_price_ils = $3, updated_at = NOW()
-                   WHERE id = $4""",
-                new_cost_ex_vat, new_base_price, sp["price_ils"], db_row["id"],
+                   SET importer_price_ils = $1, max_price_ils = $2, updated_at = NOW()
+                   WHERE id = $3""",
+                new_cost_ex_vat, sp["price_ils"], db_row["id"],
             )
             stats["updated"] += 1
+            touched_part_ids.append(str(db_row["id"]))
 
     # Insert unmatched RE- parts as new Renault parts (Dacia uses same Renault OEMs)
     for p in parts:
@@ -298,30 +297,36 @@ async def process_page(conn, parts: list, stats: dict, brand_id_cache: dict,
         name = p["description"] or p["raw_oem"]
         price_inc_vat = p["price_ils"]      # VAT-inclusive reference price -> max_price_ils
         cost_ex_vat = p["price_ex_vat"]     # ex-VAT supplier cost -> importer_price_ils
-        # base_price = cost (ex-VAT) × 1.45 margin per pricing policy
-        base_price = round(cost_ex_vat * 1.45, 2)
         sku = f"RE-{p['raw_oem'].lstrip('0') or p['raw_oem']}"
-        await conn.execute(
+        new_pid = await conn.fetchval(
             """
             INSERT INTO parts_catalog (
                 id, sku, oem_number, name, manufacturer, manufacturer_id, category,
                 specifications,
                 importer_price_ils, base_price, max_price_ils, is_active,
                 master_enriched, needs_oem_lookup, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$10,$11::jsonb,$7,$8,$9,TRUE,FALSE,FALSE,NOW(),NOW())
+            ) VALUES ($1,$2,$3,$4,$5,$6,$9,$10::jsonb,$7,0.0,$8,TRUE,FALSE,FALSE,NOW(),NOW())
             ON CONFLICT (sku) DO UPDATE SET
                 importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
-                base_price = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                 max_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
                 updated_at = NOW()
+            RETURNING id::text
             """,
             new_id, sku, p["raw_oem"], name, manufacturer, brand_id,
-            cost_ex_vat, base_price, price_inc_vat,
+            cost_ex_vat, price_inc_vat,
             categorize_on_ingest(name=name),
             json.dumps({"source": "freesbe_importer", "source_url": API_BASE,
                         "raw_oem": p.get("raw_oem")}),
         )
         stats["inserted"] += 1
+        if new_pid:
+            touched_part_ids.append(new_pid)
+
+    # ONE base_price rule for exactly the parts THIS page wrote (replaces the old catalogue-wide normalisation pass); quiet unless it matters
+    bp = await base_price_rule.apply_and_report(conn, touched_part_ids, "freesbe_importer", verbose=False)
+    stats["base_price_updated"] = stats.get("base_price_updated", 0) + int(bp.get("updated", 0))
+    if bp.get("error"):
+        stats["base_price_failed_parts"] = stats.get("base_price_failed_parts", 0) + int(bp.get("parts", 0))
 
 
 async def fetch_page(client: httpx.AsyncClient, page: int) -> dict | None:
@@ -359,82 +364,6 @@ async def connect_with_timeout(db_url: str, timeout_s: float = DB_CONNECT_TIMEOU
     except Exception as e:
         print(f"ERROR: database connection failed: {e}")
         return None
-
-
-async def normalize_base_price_batched(
-    conn,
-    batch_size: int = NORMALIZE_BATCH_SIZE,
-    statement_timeout_ms: int = NORMALIZE_STATEMENT_TIMEOUT_MS,
-) -> tuple[int, bool]:
-    """Backfill base_price in small, short-lived transactions.
-
-    Replaces a single unbounded UPDATE across the whole parts_catalog table
-    (no LIMIT, no statement_timeout) that the 2026-09-05 forensic
-    investigation flagged as a lock-contention risk against the
-    concurrently-writing harvester/scraper pipelines this table always has
-    running (see CLAUDE.md "Two heavy writers on one table contend" and
-    "Batched writes on harvested tables: always FOR UPDATE SKIP LOCKED").
-    Each batch is its own transaction with an explicit statement_timeout —
-    a failed/timed-out batch rolls back on its own and never touches rows
-    already committed by earlier batches, and the loop can be re-run safely
-    at any point since it always re-selects whatever still qualifies.
-
-    NOTE (2026-09-05 production preflight): the candidate predicate has no
-    supporting index — `base_price IS NULL OR base_price = 0` alone matched
-    2,262,459 of 4,584,792 rows (49.3%) in production, far too unselective
-    for any existing single-column index to help, and an EXISTS-wrapped
-    version of the same predicate produces an identical full sequential
-    scan in its worst (zero-match) case. No safe query-level or
-    application-level optimization exists without adding a new composite
-    index, which is out of scope here — the batching above already bounds
-    the WRITE side; only the read-side candidate scan can still be slow
-    when zero (or few) rows qualify. Hence the timeout handling below.
-
-    Returns (rows_updated, complete). complete=False means a batch timed
-    out or failed and normalization stopped early WITHOUT crashing the
-    caller — already-committed batches remain valid (each batch is its own
-    transaction), and a future call safely picks up wherever this left off
-    since it always re-selects whatever still qualifies rather than trusting
-    a cursor or offset.
-    """
-    total = 0
-    while True:
-        try:
-            async with conn.transaction():
-                await conn.execute(f"SET LOCAL statement_timeout = {int(statement_timeout_ms)}")
-                rows = await conn.fetch(
-                    """
-                    UPDATE parts_catalog
-                    SET base_price = ROUND(importer_price_ils * 1.45, 2), updated_at = NOW()
-                    WHERE id IN (
-                        SELECT id FROM parts_catalog
-                        WHERE importer_price_ils > 0
-                          AND (base_price IS NULL OR base_price = 0)
-                          AND is_active = TRUE
-                        LIMIT $1
-                        FOR UPDATE SKIP LOCKED
-                    )
-                    RETURNING id
-                    """,
-                    batch_size,
-                )
-        except (asyncpg.exceptions.QueryCanceledError, asyncpg.PostgresError) as exc:
-            # The failed/timed-out batch's transaction was rolled back by the
-            # `async with conn.transaction()` block above before this
-            # exception reached us — nothing here needs to undo anything.
-            print(
-                f"  ERROR: base_price normalization batch failed after {total} rows "
-                f"already committed: {type(exc).__name__}: {exc}"
-            )
-            print("  base_price normalization INCOMPLETE — safe to retry on next run.")
-            return total, False
-        n = len(rows)
-        total += n
-        if n:
-            print(f"  base_price batch: {n} rows (total {total})")
-        if n < batch_size:
-            break
-    return total, True
 
 
 async def todo_already_pending(conn, title: str) -> bool:
@@ -582,16 +511,8 @@ async def _run_import():
         # This point is only reached when `pages` was non-empty, i.e. real
         # new work happened this run — a no-op (already-complete) run never
         # gets here at all (see the is_import_complete() check above).
-        print("\nNormalizing base_price for newly priced parts...")
-        n, normalize_complete = await normalize_base_price_batched(conn)
-        if normalize_complete:
-            print(f"base_price normalized for {n} parts")
-        else:
-            print(
-                f"base_price normalization INCOMPLETE — {n} parts normalized before a "
-                f"batch failed/timed out. Page processing above is unaffected and already "
-                f"checkpointed; normalization will resume from wherever it left off next run."
-            )
+        print(f"\nbase_price (central rule, per page): updated={stats.get('base_price_updated', 0)} "
+              f"failed_parts_queued_for_retry={stats.get('base_price_failed_parts', 0)}")
 
         print("\nQueuing pipeline todos...")
         await queue_pipeline_todos_if_needed(conn, stats)

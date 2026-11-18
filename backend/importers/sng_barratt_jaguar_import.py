@@ -34,7 +34,7 @@ Missing Data Delegation:
 
 VAT Rules:
   - SNG Barratt prices are GBP EXCL. VAT
-  - Conversion: GBP × GBP_TO_ILS × 1.18 = base_price (ILS incl. 18% VAT)
+  - Conversion: GBP × GBP_TO_ILS = the offer's ILS cost; base_price = base_price_rule (never written here)
   - Default GBP_TO_ILS = 4.73 (set via env var GBP_TO_ILS)
 
 Confidence tier: 0.85 (reputable UK specialist supplier, not official Israeli importer)
@@ -47,6 +47,7 @@ import argparse, asyncio, json, logging, os, sys, uuid
 from datetime import datetime
 from pathlib import Path
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — never a private ruleset here.
@@ -148,6 +149,7 @@ async def ensure_supplier(conn):
 
 async def import_batch(conn, supplier_id, batch, skip_fitment):
     ins, skp = 0, 0
+    touched_part_ids = []
     for rec in batch:
         try:
             async with conn.transaction():   # savepoint per row
@@ -186,12 +188,11 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                         part_condition,is_active,needs_oem_lookup,created_at,updated_at)
                     VALUES(gen_random_uuid(),$1,$2,$3,'Jaguar',$4,
                            $5,$6,$7,$8,
-                           $9,0,0,$9,NULL,$10::jsonb,$11::jsonb,
+                           0.0,0,0,$9,NULL,$10::jsonb,$11::jsonb,
                            'new',TRUE,FALSE,NOW(),NOW())
                     ON CONFLICT(sku) DO UPDATE SET
                         name=EXCLUDED.name, description=EXCLUDED.description,
                         oem_number=EXCLUDED.oem_number, aftermarket_tier=EXCLUDED.aftermarket_tier,
-                        base_price=EXCLUDED.base_price,
                         importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         online_price_ils=0,
                         min_price_ils=CASE WHEN EXCLUDED.min_price_ils > 0
@@ -233,6 +234,7 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
                     pusd, pils, "In Stock" if stock=="in_stock" else "Pre-order",
                     *_warranty_resolve(None),
                     avail, surl, pt)
+                touched_part_ids.append(part_id)
 
                 if not skip_fitment:
                     for app in apps[:20]:
@@ -252,6 +254,7 @@ async def import_batch(conn, supplier_id, batch, skip_fitment):
         except Exception as e:
             log.debug(f'Row skip {rec.get("part_number","?")}: {e}')
             skp += 1
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "sng_barratt_jaguar_import")   # ONE base_price rule (foreign: 0% VAT)
     return ins, skp
 
 async def run(dry_run=False, limit=None, skip_fitment=False):

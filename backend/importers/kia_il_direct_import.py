@@ -5,10 +5,11 @@ Reads /tmp/Kia_oem.json (format: [{sku, name, price}] where price is excl. 17% V
 and updates parts_catalog correctly per pricing policy:
   importer_price_ils = price (excl. VAT)
   max_price_ils      = price * 1.17 (incl. VAT)
-  base_price         = price * 1.45 (our 45% margin)
+  base_price         = NOT written here - base_price_rule.apply_to_parts (one ownership rule, docs/PRICE_POLICY.md)
 """
 import asyncio, json, os, sys, time
 import asyncpg
+import base_price_rule
 
 # ONE category source of truth. This INSERT used to hardcode 'accessories'
 # positionally, which is a REAL category — so the self-healing categorizer
@@ -26,6 +27,7 @@ async def run():
     conn = await asyncpg.connect(DB)
     t0 = time.monotonic()
     updated = not_found = inserted = 0
+    touched_part_ids = []
     spec = json.dumps({"importer": "Kia Israel (Delek Motors)", "source": "kia-israel.co.il",
                        "vat_rate": VAT, "vat_included": False}, ensure_ascii=False)
 
@@ -38,21 +40,21 @@ async def run():
 
         cost    = round(price, 2)
         retail  = round(price * (1 + VAT), 2)
-        selling = round(price * 1.45, 2)
 
         # Try to update existing part by OEM number
-        res = await conn.execute("""
+        res = await conn.fetch("""
             UPDATE parts_catalog SET
                 importer_price_ils = $1,
                 max_price_ils      = $2,
-                base_price         = $3,
-                specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                 updated_at         = NOW()
-            WHERE oem_number = $5 AND manufacturer = 'Kia' AND is_active = true
-        """, cost, retail, selling, spec, sku)
-        n = int(res.split()[-1])
+            WHERE oem_number = $4 AND manufacturer = 'Kia' AND is_active = true
+            RETURNING id::text
+        """, cost, retail, spec, sku)
+        n = len(res)
         if n > 0:
             updated += n
+            touched_part_ids.extend(r[0] for r in res)
         else:
             # Try inserting as new part
             try:
@@ -64,24 +66,26 @@ async def run():
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(), $1, $1, $2, $2, 'Kia', $7,
-                        $3, $4, $5, $5,
+                        gen_random_uuid(), $1, $1, $2, $2, 'Kia', $6,
+                        0.0, $3, $4, $4,
                         'original', 'new', NULL, true,
-                        true, false, $6::jsonb,
+                        true, false, $5::jsonb,
                         NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils      = EXCLUDED.max_price_ils,
-                        base_price         = EXCLUDED.base_price,
                         specifications     = EXCLUDED.specifications,
                         updated_at         = NOW()
-                """, sku, name, selling, cost, retail, spec,
+                """, sku, name, cost, retail, spec,
                     categorize_on_ingest(name=name))
                 inserted += 1
+                touched_part_ids.append(await conn.fetchval("SELECT id::text FROM parts_catalog WHERE sku = $1", sku))
             except Exception:
                 not_found += 1
 
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, [i for i in touched_part_ids if i], "kia_il_direct_import")
     elapsed = time.monotonic() - t0
     print(f"Done in {elapsed:.0f}s: updated={updated:,} inserted={inserted:,} not_found={not_found:,}")
 

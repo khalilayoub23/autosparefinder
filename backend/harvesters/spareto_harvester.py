@@ -11,6 +11,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+import base_price_rule
 import httpx
 import json
 import re
@@ -282,15 +283,13 @@ async def upsert_part(conn, product: dict, eur_rate: float) -> dict:
             await conn.execute(
                 """UPDATE parts_catalog SET
                     name = COALESCE(NULLIF(name, ''), $2),
-                    base_price = COALESCE(base_price, $3),
-                    online_price_ils = COALESCE(online_price_ils, $4),
-                    specifications = COALESCE(specifications, $5::jsonb),
-                    aftermarket_brand_id = COALESCE(aftermarket_brand_id, $6::uuid),
+                    online_price_ils = COALESCE(online_price_ils, $3),
+                    specifications = COALESCE(specifications, $4::jsonb),
+                    aftermarket_brand_id = COALESCE(aftermarket_brand_id, $5::uuid),
                     updated_at = NOW()
                 WHERE id = $1""",
-                existing["id"], name, price_ils, price_ils,
+                existing["id"], name, price_ils,
                 json.dumps(specs) if specs else None,
-                categorize_on_ingest(name=name),
                 aftermarket_brand_id,
             )
             part_id = existing["id"]
@@ -301,18 +300,22 @@ async def upsert_part(conn, product: dict, eur_rate: float) -> dict:
                     (id, sku, oem_number, name, manufacturer_id, aftermarket_brand_id,
                      base_price, online_price_ils, specifications, is_active, part_condition,
                      category)
-                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, $6, $7, $8::jsonb, true, 'new',
-                           $9)
+                   VALUES (gen_random_uuid(), $1, $2, $3, $4::uuid, $5::uuid, 0.0, $6, $7::jsonb, true, 'new',
+                           $8)
                    ON CONFLICT (sku) DO UPDATE SET
                      name = EXCLUDED.name,
                      updated_at = NOW()
                    RETURNING id""",
                 part_number, oem_numbers[0] if oem_numbers else None,
                 name, manufacturer_id, aftermarket_brand_id,
-                price_ils, price_ils,
+                price_ils,
                 json.dumps(specs) if specs else None,
+                categorize_on_ingest(name=name),
             )
             action = "inserted"
+
+        # ONE base_price rule: the foreign (online_price_ils) cost is this part's only price evidence; no cost -> unpriced, reported
+        await base_price_rule.apply_and_report(conn, [str(part_id)], "spareto_harvester", verbose=False)
 
         # Add fitment rows
         fitment = product.get("fitment", [])

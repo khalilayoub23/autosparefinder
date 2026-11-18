@@ -3,7 +3,7 @@
 Import IL prices from parts_database.xlsx for all brands with priced rows.
 The Renault sheet contains mixed brands (NI=Infiniti/Nissan, RE=Renault, etc.)
 Prices are IL retail (ILS incl. VAT) stored in max_price_ils.
-After import, normalize_base_price is called to set base_price = max_price_ils * 1.45
+After import, base_price is NOT computed from max_price_ils (a retail reference, not a cost); parts that already have a supplier cost go through base_price_rule
 """
 import sys
 import os
@@ -11,6 +11,7 @@ sys.path.insert(0, '/app')
 
 import openpyxl
 import asyncpg
+import base_price_rule
 import asyncio
 import re
 
@@ -122,6 +123,7 @@ async def import_prices(conn, priced_rows):
     updated = 0
     not_found = 0
     skipped = 0
+    touched_part_ids = []
 
     # Batch by OEM for efficiency
     for i, row in enumerate(priced_rows):
@@ -158,29 +160,31 @@ async def import_prices(conn, priced_rows):
                 WHERE id = $2
             """, price, m['id'])
             updated += 1
+            touched_part_ids.append(str(m['id']))
             if updated <= 20 or updated % 1000 == 0:
                 print(f"  [{sheet}] Updated {m['manufacturer']} | {m['oem_number']} | {row['name'][:35]} | {old_max} -> {price} ILS")
 
         if (i + 1) % 5000 == 0:
             print(f"  Progress: {i+1}/{len(priced_rows)} rows processed, {updated} updated")
 
-    return updated, not_found, skipped
+    return updated, not_found, skipped, touched_part_ids
 
 
-async def normalize_prices_after_import(conn, updated_count):
-    """Set base_price for parts that now have max_price_ils but had no base_price."""
-    # Policy Case 3: only max_price_ils available -> base_price = max_price_ils * 1.45
-    result = await conn.fetch("""
-        UPDATE parts_catalog
-        SET base_price = ROUND(max_price_ils * 1.45, 2),
-            updated_at = NOW()
-        WHERE max_price_ils > 0
-          AND (base_price IS NULL OR base_price = 0)
-          AND is_active = TRUE
-        RETURNING id
-    """)
-    print(f"Normalized base_price (×1.45) for {len(result)} parts")
-    return len(result)
+async def price_after_import(conn, part_ids):
+    """base_price through the ONE ownership rule (base_price_rule), but ONLY for parts that already have a genuine supplier-cost basis
+    (importer cost or a priced available offer). This file supplies a CONSUMER REFERENCE price only (max_price_ils) - it is never a
+    supplier cost, so a part with no other cost evidence is left unpriced and REPORTED (the old code wrote max_price_ils x 1.45, a
+    margin on an incl-VAT retail price)."""
+    ids = list(dict.fromkeys(str(i) for i in part_ids))
+    if not ids:
+        return {"scanned": 0}
+    with_cost = [r[0] for r in await conn.fetch("""
+        SELECT pc.id::text FROM parts_catalog pc
+        WHERE pc.id = ANY($1::uuid[])
+          AND (pc.importer_price_ils > 0
+               OR EXISTS (SELECT 1 FROM supplier_parts sp WHERE sp.part_id = pc.id AND sp.price_ils > 0 AND sp.is_available))""", ids)]
+    print(f"  {len(ids) - len(with_cost)} of {len(ids)} parts have only a retail reference (no supplier-cost evidence): base_price left untouched")
+    return await base_price_rule.apply_and_report(conn, with_cost, "xls_prices_import")
 
 
 async def main():
@@ -195,7 +199,7 @@ async def main():
     conn = await asyncpg.connect(DB_URL)
 
     print(f"\nImporting {len(priced_rows)} priced rows...")
-    updated, not_found, skipped = await import_prices(conn, priced_rows)
+    updated, not_found, skipped, touched_part_ids = await import_prices(conn, priced_rows)
 
     print(f"\n=== Import Summary ===")
     print(f"  Parts updated: {updated}")
@@ -203,8 +207,8 @@ async def main():
     print(f"  Skipped (better price exists): {skipped}")
 
     if updated > 0:
-        print(f"\nNormalizing base_price for newly priced parts...")
-        await normalize_prices_after_import(conn, updated)
+        print(f"\nBase price for newly referenced parts (rule-owned, only where a supplier cost exists)...")
+        await price_after_import(conn, touched_part_ids)
 
     await conn.close()
     print("Done.")

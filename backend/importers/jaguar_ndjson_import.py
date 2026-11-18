@@ -3,10 +3,11 @@
 Import Jaguar parts from jaguar_parts_raw.ndjson (SNG Barratt sourced, GBP prices).
 Converts GBP → ILS at hardcoded exchange rate for pricing.
 Format: {part_number, base_part_number, title, manufacturer, price_gbp, applications, part_origin}
-Pricing policy: importer_price_ils=price_gbp*GBP_ILS, base_price=cost*1.45, max_price_ils=cost*1.17
+Pricing policy: importer_price_ils=price_gbp*GBP_ILS, base_price=NOT written here (base_price_rule), max_price_ils=cost*1.17
 """
 import asyncio, json, os, sys, time
 import asyncpg
+import base_price_rule
 
 # ONE category source of truth. This INSERT hardcoded 'accessories' —
 # a REAL category, so the self-healing categorizer (which only revisits
@@ -34,6 +35,7 @@ async def run():
     conn = await asyncpg.connect(DB)
     t0 = time.monotonic()
     updated = inserted = skipped = 0
+    touched_part_ids = []
 
     for p in parts:
         oem = str(p.get("base_part_number", "") or "").strip()
@@ -50,7 +52,6 @@ async def run():
 
         cost    = round(price_gbp * GBP_ILS, 2)
         retail  = round(cost * (1 + VAT), 2)
-        selling = round(cost * 1.45, 2)
         from variant_identity import catalog_part_type
         part_type = catalog_part_type("original" if part_origin == "original" else "oe_equivalent")
 
@@ -60,34 +61,37 @@ async def run():
             "vat_rate": VAT, "vat_included": False
         }, ensure_ascii=False)
 
-        res = await conn.execute("""
+        res = await conn.fetch("""
             UPDATE parts_catalog SET
                 importer_price_ils = $1,
                 max_price_ils      = $2,
-                base_price         = $3,
-                specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                 updated_at         = NOW()
-            WHERE oem_number = $5 AND manufacturer = 'Jaguar' AND is_active = true
-        """, cost, retail, selling, part_spec, oem)
-        n = int(res.split()[-1])
+            WHERE oem_number = $4 AND manufacturer = 'Jaguar' AND is_active = true
+            RETURNING id::text
+        """, cost, retail, part_spec, oem)
+        n = len(res)
         if n > 0:
             updated += n
+            touched_part_ids.extend(r_[0] for r_ in res)
         else:
             # Try with P_ prefix stripped
-            res2 = await conn.execute("""
+            res2 = await conn.fetch("""
                 UPDATE parts_catalog SET
-                    importer_price_ils=$1, max_price_ils=$2, base_price=$3,
-                    specifications=COALESCE(specifications,'{}')::jsonb||$4::jsonb, updated_at=NOW()
-                WHERE oem_number=$5 AND manufacturer='Jaguar' AND is_active=true
-            """, cost, retail, selling, part_spec, part_num)
-            n2 = int(res2.split()[-1])
+                    importer_price_ils=$1, max_price_ils=$2,
+                    specifications=COALESCE(specifications,'{}')::jsonb||$3::jsonb, updated_at=NOW()
+                WHERE oem_number=$4 AND manufacturer='Jaguar' AND is_active=true
+                RETURNING id::text
+            """, cost, retail, part_spec, part_num)
+            n2 = len(res2)
             if n2 > 0:
                 updated += n2
+                touched_part_ids.extend(r_[0] for r_ in res2)
             else:
                 try:
                     sku = f"JAG-{oem[:60]}"
                     compat = json.dumps(applications[:10]) if applications else "[]"
-                    await conn.execute("""
+                    new_id = await conn.fetchval("""
                         INSERT INTO parts_catalog(
                             id, sku, oem_number, name, name_he, manufacturer, category,
                             base_price, importer_price_ils, max_price_ils, min_price_ils,
@@ -95,24 +99,27 @@ async def run():
                             needs_oem_lookup, master_enriched, specifications,
                             compatible_vehicles, created_at, updated_at
                         ) VALUES(
-                            gen_random_uuid(), $1, $2, $3, $3, 'Jaguar', $10,
-                            $4, $5, $6, $6,
-                            $7, 'new', true,
-                            true, false, $8::jsonb,
-                            $9::jsonb, NOW(), NOW()
+                            gen_random_uuid(), $1, $2, $3, $3, 'Jaguar', $9,
+                            0.0, $4, $5, $5,
+                            $6, 'new', true,
+                            true, false, $7::jsonb,
+                            $8::jsonb, NOW(), NOW()
                         )
                         ON CONFLICT (sku) DO UPDATE SET
                             importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             max_price_ils      = EXCLUDED.max_price_ils,
-                            base_price         = EXCLUDED.base_price,
                             specifications     = EXCLUDED.specifications,
                             updated_at         = NOW()
-                    """, sku, oem, title, selling, cost, retail, part_type, part_spec, compat,
+                        RETURNING id::text
+                    """, sku, oem, title, cost, retail, part_type, part_spec, compat,
                         categorize_on_ingest(name=title))
                     inserted += 1
+                    if new_id:
+                        touched_part_ids.append(new_id)
                 except Exception:
                     skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "jaguar_ndjson_import")
     elapsed = time.monotonic() - t0
     print(f"Done in {elapsed:.0f}s: updated={updated:,} inserted={inserted:,} skipped={skipped:,}")
 

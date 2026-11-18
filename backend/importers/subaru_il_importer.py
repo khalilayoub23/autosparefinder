@@ -35,6 +35,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import json
 import time
@@ -245,6 +246,7 @@ async def import_parts(parts: list) -> dict:
 
     inserted = 0
     updated = 0
+    touched_part_ids = []
     fitment_rows = 0
     errors = []
     t0 = time.time()
@@ -303,7 +305,7 @@ async def import_parts(parts: list) -> dict:
                     part_id = str(existing["id"])
                     await conn.execute(
                         """UPDATE parts_catalog SET
-                           name_he=$2, base_price=$3, min_price_ils=$3, max_price_ils=$3,
+                           name_he=$2, min_price_ils=$3, max_price_ils=$3,
                            importer_price_ils=CASE WHEN parts_catalog.importer_price_ils > 0 THEN parts_catalog.importer_price_ils ELSE ROUND($3::numeric / 1.18, 2) END,
                            specifications=$4, updated_at=NOW()
                            WHERE id=$1""",
@@ -319,7 +321,7 @@ async def import_parts(parts: list) -> dict:
                            category, base_price, importer_price_ils, min_price_ils, max_price_ils,
                            specifications, part_condition, aftermarket_tier,
                            needs_oem_lookup, master_enriched, is_active, created_at, updated_at)
-                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,$9,ROUND($9::numeric/1.18,2),$9,$9,$10::jsonb,'new',$11,FALSE,FALSE,TRUE,NOW(),NOW())""",
+                           VALUES($1,$2,$3,$4,$5,$6,$7::uuid,$8,0.0,ROUND($9::numeric/1.18,2),$9,$9,$10::jsonb,'new',$11,FALSE,FALSE,TRUE,NOW(),NOW())""",
                         part_id, sku, material,
                         name_he,  # use Hebrew as name until AI translates
                         name_he, MANUFACTURER, MANUFACTURER_ID,
@@ -349,6 +351,7 @@ async def import_parts(parts: list) -> dict:
                     in_stock,
                     _wmonths, _wsource, DELIVERY_DAYS, SUPPLIER_URL,
                 )
+                touched_part_ids.append(part_id)
 
                 # Fitment rows
                 for fit in fitments:
@@ -374,6 +377,7 @@ async def import_parts(parts: list) -> dict:
             print(f"  Progress: {idx+1}/{len(parts)} — inserted={inserted} updated={updated} fitment={fitment_rows} ({elapsed:.1f}s)")
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "subaru_il_importer")   # ONE base_price rule
     await conn.close()
     elapsed = time.time() - t0
     result = {

@@ -4,9 +4,10 @@ Zeekr IL price list PDF importer (fitz-based).
 PDF column: מחיר לא כולל מע"מ (price excl. 18% VAT).
   importer_price_ils = price         (cost, already excl. VAT)
   max_price_ils      = price * 1.18  (consumer ref incl. VAT)
-  base_price         = price * 1.45  (45% margin — policy)
+  base_price         = NOT written here (base_price_rule.apply_to_parts)
 """
 import asyncio, json, os, re, sys, time, asyncpg
+import base_price_rule
 import fitz
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
@@ -115,6 +116,7 @@ async def update_db(conn, parts: list, oem_lookup: dict) -> int:
     }, ensure_ascii=False)
 
     updated = no_db_match = not_found = errors = 0
+    touched_part_ids = []
     for p in parts:
         db_oem = find_db_oem(p['oem'], oem_lookup)
         if not db_oem:
@@ -123,20 +125,20 @@ async def update_db(conn, parts: list, oem_lookup: dict) -> int:
 
         cost = p['price']
         max_price = round(cost * (1 + VAT), 2)
-        selling = round(cost * 1.45, 2)
 
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils = $1,
                     max_price_ils      = $2,
-                    base_price         = $3,
-                    specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                    specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at         = NOW()
-                WHERE oem_number = $5 AND manufacturer = 'Zeekr' AND is_active = true
-            """, cost, max_price, selling, spec, db_oem)
-            n = int(res.split()[-1])
+                WHERE oem_number = $4 AND manufacturer = 'Zeekr' AND is_active = true
+                RETURNING id::text
+            """, cost, max_price, spec, db_oem)
+            n = len(res)
             updated += n
+            touched_part_ids.extend(r[0] for r in res)
             if n == 0:
                 not_found += 1
         except Exception as e:
@@ -146,6 +148,7 @@ async def update_db(conn, parts: list, oem_lookup: dict) -> int:
 
     pct = 100 * updated // max(len(parts), 1)
     print(f"  [Zeekr] updated={updated:,} no_db_match={no_db_match:,} not_found={not_found:,} errors={errors} match={pct}%")
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "zeekr_pdf_import")
     return updated
 
 

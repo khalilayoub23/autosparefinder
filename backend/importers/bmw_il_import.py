@@ -15,7 +15,7 @@ JSON fields:
 Pricing: official BMW IL retail prices incl. VAT
   importer_price_ils = price_ils    (excl. VAT — our cost reference)
   max_price_ils      = price_ils_vat (incl. VAT — official retail)
-  base_price         = price_ils_vat (match official retail per 45% margin policy)
+  base_price         = NOT written here (base_price_rule.apply_to_parts); retail incl. VAT stays in max_price_ils
 
 Fitment: map variant name to series, insert part_vehicle_fitment rows
 """
@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import asyncpg
+import base_price_rule
 
 JSON_PATH = "/app/bmw_parts.json"
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
@@ -162,6 +163,7 @@ async def run():
         # ─── Phase 1: Price update ───────────────────────────────────────────
         print("\n=== PHASE 1: PRICE UPDATE ===")
         price_updated = 0
+        touched_part_ids = []
         price_not_found = 0
         price_errors = 0
 
@@ -173,20 +175,21 @@ async def run():
                 "source": SOURCE, "importer": IMPORTER, "vat_included": True
             })
             try:
-                res = await conn.execute("""
+                res = await conn.fetch("""
                     UPDATE parts_catalog SET
                         importer_price_ils = $1,
                         max_price_ils      = $2,
-                        base_price         = $2,
                         specifications = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                         updated_at = NOW()
                     WHERE oem_number = $4
                       AND manufacturer = 'BMW'
                       AND is_active = true
+                    RETURNING id::text
                 """, cost, retail, spec_patch, oem)
-                n = int(res.split()[-1])
+                n = len(res)
                 if n > 0:
                     price_updated += n
+                    touched_part_ids.extend(r[0] for r in res)
                 else:
                     price_not_found += 1
             except Exception as e:
@@ -198,6 +201,7 @@ async def run():
                 print(f"  progress: updated={price_updated:,} not_found={price_not_found:,}")
 
         print(f"  Prices updated: {price_updated:,}, not found: {price_not_found:,}, errors: {price_errors}")
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "bmw_il_import")   # ONE base_price rule; cost = ex-VAT importer_price_ils, retail stays in max_price_ils
 
         # ─── Phase 2: Fitment from model name ────────────────────────────────
         print("\n=== PHASE 2: FITMENT FROM MODEL NAMES ===")

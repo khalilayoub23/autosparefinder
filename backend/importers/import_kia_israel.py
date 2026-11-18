@@ -4,7 +4,7 @@ import_kia_israel.py — Import Kia Israel official price list into parts_catalo
 Source: kia_israel_parts.json (output from kia_israel_harvester.py)
 Pricing: Prices are EX-VAT (מחיר ללא מע"מ)
   importer_price_ils = price_no_vat   (already the ex-VAT cost)
-  base_price         = price × 1.45   (45% margin)
+  base_price         = NOT written here - base_price_rule.apply_to_parts (one ownership rule, docs/PRICE_POLICY.md)
   max_price_ils      = price × 1.18   (consumer reference price incl. VAT)
 
 Strategy:
@@ -26,6 +26,7 @@ import urllib.parse as up
 from pathlib import Path
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — the literal that used to sit in this
@@ -96,6 +97,7 @@ async def run_import():
     _ph = PriceHistoryTracker(conn, "import_kia_israel"); await _ph.snapshot(supplier_id)
     print(f"[DB] Supplier Kia Israel: {supplier_id}")
 
+    touched_part_ids = []
     stats = {"updated": 0, "inserted": 0, "skipped": 0, "errors": 0, "sp_upserted": 0}
 
     async def process_part(raw_part):
@@ -115,7 +117,6 @@ async def run_import():
 
         # Pricing formula — prices already ex-VAT
         importer_price_ils = round(price_no_vat, 2)
-        base_price = round(price_no_vat * 1.45, 2)
         max_price_ils = round(price_no_vat * 1.18, 2)
 
         sku = make_sku(oem)
@@ -149,13 +150,12 @@ async def run_import():
                     # UPDATE existing record with fresh IL price
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
-                            base_price = CASE WHEN $2 > 0 THEN $2 ELSE base_price END,
-                            max_price_ils = CASE WHEN $3 > 0 THEN $3 ELSE max_price_ils END,
-                            specifications = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                            importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END,
+                            max_price_ils = CASE WHEN $2::numeric > 0 THEN $2::numeric ELSE max_price_ils END,
+                            specifications = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                             updated_at = NOW()
-                        WHERE id = $5::uuid
-                    """, importer_price_ils, base_price, max_price_ils, specs, str(existing["id"]))
+                        WHERE id = $4::uuid
+                    """, importer_price_ils, max_price_ils, specs, str(existing["id"]))
                     part_id = str(existing["id"])
                     stats["updated"] += 1
                 else:
@@ -169,13 +169,13 @@ async def run_import():
                             is_active, specifications,
                             needs_oem_lookup, master_enriched, updated_at
                         ) VALUES(
-                            $1,$2,$3,$4,'Kia',$5,$6,$11,'oem','new',
-                            $7,$8,$8,$9,
-                            TRUE,$10::jsonb,FALSE,FALSE,NOW()
+                            $1,$2,$3,$4,'Kia',$5,$6,$10,'oem','new',
+                            0.0,$7,$7,$8,
+                            TRUE,$9::jsonb,FALSE,FALSE,NOW()
                         )
                     """,
                         new_id, sku, name_he, name_he, kia_id, oem,
-                        base_price, importer_price_ils, max_price_ils, specs,
+                        importer_price_ils, max_price_ils, specs,
                         categorize_on_ingest(name=name_he, name_he=name_he),
                     )
                     part_id = new_id
@@ -202,6 +202,7 @@ async def run_import():
                     max_price_ils, in_stock, _wmonths, _wsource, KIA_PRICE_URL
                 )
                 stats["sp_upserted"] += 1
+                touched_part_ids.append(part_id)
 
         except Exception as exc:
             print(f"  [ERR] {oem}: {exc}")
@@ -217,6 +218,8 @@ async def run_import():
             print(f"  {batch_count}/{len(parts_raw)} ({pct:.0f}%) — updated={stats['updated']} inserted={stats['inserted']}")
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    stats["base_price"] = await base_price_rule.apply_and_report(conn, touched_part_ids, "import_kia_israel")
     await conn.close()
 
     print(f"\n[DONE] updated={stats['updated']}  inserted={stats['inserted']}  skipped={stats['skipped']}  errors={stats['errors']}")

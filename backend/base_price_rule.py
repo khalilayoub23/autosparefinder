@@ -157,3 +157,98 @@ async def apply_to_parts(conn, part_ids: Iterable[str], usd_to_ils: Optional[flo
                 c["skipped"] += len(writes) - done
                 c["reasons"]["locked_or_changed"] = c["reasons"].get("locked_or_changed", 0) + len(writes) - done
     return c
+
+
+# ── importer-facing wrapper: one call per batch, loud on failure, retryable ─────────────────────────────────────────────────
+# An importer's offer ingestion must survive a rule failure, but the failure must be VISIBLE (log + returned counters) and the
+# parts must be retried, never left silently at 0.0: failed ids are appended to RETRY_FILE (the persistent worker_state volume) and
+# drained by the next apply_and_report call of ANY importer (idempotent: the rule only writes rows whose value changes).
+import json as _json
+import logging as _logging
+import os as _os
+import sys as _sys
+
+RETRY_FILE = _os.environ.get("BASE_PRICE_RETRY_FILE", "/app/state/base_price_retry.jsonl")
+_log = _logging.getLogger("base_price_rule")
+
+
+def _valid_ids(ids) -> List[str]:
+    import uuid as _uuid
+    out = []
+    for i in ids:
+        try:
+            out.append(str(_uuid.UUID(str(i))))
+        except (ValueError, AttributeError, TypeError):
+            _log.error("[base_price] dropping a non-UUID part id from the price queue: %r", i)
+    return list(dict.fromkeys(out))
+
+
+def _retry_append(importer: str, ids: List[str], error: str) -> None:
+    import fcntl
+    try:
+        _os.makedirs(_os.path.dirname(RETRY_FILE), exist_ok=True)
+        with open(RETRY_FILE, "a", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            fh.write(_json.dumps({"importer": importer, "ids": _valid_ids(ids), "error": error[:200]}) + "\n")
+    except OSError as exc:   # no state volume (host run): still loud via the ERROR line, never raised
+        _log.error("[base_price] could not persist retry list for %s: %s", importer, exc)
+
+
+def _retry_take() -> List[str]:
+    """Atomically read-and-empty the retry file under an exclusive lock (an append that races the drain is never lost). A malformed
+    line is skipped and logged on its own - it can neither stick the queue nor be silently dropped with the good ones."""
+    import fcntl
+    ids: List[str] = []
+    try:
+        with open(RETRY_FILE, "r+", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            raw = fh.read()
+            fh.seek(0)
+            fh.truncate(0)
+    except OSError:
+        return []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            ids.extend(_valid_ids(_json.loads(line).get("ids") or []))
+        except (ValueError, AttributeError):
+            _log.error("[base_price] skipping a malformed line in %s: %.120r", RETRY_FILE, line)
+    return list(dict.fromkeys(ids))
+
+
+async def apply_and_report(conn, part_ids: Iterable[str], importer: str, usd_to_ils: Optional[float] = None,
+                           verbose: bool = True) -> Dict[str, Any]:
+    """The ONE call every importer makes after its offers exist. Applies the ownership rule to the touched parts (plus any ids a
+    previous failed run left in RETRY_FILE), prints one parseable line, and NEVER raises: a failure returns {"error": ...}, is logged
+    at ERROR with the importer and the part count, and the ids are queued for retry. Parts the rule could not price (no cost evidence)
+    are counted under `reasons` (no_basis / other_class_only) - visible, not defaulted."""
+    ids = _valid_ids(i for i in part_ids if i)
+    # FAIL CLOSED: with the supplier VAT-basis registry unloaded a local supplier reads as 'exclusive' and an 'inclusive' supplier's
+    # base_price would come out 18% high. Nothing is written; the ids wait in the retry queue for a call that can load the registry.
+    if ids and not await ensure_vat_registry(conn=conn):
+        msg = "vat_registry_unavailable"
+        _retry_append(importer, ids, msg)
+        print(f"ERROR [base_price] {importer}: {msg} - {len(ids)} parts NOT priced, queued for retry in {RETRY_FILE}", file=_sys.stderr, flush=True)
+        return {"error": msg, "parts": len(ids), "scanned": 0, "updated": 0, "unchanged": 0, "skipped": len(ids), "reasons": {"vat_registry_unavailable": len(ids)}}
+    retry = _retry_take()
+    todo = list(dict.fromkeys(ids + retry))
+    if not todo:
+        res: Dict[str, Any] = {"scanned": 0, "updated": 0, "unchanged": 0, "skipped": 0, "reasons": {}}
+        if verbose:
+            print(f"[base_price] {importer}: no parts to price", flush=True)
+        return res
+    try:
+        res = await apply_to_parts(conn, todo, usd_to_ils)
+        res["retried"] = len(retry)
+    except Exception as exc:  # noqa: BLE001
+        msg = f"{type(exc).__name__}: {str(exc)[:160]}"
+        _retry_append(importer, todo, msg)
+        print(f"ERROR [base_price] {importer}: rule FAILED for {len(todo)} parts ({msg}); queued for retry in {RETRY_FILE}",
+              file=_sys.stderr, flush=True)
+        return {"error": msg, "parts": len(todo), "scanned": 0, "updated": 0, "unchanged": 0, "skipped": len(todo), "reasons": {"rule_failed": len(todo)}}
+    unpriced = sum(v for k, v in res["reasons"].items() if k in ("no_basis", "other_class_only"))   # other_class_only also = a local supplier whose VAT basis is unknown
+    if verbose or unpriced or res.get("updated"):
+        print(f"[base_price] {importer}: scanned={res['scanned']} updated={res['updated']} unchanged={res['unchanged']} "
+              f"skipped={res['skipped']} unpriced_no_cost_evidence={unpriced} retried={res['retried']} reasons={res['reasons']}", flush=True)
+    return res

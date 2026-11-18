@@ -10,6 +10,7 @@ from __future__ import annotations
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, logging, re
 import asyncpg
+import base_price_rule
 
 import price_policy as _pp
 
@@ -25,14 +26,13 @@ GM_PRICE_BASIS = None
 
 
 def price_columns(price):
-    """(cost ex-VAT, consumer reference incl. VAT, base) for a quoted price, or (None, None, None) while the basis is unverified."""
+    """(cost ex-VAT, consumer reference incl. VAT) for a quoted price, or (None, None) while the basis is unverified.
+    base_price is NOT derived here: base_price_rule.apply_to_parts owns it (no cost -> no base_price, reported as unpriced)."""
     if GM_PRICE_BASIS == "inclusive":
-        cost = round(price / (1 + _pp.VAT_RATE), 2)
-        return cost, round(price, 2), round(cost * _pp.MARGIN, 2)
+        return round(price / (1 + _pp.VAT_RATE), 2), round(price, 2)
     if GM_PRICE_BASIS == "exclusive":
-        cost = round(price, 2)
-        return cost, round(price * (1 + _pp.VAT_RATE), 2), round(cost * _pp.MARGIN, 2)
-    return None, None, None
+        return round(price, 2), round(price * (1 + _pp.VAT_RATE), 2)
+    return None, None
 
 DB_DSN = (
     f"postgresql://autospare:{_DB_PW}"
@@ -129,6 +129,7 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
     inserted = 0
     skipped = 0
     seen_sku: set = set()
+    touched_part_ids: list = []
 
     for row in rows:
         importer, part_num, heb_desc, part_type, stock, price_ils, warranty, model = row
@@ -166,7 +167,7 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
         # The price basis of this list is NOT established: the original file (cadillacFile.xlsx) was not retained and the sibling UMI file
         # (chevrolet.xlsx) has a "מחיר לצרכן" column but no VAT wording. So nothing is derived from it (FIXES_TRACKER #151 / #130): the quoted
         # price is stored as provenance only; cost / reference / base stay NULL until GM_PRICE_BASIS is set from a source statement.
-        cost, il_retail, selling = price_columns(price)
+        cost, il_retail = price_columns(price)
 
         try:
             async with conn.transaction():
@@ -179,28 +180,29 @@ async def import_parts(conn: asyncpg.Connection, rows: list) -> dict:
                         master_enriched, is_active, created_at, updated_at
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, 'Cadillac', $4::uuid,
-                        $5, $6, jsonb_build_object('price_basis', COALESCE($10::text, 'unverified'), 'source_price_ils', $11::numeric,
+                        $5, $6, jsonb_build_object('price_basis', COALESCE($9::text, 'unverified'), 'source_price_ils', $10::numeric,
                                                    'source', 'UMI GM Israel consumer price list (file not retained; VAT wording unverified)'),
-                        $8, $7, $7, $9,
+                        0.0, $7, $7, $8,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         name = EXCLUDED.name,
-                        base_price = EXCLUDED.base_price,
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
                         updated_at = NOW()
                     RETURNING id
                 """, sku, part_num, eng_name[:255], CADILLAC_BRAND_ID,
-                     category, desc, cost, selling, il_retail, GM_PRICE_BASIS, price)
+                     category, desc, cost, il_retail, GM_PRICE_BASIS, price)
                 if pid:
                     inserted += 1
+                    touched_part_ids.append(str(pid))
         except Exception as e:
             log.warning("Failed %s: %s", sku, e)
             skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "cadillac_israel_import")   # no verified cost basis -> counted as unpriced, never guessed
     return {"inserted": inserted, "skipped": skipped}
 
 

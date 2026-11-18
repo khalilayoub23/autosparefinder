@@ -18,7 +18,7 @@ PDF format (all brands):
 Prices = מחיר לצרכן (consumer retail incl. 18% VAT):
   importer_price_ils = price / 1.18
   max_price_ils      = price
-  base_price         = importer_price_ils * 1.45
+  base_price         = NOT written here - base_price_rule.apply_to_parts (one ownership rule, docs/PRICE_POLICY.md)
 
 Usage:
   docker exec autospare_backend python3 /app/importers/colmobil_import_v2.py
@@ -26,6 +26,7 @@ Usage:
 """
 import asyncio, json, os, re, sys, time, uuid, asyncpg, urllib.request
 import fitz
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 from pathlib import Path
 
@@ -38,7 +39,6 @@ from warranty_policy import resolve as _warranty_resolve
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
-MARGIN = 0.45
 
 PDF_DIR = Path("/app/state")
 LOG_PATH = Path("/app/state/logs/colmobil_import_v2.log")
@@ -223,11 +223,11 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
     }, ensure_ascii=False)
 
     updated = inserted = errors = 0
+    touched_part_ids = []
 
     for p in parts:
         retail = p["price"]
         cost = round(retail / (1 + VAT), 2)
-        selling = round(cost * MARGIN + cost, 2)
         oem = p["oem"]
         # Real description when the PDF gave one; the OEM is only a fallback.
         name_he = (p.get("desc") or "").strip() or oem
@@ -254,13 +254,12 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
                     part_id = str(row["id"])
                     await conn.execute("""
                         UPDATE parts_catalog SET
-                            importer_price_ils = CASE WHEN $1>0 THEN $1 ELSE importer_price_ils END,
-                            max_price_ils      = CASE WHEN $2>0 THEN $2 ELSE max_price_ils END,
-                            base_price         = CASE WHEN $3>0 THEN $3 ELSE base_price END,
-                            specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                            importer_price_ils = CASE WHEN $1::numeric>0 THEN $1::numeric ELSE importer_price_ils END,
+                            max_price_ils      = CASE WHEN $2::numeric>0 THEN $2::numeric ELSE max_price_ils END,
+                            specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                             updated_at         = NOW()
-                        WHERE id=$5
-                    """, cost, retail, selling, spec_base, part_id)
+                        WHERE id=$4
+                    """, cost, retail, spec_base, part_id)
                     updated += 1
                 else:
                     # INSERT new part — for ORA/Smart/JAECOO or OEM not yet in catalog
@@ -271,20 +270,20 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
                             part_type, part_condition, category, importer_price_ils, max_price_ils,
                             base_price, is_active, specifications
                         ) VALUES(
-                            gen_random_uuid(), $1, $2, $9, $9, $3, $4,
-                            'oem', 'new', $10, $5, $6, $7, true, $8::jsonb
+                            gen_random_uuid(), $1, $2, $8, $8, $3, $4,
+                            'oem', 'new', $9, $5, $6, 0.0, true, $7::jsonb
                         )
                         ON CONFLICT (sku) DO UPDATE SET
                             importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils>0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                             max_price_ils=CASE WHEN EXCLUDED.max_price_ils>0 THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
-                            base_price=CASE WHEN EXCLUDED.base_price>0 THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                             updated_at=NOW()
                         RETURNING id
-                    """, sku, oem, brand_en, manufacturer_id, cost, retail, selling, spec_base,
+                    """, sku, oem, brand_en, manufacturer_id, cost, retail, spec_base,
                         name_he, categorize_on_ingest(name_he=name_he))
                     inserted += 1
 
                 if part_id and supplier_id:
+                    touched_part_ids.append(str(part_id))
                     await conn.execute("""
                         INSERT INTO supplier_parts(id,supplier_id,part_id,supplier_sku,price_ils,price_usd,
                             availability,is_available,supplier_url,warranty_months,
@@ -303,6 +302,8 @@ async def import_brand(conn, brand_en: str, parts: list[dict], supplier_id: str,
             if errors <= 5:
                 log(f"  ERR {oem}: {e}")
 
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"colmobil_import_v2:{brand_en}")
     log(f"  [{brand_en}] updated={updated:,} inserted={inserted:,} errors={errors}")
 
 

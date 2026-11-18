@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Batched VAT fix: correct importer_price_ils + base_price for parts with vat_rate=0.17.
+Batched VAT fix: correct importer_price_ils for parts with vat_rate=0.17 (base_price is base_price_rule's).
 Processes in chunks of 5000 rows to avoid 44-minute table scans and deadlocks.
 """
 import asyncio, asyncpg, os, time
@@ -33,7 +33,6 @@ async def main():
                     )
                     UPDATE parts_catalog SET
                         importer_price_ils = round((max_price_ils / 1.18)::numeric, 2),
-                        base_price         = round((max_price_ils / 1.18 * 1.45)::numeric, 2),
                         specifications     = specifications || '{"vat_rate": 0.18}'::jsonb,
                         updated_at         = NOW()
                     WHERE id IN (SELECT id FROM to_fix)

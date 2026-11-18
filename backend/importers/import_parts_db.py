@@ -315,7 +315,7 @@ INSERT INTO parts_catalog
     description, specifications, compatible_vehicles, oem_number,
      base_price, part_condition, is_safety_critical, needs_oem_lookup,
      master_enriched, is_active, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, 0.0,
         'new', false, false, false, true, NOW(), NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
@@ -326,7 +326,6 @@ ON CONFLICT (sku) DO UPDATE SET
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
     oem_number = EXCLUDED.oem_number,
-    base_price = EXCLUDED.base_price,
     is_active = true,
     updated_at = NOW()
 """
@@ -337,7 +336,7 @@ INSERT INTO parts_catalog
      description, specifications, compatible_vehicles, oem_number,
      base_price, part_condition, is_safety_critical, needs_oem_lookup,
      master_enriched, is_active, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, 0.0,
         'new', false, false, false, true, NOW(), NOW())
 ON CONFLICT (sku) DO UPDATE SET
     name = EXCLUDED.name,
@@ -349,12 +348,36 @@ ON CONFLICT (sku) DO UPDATE SET
     specifications = EXCLUDED.specifications,
     compatible_vehicles = EXCLUDED.compatible_vehicles,
     oem_number = EXCLUDED.oem_number,
-    base_price = EXCLUDED.base_price,
     is_active = true,
     updated_at = NOW()
 """
 
 BATCH_SIZE = 500
+
+_SOURCE_PRICE_ROWS = 0
+
+
+def _specs_with_source_price(record) -> str:
+    """The spreadsheet's `price` column has NO stated VAT basis and no supplier: it is NOT a verified supplier cost (this importer used to
+    write it straight into base_price, 2026-11-18). It is kept as PROVENANCE in specifications and counted; base_price starts at 0.0 for new
+    parts and is never touched on update - it is owned by base_price_rule.apply_to_parts, which prices a part only from a real offer or
+    a real importer cost."""
+    global _SOURCE_PRICE_ROWS
+    try:
+        specs = json.loads(str(record.get("specifications", "{}")) or "{}")
+        if not isinstance(specs, dict):
+            specs = {}
+    except ValueError:
+        specs = {}
+    try:
+        price = float(record.get("base_price") or 0.0)   # column name of the shared normalized workbook; it carries the SOURCE price
+    except (TypeError, ValueError):
+        price = 0.0
+    if price > 0:
+        specs["source_price_ils"] = price
+        specs["source_price_basis"] = "unverified"
+        _SOURCE_PRICE_ROWS += 1
+    return json.dumps(specs, ensure_ascii=False)
 
 
 async def import_parts(selected_sheets: list[str] | None = None):
@@ -432,10 +455,9 @@ async def import_parts(selected_sheets: list[str] | None = None):
                 manufacturer_id,
                 record.get("part_type"),
                 str(record.get("description", "")),
-                str(record.get("specifications", "{}")),
+                _specs_with_source_price(record),
                 str(record.get("compatible_vehicles", "[]")),
                 str(record.get("oem_number", "")) or None,
-                float(record.get("base_price", 0.0) or 0.0),
             )
         else:
             params = (
@@ -449,10 +471,9 @@ async def import_parts(selected_sheets: list[str] | None = None):
                 str(record.get("manufacturer", "")),
                 record.get("part_type"),
                 str(record.get("description", "")),
-                str(record.get("specifications", "{}")),
+                _specs_with_source_price(record),
                 str(record.get("compatible_vehicles", "[]")),
                 str(record.get("oem_number", "")) or None,
-                float(record.get("base_price", 0.0) or 0.0),
             )
 
         batch.append((sheet_name, params))
@@ -467,6 +488,7 @@ async def import_parts(selected_sheets: list[str] | None = None):
         print(f"  → {sheet_name} (normalized)")
         print(f"     ✓ {stats['rows']:,} rows  ({stats['errors']} errors)")
 
+    print(f"  {_SOURCE_PRICE_ROWS:,} rows carry a source price with no verified cost basis: kept in specifications.source_price_ils, base_price NOT written")
     final_count = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog")
     await conn.close()
 

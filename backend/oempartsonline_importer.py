@@ -34,7 +34,7 @@ Missing Data Delegation:
   - Prices for out-of-stock parts: REX todo queued for eBay/AliExpress lookup
 
 Author: AutoSpareFinder Agent
-Last Updated: 2025-05-29
+Last Updated: 2026-11-18 (base_price no longer written here: base_price_rule.apply_to_parts)
 """
 
 from __future__ import annotations
@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Optional
 
 import asyncpg
+import base_price_rule
 from price_history_writer import record_row_change as _record_price_change
 
 # ── Graceful shutdown support ─────────────────────────────────────────────────
@@ -426,6 +427,7 @@ async def import_products(
     skipped_dupe = 0
     fitment_rows = 0
     errors = []
+    touched_part_ids: list[str] = []
     checkpoint_at: int | None = None
 
     # Process in batches of 25 (max outer tx size per claude.md)
@@ -462,7 +464,6 @@ async def import_products(
                     price_usd = sale_usd if sale_usd > 0 else msrp_usd
                     price_ils = round(price_usd * usd_to_ils, 2)
                     min_price = price_ils
-                    base_price_ils = round(price_ils * 1.45, 2)  # 45% margin
 
                     category_path = product.get("category_path", "")
                     category = map_category(category_path)
@@ -526,10 +527,10 @@ async def import_products(
                             ) VALUES (
                                 gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                                 $6, $7, $8::jsonb, $9::jsonb,
-                                $10, $12,
+                                $10, 0.0,
                                 $10, $10, NULL,
                                 'original', NULL,
-                                $11, $13, FALSE,
+                                $11, $12, FALSE,
                                 TRUE, NOW(), NOW()
                             )
                             ON CONFLICT (sku) DO UPDATE SET
@@ -538,10 +539,6 @@ async def import_products(
                                     WHEN parts_catalog.importer_price_ils IS NULL OR parts_catalog.importer_price_ils = 0
                                     THEN EXCLUDED.importer_price_ils
                                     ELSE parts_catalog.importer_price_ils END,
-                                base_price = CASE
-                                    WHEN parts_catalog.base_price IS NULL OR parts_catalog.base_price = 0
-                                    THEN EXCLUDED.base_price
-                                    ELSE parts_catalog.base_price END,
                                 online_price_ils = EXCLUDED.online_price_ils,
                                 min_price_ils = LEAST(parts_catalog.min_price_ils, EXCLUDED.min_price_ils),
                                 updated_at = NOW()
@@ -558,7 +555,6 @@ async def import_products(
                             json.dumps(compatible_vehicles),
                             min_price,
                             safety_critical,
-                            base_price_ils,
                             name_missing,
                         )
 
@@ -638,10 +634,15 @@ async def import_products(
                             )
 
                         inserted += 1
+                        if part_id:
+                            touched_part_ids.append(str(part_id))
 
                 except Exception as e:
                     log.warning("Row error sku=%s: %s", product.get("sku"), e)
                     errors.append({"sku": product.get("sku"), "error": str(e)})
+
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, f"oempartsonline_importer:{brand_key}")
 
     return {
         "scanned": scanned,

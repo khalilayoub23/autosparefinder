@@ -21,7 +21,7 @@ def test_foreign_paths_never_strip_il_vat():
 def test_kgm_importer_treats_listed_price_as_exclusive():
     code = src("importers/kgm_ssangyong_importer.py")
     assert "price_ex_vat         = round(price_ils, 2)" in code
-    assert "/ 1.18" not in code and "_pp.VAT_RATE" in code and "_pp.MARGIN" in code
+    assert "/ 1.18" not in code and "_pp.VAT_RATE" in code and "_pp.MARGIN" not in code   # base_price is base_price_rule's (2026-11-18)
 
 
 def test_kgm_arithmetic_vat_and_margin_exactly_once():

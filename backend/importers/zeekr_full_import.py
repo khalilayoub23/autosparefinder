@@ -38,7 +38,7 @@ Missing Data Delegation:
 
 Confidence tier: 1.00 (Official Israeli importer price list)
 VAT: Prices in PDF are EXCL. 18% VAT — stored as max_price_ils (incl. 18% VAT = price * 1.18);
-     base_price = cost×1.45, importer_price_ils = cost = max_price_ils/1.18 (CLAUDE.md formula)
+     importer_price_ils = cost (ex-VAT price list), max_price_ils = cost*1.18; base_price via base_price_rule.apply_to_parts
 
 Author: AutoSpareFinder Agent
 Last Updated: 2026-06-01
@@ -60,6 +60,7 @@ import sys
 import uuid
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import pdfplumber
 
@@ -282,14 +283,13 @@ async def upsert_part(conn, p: dict, supplier_id: str) -> tuple[str | None, bool
         ) VALUES (
             gen_random_uuid(), $1, $2, $3, $4,
             'Zeekr', $5::uuid, $6,
-            ROUND($7::numeric*1.18,2), 0, ROUND($7::numeric*1.18,2), ROUND($7::numeric*1.18,2),
+            0.0, $7::numeric, ROUND($7::numeric*1.18,2), ROUND($7::numeric*1.18,2),
             'new', $8, $9,
             $10::jsonb, $11::jsonb,
             true, false, false,
             NOW(), NOW()
         )
         ON CONFLICT (sku) DO UPDATE SET
-            base_price          = EXCLUDED.base_price,
             importer_price_ils  = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
             min_price_ils       = EXCLUDED.min_price_ils,
             max_price_ils       = EXCLUDED.max_price_ils,
@@ -413,6 +413,7 @@ async def run():
         log.info(f'Supplier ID: {supplier_id}')
 
         inserted = updated = skipped = fitment_count = 0
+        touched_part_ids = []
 
         for i, p in enumerate(parts):
             try:
@@ -426,6 +427,7 @@ async def run():
                         inserted += 1
                     else:
                         updated += 1
+                    touched_part_ids.append(part_id)
 
                     fitment_count += await upsert_fitment(conn, part_id, p['models'])
                     await upsert_supplier_part(conn, part_id, supplier_id, p['raw_sku'], p['price_ils'],
@@ -437,6 +439,8 @@ async def run():
 
             if (i + 1) % 100 == 0:
                 log.info(f'Progress: {i+1}/{len(parts)} — ins={inserted} upd={updated} skip={skipped}')
+
+        await base_price_rule.apply_and_report(conn, touched_part_ids, "zeekr_full_import")   # ONE base_price rule (after the offers exist)
 
         # Create REX todos for missing data
         parts_without_fitment = [p for p in parts if not p.get('models') or p['models'] == ['ZEEKR']]

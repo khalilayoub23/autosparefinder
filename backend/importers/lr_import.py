@@ -28,8 +28,8 @@ Missing Data Delegation:
 
 VAT Rules:
   - JSON file prices assumed ILS EXCL. VAT (dealer pricing)
-  - max_price_ils = price * 1.18 (incl. 18% IL VAT); base_price = max_price_ils (IL official ref, no markup)
-  - importer_price_ils = CASE WHEN to preserve existing price (CLAUDE.md: cost=price/1.18, base=cost×1.45)
+  - max_price_ils = price * 1.18 (incl. 18% IL VAT, the official reference); importer_price_ils = price (ex-VAT list cost, CASE-guarded);
+    base_price = NOT written here (base_price_rule.apply_to_parts)
 
 Confidence tier: 0.90 (web scrape of official dealer site)
 
@@ -41,6 +41,7 @@ Last Updated: 2026-06-01
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, json, os, re, sys, uuid
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 LR_SUPPLIER_URL = 'https://www.landrover.co.il'
@@ -114,6 +115,7 @@ async def main():
     _ph = PriceHistoryTracker(conn, "lr_import"); await _ph.snapshot(sup_id)
 
     inserted = updated = errors = 0
+    touched_part_ids = []
     import json as json_mod
     BATCH = 25
 
@@ -171,12 +173,11 @@ async def main():
                            is_active, needs_oem_lookup, master_enriched,
                            created_at, updated_at)
                         VALUES (gen_random_uuid(),$1,$2,$3,$4,'Land Rover',$5::uuid,$6,'new',
-                                $7,0,$7,$8,NULL,$9::jsonb,TRUE,TRUE,FALSE,NOW(),NOW())
+                                0.0,$7,$7,$8,NULL,$9::jsonb,TRUE,TRUE,FALSE,NOW(),NOW())
                         ON CONFLICT (sku) DO UPDATE SET
                           name=EXCLUDED.name,
                           description=EXCLUDED.description,
                           oem_number=EXCLUDED.oem_number,
-                          base_price=EXCLUDED.base_price,
                           importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                           min_price_ils=EXCLUDED.min_price_ils,
                           max_price_ils=EXCLUDED.max_price_ils,
@@ -227,6 +228,7 @@ async def main():
                                  price or 0.0,
                                  'in_stock' if in_stock else 'out_of_stock',
                                  in_stock, _wmonths, _wsource, LR_SUPPLIER_URL)
+                            touched_part_ids.append(str(row['id']))
                         # Fitment: insert extracted model from name
                         for fit_model in fitment_models:
                             try:
@@ -267,6 +269,7 @@ async def main():
         pass
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "lr_import")   # ONE base_price rule (after the offers exist)
     await conn.close()
     print(f"\nDone. inserted={inserted}, updated={updated}, errors={errors}")
     print(f"Run meili sync: docker exec autospare_backend python3 /app/meili_sync.py --manufacturer 'Land Rover' --no-rebuild")

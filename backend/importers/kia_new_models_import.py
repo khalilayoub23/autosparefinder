@@ -2,6 +2,7 @@
 """Kia new model parts importer — kia-israel.co.il"""
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, asyncpg, urllib.request, urllib.parse
+import base_price_rule
 from html.parser import HTMLParser
 
 # Kia Israel price list page returns an HTML table (OEM + Hebrew desc + price).
@@ -89,6 +90,7 @@ async def run():
     conn = await asyncpg.connect(DB_URL)
     total_parts = 0
     total_fitment = 0
+    touched_part_ids = []
 
     for model_en, model_he in MODELS:
         print(f"\n[{model_en}] Fetching '{model_he}'...", flush=True)
@@ -113,13 +115,13 @@ async def run():
                     # gen_random_uuid() supplies the id
                     part_id = await conn.fetchval("""
                         INSERT INTO parts_catalog
-                          (id, sku, name, category, base_price, oem_number,
+                          (id, sku, name, category, base_price, importer_price_ils, oem_number,
                            manufacturer, manufacturer_id, is_active,
                            part_condition, needs_oem_lookup, specifications)
-                        VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,'Kia',$6,TRUE,'new',FALSE,$7::jsonb)
+                        VALUES (gen_random_uuid(),$1,$2,$3,0.0,$4,$5,'Kia',$6,TRUE,'new',FALSE,$7::jsonb)
                         ON CONFLICT (sku) DO UPDATE
                           SET name=EXCLUDED.name,
-                              base_price=EXCLUDED.base_price,
+                              importer_price_ils=CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                               category=EXCLUDED.category,
                               updated_at=NOW()
                         RETURNING id
@@ -129,6 +131,7 @@ async def run():
 
                     if part_id:
                         parts_added += 1
+                        touched_part_ids.append(str(part_id))
                         await conn.execute("""
                             INSERT INTO part_vehicle_fitment
                               (part_id, manufacturer, model, year_from, manufacturer_id)
@@ -141,6 +144,7 @@ async def run():
         total_parts   += parts_added
         total_fitment += fit_added
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "kia_new_models_import")   # ONE base_price rule; cost = the list's ex-VAT price
     await conn.close()
     print(f"\nDONE. Total: {total_parts} parts, {total_fitment} fitment records", flush=True)
 

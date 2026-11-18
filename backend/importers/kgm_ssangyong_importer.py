@@ -16,6 +16,7 @@ import logging
 import re
 import httpx
 import asyncpg
+import base_price_rule
 
 import price_policy as _pp
 
@@ -133,6 +134,7 @@ async def upsert_parts(
     brand_id: str,
 ) -> dict:
     inserted = updated = skipped = 0
+    touched_part_ids: list = []
 
     for p in parts:
         pn = p["part_number"]
@@ -162,10 +164,9 @@ async def upsert_parts(
         )[:500]
 
         # kgm.co.il states "המחירים ללא מע\"מ" (verified 2026-11-10, FIXES_TRACKER #151): the listed price IS the ex-VAT cost.
-        # Cost = the listed price (never divided), consumer reference = cost + 18% VAT once, base = cost x 1.45 once.
+        # Cost = the listed price (never divided), consumer reference = cost + 18% VAT once; base_price is base_price_rule's.
         price_ex_vat         = round(price_ils, 2)                          # excl. VAT (our cost)
         max_price_normalized = round(price_ex_vat * (1 + _pp.VAT_RATE), 2)   # consumer price incl. 18% IL VAT
-        base_price_computed  = round(price_ex_vat * _pp.MARGIN, 2)             # our selling price = cost x 1.45
 
         try:
             async with conn.transaction():
@@ -182,7 +183,7 @@ async def upsert_parts(
                         gen_random_uuid(), $1, $2, $3, 'SsangYong', $4::uuid,
                         $5, $6, '{}'::jsonb,
                         $7, $8, $9,
-                        $8, $10,
+                        $8, 0.0,
                         'oem', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
@@ -191,17 +192,17 @@ async def upsert_parts(
                         min_price_ils      = EXCLUDED.min_price_ils,
                         max_price_ils      = EXCLUDED.max_price_ils,
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
-                        base_price         = EXCLUDED.base_price,
                         name               = EXCLUDED.name,
                         description        = EXCLUDED.description,
                         updated_at         = NOW()
-                    RETURNING xmax
+                    RETURNING xmax, id::text
                     """,
                     sku, oem, name, brand_id,
                     category, description,
-                    price_ils, price_ex_vat, max_price_normalized, base_price_computed,
+                    price_ils, price_ex_vat, max_price_normalized,
                 )
                 if row:
+                    touched_part_ids.append(row["id"])
                     if row["xmax"] == 0:
                         inserted += 1
                     else:
@@ -210,6 +211,7 @@ async def upsert_parts(
             log.warning("Failed %s: %s", sku, exc)
             skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "kgm_ssangyong_importer")   # ONE base_price rule
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 

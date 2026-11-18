@@ -18,6 +18,7 @@ Alternatively, this script can be run with --from-json /path/to/file.json
 """
 import asyncio
 import asyncpg
+import base_price_rule
 import json
 import os
 import sys
@@ -30,7 +31,6 @@ from category_map import categorize_on_ingest
 sys.path.insert(0, '/app')
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
-MARGIN = 1.45
 USD_TO_ILS = float(os.environ.get("USD_ILS_RATE", "3.70"))
 
 
@@ -53,6 +53,7 @@ async def import_parts(parts: list, conn):
     brand_id = await get_or_create_brand_id(conn, "Acura")
     inserted = 0
     updated = 0
+    touched_part_ids: list = []
 
     for p in parts:
         oem = (p.get("oem") or "").strip()
@@ -65,7 +66,6 @@ async def import_parts(parts: list, conn):
 
         # Convert USD → ILS
         importer_price_ils = round(price_usd * USD_TO_ILS, 2)
-        base_price = round(importer_price_ils * MARGIN, 2)
         sku = f"ACU-{oem}"
 
         existing = await conn.fetchrow(
@@ -75,32 +75,36 @@ async def import_parts(parts: list, conn):
         )
         if existing:
             await conn.execute(
-                "UPDATE parts_catalog SET importer_price_ils=$1, base_price=$2, updated_at=NOW() "
-                "WHERE id=$3",
-                importer_price_ils, base_price, existing["id"],
+                "UPDATE parts_catalog SET importer_price_ils=$1, updated_at=NOW() "
+                "WHERE id=$2",
+                importer_price_ils, existing["id"],
             )
             updated += 1
+            touched_part_ids.append(str(existing["id"]))
         else:
             new_id = str(uuid.uuid4())
-            await conn.execute(
+            new_pid = await conn.fetchval(
                 "INSERT INTO parts_catalog (id, sku, oem_number, name, manufacturer, "
                 "manufacturer_id, category, specifications, importer_price_ils, base_price, is_active, "
                 "master_enriched, needs_oem_lookup, created_at, updated_at) "
-                "VALUES ($1,$2,$3,$4,'Acura',$5,$8,$9::jsonb,$6,$7,TRUE,FALSE,FALSE,NOW(),NOW()) "
+                "VALUES ($1,$2,$3,$4,'Acura',$5,$7,$8::jsonb,$6,0.0,TRUE,FALSE,FALSE,NOW(),NOW()) "
                 "ON CONFLICT (sku) DO UPDATE SET importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END, "
-                "base_price=EXCLUDED.base_price, updated_at=NOW()",
+                "updated_at=NOW() "
+                "RETURNING id::text",
                 new_id, sku, oem, name, brand_id,
-                importer_price_ils, base_price,
-                # $8 — appended LAST so no existing $N shifts. Inserting it in the
-                # middle silently re-bound $6/$7/$8 and would have written
-                # base_price into the category column.
+                importer_price_ils,
+                # $7 (category) / $8 (specifications) are appended LAST so no existing $N shifts: inserting a column in the
+                # middle once silently re-bound parameters and wrote a price into the category column.
                 categorize_on_ingest(name=name),
                 json.dumps({"source": "acura_browser_harvest",
                             "source_url": "acura.oempartsonline.com",
                             "msrp_usd": msrp_usd, "price_usd": price_usd}),
             )
             inserted += 1
+            if new_pid:
+                touched_part_ids.append(new_pid)
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "acura_browser_harvest")   # ONE base_price rule (was unconditional on UPDATE)
     return inserted, updated
 
 

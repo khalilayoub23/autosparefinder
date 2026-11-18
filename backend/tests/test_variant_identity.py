@@ -531,7 +531,7 @@ async def test_normalize_part_types_catalog_branch_and_table_isolation(c, w, tmp
 def test_samelet_writes_the_catalog_class_and_never_overwrites_it():
     src = (ROOT / "importers" / "samelet_import_v2.py").read_text()
     assert "catalog_part_type = variant_key(part_type)" in src
-    assert "catalog_part_type, base_price_val" in src                                 # the tuple carries the class, not 'original'
+    assert "catalog_part_type, cost, max_price" in src                                 # the tuple carries the class, not 'original'
     assert "part_type=EXCLUDED.part_type" not in src
     assert "part_type=COALESCE(NULLIF(parts_catalog.part_type, ''), EXCLUDED.part_type)" in src
     assert variant_key("original") == "oem" and variant_key("aftermarket") == "aftermarket"      # MaterialType 01 / other

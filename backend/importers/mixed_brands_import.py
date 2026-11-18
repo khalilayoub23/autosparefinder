@@ -7,13 +7,14 @@ OEM prefix → manufacturer: RE=Renault, NI/NF/NV=Nissan, XP=Xpeng, CH=Chevrolet
 Pricing: price_ils_consumer is CONSUMER PRICE incl. 17% VAT
   importer_price_ils = price / 1.17
   max_price_ils      = price
-  base_price         = (price / 1.17) * 1.45
+  base_price         = NOT written here (base_price_rule.apply_to_parts)
 
 Usage:
   python3 mixed_brands_import.py --file /app/uploads/MIXED\ CARS\ BRANDS.xlsx
 """
 import asyncio, os, sys, time, json, argparse
 import asyncpg
+import base_price_rule
 
 # ONE category source of truth. This INSERT used to hardcode 'accessories'
 # positionally, which is a REAL category — so the self-healing categorizer
@@ -99,7 +100,6 @@ def load_xlsx(path: str) -> list[dict]:
 
         cost    = round(price / (1 + VAT), 2)
         retail  = round(price, 2)
-        selling = round(cost * 1.45, 2)
 
         parts.append({
             "oem": oem,
@@ -107,7 +107,6 @@ def load_xlsx(path: str) -> list[dict]:
             "name_he": name_he,
             "cost": cost,
             "retail": retail,
-            "selling": selling,
             "available": is_avail,
         })
 
@@ -125,6 +124,7 @@ async def run(xlsx_path: str):
     t0 = time.monotonic()
 
     updated = inserted = skipped = 0
+    touched_part_ids = []
     brand_stats: dict[str, dict] = {}
 
     for p in parts:
@@ -132,7 +132,6 @@ async def run(xlsx_path: str):
         oem = p["oem"]
         cost = p["cost"]
         retail = p["retail"]
-        selling = p["selling"]
 
         spec = json.dumps({
             "importer": f"{brand} IL (mixed brands catalog)",
@@ -145,28 +144,28 @@ async def run(xlsx_path: str):
         # Try multiple OEM variants for matching
         matched = False
         for oem_variant in normalize_oem(oem):
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils = CASE WHEN importer_price_ils IS NULL OR importer_price_ils = 0
                         THEN $1 ELSE importer_price_ils END,
                     max_price_ils      = CASE WHEN max_price_ils IS NULL OR max_price_ils = 0
                         THEN $2 ELSE max_price_ils END,
-                    base_price         = CASE WHEN base_price IS NULL OR base_price = 0
-                        THEN $3 ELSE base_price END,
-                    specifications     = COALESCE(specifications,'{}')::jsonb || $4::jsonb,
+                    specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at         = NOW()
-                WHERE oem_number = $5 AND manufacturer = $6 AND is_active = true
-            """, cost, retail, selling, spec, oem_variant, brand)
-            n = int(res.split()[-1])
+                WHERE oem_number = $4 AND manufacturer = $5 AND is_active = true
+                RETURNING id::text
+            """, cost, retail, spec, oem_variant, brand)
+            n = len(res)
             if n > 0:
                 updated += n
+                touched_part_ids.extend(r_[0] for r_ in res)
                 matched = True
                 break
 
         if not matched:
             # Insert new part
             try:
-                await conn.execute("""
+                new_id = await conn.fetchval("""
                     INSERT INTO parts_catalog(
                         id, sku, oem_number, name, name_he, manufacturer, category,
                         base_price, importer_price_ils, max_price_ils, min_price_ils,
@@ -174,10 +173,10 @@ async def run(xlsx_path: str):
                         needs_oem_lookup, master_enriched, specifications,
                         created_at, updated_at
                     ) VALUES(
-                        gen_random_uuid(), $1, $1, $2, $2, $3, $9,
-                        $4, $5, $6, $5,
-                        'original', 'new', $7,
-                        true, false, $8::jsonb,
+                        gen_random_uuid(), $1, $1, $2, $2, $3, $8,
+                        0.0, $4, $5, $4,
+                        'original', 'new', $6,
+                        true, false, $7::jsonb,
                         NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
@@ -185,12 +184,13 @@ async def run(xlsx_path: str):
                             THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         max_price_ils      = CASE WHEN parts_catalog.max_price_ils IS NULL OR parts_catalog.max_price_ils = 0
                             THEN EXCLUDED.max_price_ils ELSE parts_catalog.max_price_ils END,
-                        base_price         = CASE WHEN parts_catalog.base_price IS NULL OR parts_catalog.base_price = 0
-                            THEN EXCLUDED.base_price ELSE parts_catalog.base_price END,
                         updated_at = NOW()
-                """, oem, p["name_he"] or oem, brand, selling, cost, retail, True, spec,
+                    RETURNING id::text
+                """, oem, p["name_he"] or oem, brand, cost, retail, True, spec,
                     categorize_on_ingest(name_he=p["name_he"] or oem))
                 inserted += 1
+                if new_id:
+                    touched_part_ids.append(new_id)
             except Exception:
                 skipped += 1
 
@@ -200,6 +200,7 @@ async def run(xlsx_path: str):
         elif skipped == 0:
             bs["inserted"] += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "mixed_brands_import")
     elapsed = time.monotonic() - t0
     print(f"\nDone in {elapsed:.0f}s: updated={updated:,} inserted={inserted:,} skipped={skipped:,}")
     print("\nPer-brand breakdown:")

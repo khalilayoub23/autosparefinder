@@ -9,7 +9,7 @@ Hebrew RTL format:
 Pricing policy: prices are excl. VAT
   importer_price_ils = price          (excl. VAT — official cost reference)
   max_price_ils      = price * 1.17   (incl. 17% VAT — Israeli official retail)
-  base_price         = price * 1.17   (match official retail, no extra markup)
+  base_price         = NOT written here (base_price_rule.apply_to_parts); retail stays in max_price_ils
 
 Usage: python3 il_pdf_batch_import.py [--brand BRAND] [--dry-run]
   Without --brand: processes all configured brands
@@ -22,6 +22,7 @@ import re
 import sys
 import time
 import asyncpg
+import base_price_rule
 import pdfplumber
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
@@ -150,6 +151,7 @@ async def import_brand_pdf(conn, brand: str, pdf_path: str, importer: str,
     updated = 0
     not_found = 0
     errors = 0
+    touched_part_ids = []
     spec_patch = __import__('json').dumps({
         "source": f"{brand} IL official importer price list",
         "importer": importer,
@@ -167,20 +169,21 @@ async def import_brand_pdf(conn, brand: str, pdf_path: str, importer: str,
             continue
 
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils = $1,
                     max_price_ils      = $2,
-                    base_price         = $2,
                     specifications     = COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at         = NOW()
                 WHERE oem_number = $4
                   AND manufacturer = $5
                   AND is_active = true
+                RETURNING id::text
             """, price, retail, spec_patch, oem, brand)
-            n = int(res.split()[-1])
+            n = len(res)
             if n > 0:
                 updated += n
+                touched_part_ids.extend(r[0] for r in res)
             else:
                 not_found += 1
         except Exception as e:
@@ -188,6 +191,8 @@ async def import_brand_pdf(conn, brand: str, pdf_path: str, importer: str,
             if errors <= 3:
                 print(f"  error [{oem}]: {e}")
 
+    if not dry_run:
+        await base_price_rule.apply_and_report(conn, touched_part_ids, f"il_pdf_batch_import:{brand}")
     elapsed = time.monotonic() - t0
     pct = 100 * updated // max(len(rows), 1)
     print(f"  [{brand}] updated={updated:,} not_found={not_found:,} errors={errors} ({elapsed:.1f}s) match={pct}%")

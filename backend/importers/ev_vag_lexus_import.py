@@ -8,6 +8,7 @@ Import prices and fitment for:
 5. Lexus   - price update from toyota_il_parts.json (1,944 parts with LEXUS model)
 """
 import asyncio, gc, json, os, re, sys, time, uuid, asyncpg
+import base_price_rule
 
 # ONE category source of truth — categorize at INGEST so parts never land
 # with a NULL category and depend on the self-healing task to find them.
@@ -60,6 +61,15 @@ def parse_year(model_str: str):
 
 # ─── 1. NIO PRICE UPDATE ─────────────────────────────────────────────────────
 
+_TOUCHED: list = []   # part ids written by the current step; priced by base_price_rule at the end of the step
+
+
+async def _price_step(conn, label: str):
+    """ONE base_price rule over the parts the step just wrote (a failure is loud and queued for retry)."""
+    await base_price_rule.apply_and_report(conn, list(_TOUCHED), f"ev_vag_lexus_import:{label}")
+    _TOUCHED.clear()
+
+
 async def update_nio(conn):
     parts = load_json("/app/nio_parts.json")
     print(f"\n[NIO] {len(parts):,} parts — price update")
@@ -74,16 +84,17 @@ async def update_nio(conn):
         if retail <= 0:
             retail = round(cost * (1 + VAT), 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils=$1, max_price_ils=$2,
-                    base_price=round(($1 * 1.45)::numeric, 2),
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE (oem_number=$4 OR sku=$4) AND manufacturer='NIO' AND is_active=true
+                RETURNING id::text
             """, cost, retail, spec, oem)
-            n = int(res.split()[-1])
+            n = len(res)
             updated += n
+            _TOUCHED.extend(r_[0] for r_ in res)
             if n == 0:
                 not_found += 1
         except Exception as e:
@@ -123,10 +134,9 @@ async def import_voyah(conn):
                     importer_price_ils, max_price_ils, base_price,
                     is_active, specifications, created_at, updated_at
                 ) VALUES ($1::uuid, $2, $3, $4, $5, 'Voyah', $6::uuid, $10,
-                          $7, $8, round(($7 * 1.45)::numeric, 2), true, $9::jsonb, NOW(), NOW())
+                          $7, $8, 0.0, true, $9::jsonb, NOW(), NOW())
                 ON CONFLICT (sku) DO UPDATE SET
-                    importer_price_ils = CASE WHEN $7 > 0 THEN $7 ELSE parts_catalog.importer_price_ils END, max_price_ils=$8,
-                    base_price=round(($7 * 1.45)::numeric, 2),
+                    importer_price_ils = CASE WHEN $7::numeric > 0 THEN $7::numeric ELSE parts_catalog.importer_price_ils END, max_price_ils=$8,
                     specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb || $9::jsonb,
                     updated_at=NOW()
                 RETURNING id
@@ -136,6 +146,7 @@ async def import_voyah(conn):
             if row:
                 pid = str(row["id"])
                 inserted += 1
+                _TOUCHED.append(pid)
                 if model:
                     yr = parse_year(model) or 2020
                     try:
@@ -194,10 +205,9 @@ async def import_mhero(conn):
                     importer_price_ils, max_price_ils, base_price,
                     is_active, specifications, created_at, updated_at
                 ) VALUES ($1::uuid, $2, $3, $4, $5, 'M-Hero', $6::uuid,
-                          $7, $8, round(($7 * 1.45)::numeric, 2), true, $9::jsonb, NOW(), NOW())
+                          $7, $8, 0.0, true, $9::jsonb, NOW(), NOW())
                 ON CONFLICT (sku) DO UPDATE SET
                     importer_price_ils=$7, max_price_ils=$8,
-                    base_price=round(($7 * 1.45)::numeric, 2),
                     specifications=COALESCE(parts_catalog.specifications,'{}')::jsonb || $9::jsonb,
                     updated_at=NOW()
                 RETURNING id
@@ -206,6 +216,7 @@ async def import_mhero(conn):
             if row:
                 pid = str(row["id"])
                 inserted += 1
+                _TOUCHED.append(pid)
                 if model:
                     yr = parse_year(model) or 2021
                     try:
@@ -269,17 +280,18 @@ async def update_vag(conn):
         found = False
         for brand in d['brands']:
             try:
-                res = await conn.execute("""
+                res = await conn.fetch("""
                     UPDATE parts_catalog SET
                         importer_price_ils=$1, max_price_ils=$2,
-                        base_price=round(($1 * 1.45)::numeric, 2),
                         specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                         updated_at=NOW()
                     WHERE oem_number=$4 AND manufacturer=$5 AND is_active=true
+                    RETURNING id::text
                 """, d['cost'], d['retail'], spec, oem, brand)
-                n = int(res.split()[-1])
+                n = len(res)
                 if n > 0:
                     updated += n
+                    _TOUCHED.extend(r_[0] for r_ in res)
                     found = True
             except Exception as e:
                 print(f"  VAG err [{oem}/{brand}]: {e}")
@@ -326,16 +338,17 @@ async def update_lexus(conn):
         retail = price_raw
         cost = round(retail / (1 + VAT), 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
                     importer_price_ils=$1, max_price_ils=$2,
-                    base_price=round(($1 * 1.45)::numeric, 2),
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE oem_number=$4 AND manufacturer='Lexus' AND is_active=true
+                RETURNING id::text
             """, cost, retail, spec, oem)
-            n = int(res.split()[-1])
+            n = len(res)
             updated += n
+            _TOUCHED.extend(r_[0] for r_ in res)
             if n == 0:
                 not_found += 1
                 continue
@@ -381,10 +394,15 @@ async def run():
     t0 = time.monotonic()
     try:
         n_nio    = await update_nio(conn)
+        await _price_step(conn, 'nio')
         n_voyah  = await import_voyah(conn)
+        await _price_step(conn, 'voyah')
         n_mhero  = await import_mhero(conn)
+        await _price_step(conn, 'mhero')
         n_vag    = await update_vag(conn)
+        await _price_step(conn, 'vag')
         n_lexus  = await update_lexus(conn)
+        await _price_step(conn, 'lexus')
         print(f"\n=== ALL DONE ({time.monotonic()-t0:.1f}s) ===")
         print(f"  NIO priced:    {n_nio:,}")
         print(f"  Voyah inserts: {n_voyah:,}")

@@ -37,6 +37,7 @@ from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environ
 
 import asyncio
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 import json
 import logging
@@ -253,13 +254,12 @@ async def insert_part(conn, supplier_id: str, product: dict, variant: dict,
                 ) VALUES(
                     gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                     $6, $7, $8::jsonb, $9::jsonb,
-                    $10, 0, $10, $11,
+                    0.0, 0, $10, $11,
                     'new', NULL, 'oem',
                     FALSE, FALSE, FALSE,
                     TRUE, NOW(), NOW()
                 )
                 ON CONFLICT (sku) DO UPDATE SET
-                    base_price = EXCLUDED.base_price,
                     importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                     min_price_ils = EXCLUDED.min_price_ils,
                     max_price_ils = EXCLUDED.max_price_ils,
@@ -384,6 +384,7 @@ async def main():
         "flagged": 0, "errors": [],
     }
 
+    touched_part_ids: list = []
     for product in all_products:
         title = product.get("title", "")
         tags = product.get("tags", [])
@@ -415,6 +416,7 @@ async def main():
 
             existing_all.add(oem_clean)
             stats["updated"] += 1
+            touched_part_ids.append(part_id)
 
             # Insert fitment for detected models
             fitment_models = extract_fitment_models(title, manufacturer)
@@ -430,6 +432,7 @@ async def main():
                 log.info("Progress: %d inserted, %d skipped", stats["updated"], stats["skipped"])
 
     await _ph.flush()  # price_history for changed prices (price_history_writer)
+    stats["base_price"] = await base_price_rule.apply_and_report(conn, touched_part_ids, "eliteparts_scraper")   # ONE base_price rule (after the offers exist)
     await conn.close()
 
     elapsed = round(_time.time() - t0, 1)

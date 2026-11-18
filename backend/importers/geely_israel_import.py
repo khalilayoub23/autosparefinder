@@ -9,6 +9,7 @@ from __future__ import annotations
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, logging, re
 import asyncpg
+import base_price_rule
 
 # ONE category source of truth — never a private ruleset here.
 from category_map import categorize_on_ingest
@@ -1424,6 +1425,7 @@ async def import_parts(conn: asyncpg.Connection) -> dict:
     inserted = 0
     skipped = 0
     seen_sku: set = set()
+    touched_part_ids: list = []
 
     for pn, eng_name, heb_desc, price_ils, model, category in PARTS:
         sku = f"GEELY-{re.sub(chr(91) + r'^A-Z0-9' + chr(93), '-', pn.upper())}"
@@ -1448,13 +1450,12 @@ async def import_parts(conn: asyncpg.Connection) -> dict:
                     ) VALUES (
                         gen_random_uuid(), $1, $2, $3, 'Geely', $4::uuid,
                         $5, $6, '{}'::jsonb,
-                        $7, ROUND($7::numeric/1.18,2), $7, $7,
+                        0.0, $8::numeric, $7, $7,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         name = EXCLUDED.name,
-                        base_price = EXCLUDED.base_price,
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
@@ -1463,13 +1464,15 @@ async def import_parts(conn: asyncpg.Connection) -> dict:
                 """, sku, pn, eng_name[:255], GEELY_BRAND_ID,
                      categorize_on_ingest(name=eng_name, name_he=heb_desc,
                                           extra=category),
-                     desc[:500], il_retail)
+                     desc[:500], il_retail, round(price_ils, 2))   # $8 = the catalog's ex-VAT price = the genuine cost
                 if pid:
                     inserted += 1
+                    touched_part_ids.append(str(pid))
         except Exception as e:
             log.warning("Failed %s: %s", sku, e)
             skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "geely_israel_import")   # ONE base_price rule
     return {"inserted": inserted, "skipped": skipped}
 
 

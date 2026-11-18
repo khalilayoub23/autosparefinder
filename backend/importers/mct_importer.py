@@ -8,7 +8,7 @@ Prices on the MCT portal are ex-VAT (confirmed from site header:
 "מחיר שאינו כולל מע"מ"). Formula:
     importer_price_ils = price_no_vat        (ex-VAT cost from MCT)
     max_price_ils      = price_no_vat * 1.18 (consumer price incl. 18% VAT)
-    base_price         = price_no_vat * 1.45 (45% margin — CLAUDE.md rule)
+    base_price         = NOT written here - base_price_rule.apply_to_parts (one ownership rule, docs/PRICE_POLICY.md)
 
 Run inside backend container:
     docker exec autospare_backend python /app/importers/mct_importer.py
@@ -31,6 +31,7 @@ import urllib.request
 from pathlib import Path
 
 import asyncpg
+import base_price_rule
 from price_history_writer import PriceHistoryTracker
 
 # ONE category source of truth — categorize at INGEST so parts never land
@@ -66,7 +67,6 @@ MCT_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
 }
 VAT = 0.18
-MARGIN = 0.45
 BATCH = 50
 SLEEP_BETWEEN_PAGES = 0.3
 
@@ -153,7 +153,6 @@ def parse_part(raw: dict, brand_name: str) -> dict | None:
         "manufacturer": brand_name,
         "importer_price_ils": round(price_no_vat, 2),
         "max_price_ils": round(price_no_vat * (1 + VAT), 2),
-        "base_price": round(price_no_vat * (1 + MARGIN), 2),
         "is_available": in_stock,
     }
 
@@ -189,6 +188,7 @@ async def upsert_batch(
     brand_name: str,
 ) -> tuple[int, int]:
     inserted = updated = 0
+    touched_part_ids: list[str] = []
     async with conn.transaction():
         for p in parts:
             oem = p["oem_number"]
@@ -203,12 +203,11 @@ async def upsert_batch(
             if existing_id:
                 await conn.execute(
                     """UPDATE parts_catalog SET
-                        importer_price_ils = CASE WHEN $1 > 0 THEN $1 ELSE importer_price_ils END,
-                        max_price_ils      = CASE WHEN $2 > 0 THEN $2 ELSE max_price_ils END,
-                        base_price         = CASE WHEN $3 > 0 THEN $3 ELSE base_price END,
+                        importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END,
+                        max_price_ils      = CASE WHEN $2::numeric > 0 THEN $2::numeric ELSE max_price_ils END,
                         updated_at         = NOW()
-                       WHERE id = $4""",
-                    p["importer_price_ils"], p["max_price_ils"], p["base_price"], existing_id,
+                       WHERE id = $3""",
+                    p["importer_price_ils"], p["max_price_ils"], existing_id,
                 )
                 part_id = existing_id
                 updated += 1
@@ -219,7 +218,7 @@ async def upsert_batch(
                         (id, sku, oem_number, name, name_he, manufacturer, manufacturer_id,
                          part_type, part_condition, category, importer_price_ils, max_price_ils,
                          base_price, is_active, specifications)
-                       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$11,$7,$8,$9,true,$10)
+                       VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,'oem','new',$10,$7,$8,0.0,true,$9)
                        ON CONFLICT (sku) DO UPDATE SET
                          importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0
                                                THEN EXCLUDED.importer_price_ils
@@ -227,13 +226,10 @@ async def upsert_batch(
                          max_price_ils = CASE WHEN EXCLUDED.max_price_ils > 0
                                           THEN EXCLUDED.max_price_ils
                                           ELSE parts_catalog.max_price_ils END,
-                         base_price = CASE WHEN EXCLUDED.base_price > 0
-                                       THEN EXCLUDED.base_price
-                                       ELSE parts_catalog.base_price END,
                          updated_at = NOW()
                        RETURNING id""",
                     sku, oem, p["name_he"], p["name_he"], brand_name, manufacturer_id,
-                    p["importer_price_ils"], p["max_price_ils"], p["base_price"],
+                    p["importer_price_ils"], p["max_price_ils"],
                     json.dumps({
                         "source": "mct_importer",
                         "source_url": MCT_API,
@@ -274,6 +270,9 @@ async def upsert_batch(
                 "https://updates.mct.co.il/parts/",
                 *_warranty_resolve(p.get("warranty_months"), p.get("warranty")),
             )
+            touched_part_ids.append(str(part_id))
+    # ONE base_price rule (base_price_rule.apply_and_report: loud on failure, failed parts queued for retry)
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "mct_importer", verbose=False)
     return inserted, updated
 
 

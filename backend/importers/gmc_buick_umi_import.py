@@ -9,6 +9,7 @@ from __future__ import annotations
 from db_dsn import DB_PASSWORD as _DB_PW  # DB credential comes from the environment, never from source (FIXES_TRACKER #61)
 import asyncio, logging, re
 import asyncpg
+import base_price_rule
 
 # Category rules DELEGATED to category_map — the single source of truth.
 from category_map import CATCH_ALL, categorize_on_ingest
@@ -196,6 +197,7 @@ def load_parts(text_path: str) -> list[dict]:
 async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
     inserted = 0
     updated = 0
+    touched_part_ids: list = []
     skipped = 0
 
     for r in parts:
@@ -237,21 +239,21 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
                         gen_random_uuid(), $1, $2, $3, $4, $5::uuid,
                         $6, $7, jsonb_build_object('price_basis', COALESCE($10::text, 'unverified'), 'source_price_ils', $11::numeric,
                                                    'source', 'UMI GM Israel consumer price list (file not retained; VAT wording unverified)'),
-                        $8, $9::numeric, $8, $8,
+                        0.0, $9::numeric, $8, $8,
                         'original', FALSE, FALSE,
                         FALSE, TRUE, NOW(), NOW()
                     )
                     ON CONFLICT (sku) DO UPDATE SET
                         name = EXCLUDED.name,
-                        base_price = EXCLUDED.base_price,
                         importer_price_ils = CASE WHEN EXCLUDED.importer_price_ils > 0 THEN EXCLUDED.importer_price_ils ELSE parts_catalog.importer_price_ils END,
                         min_price_ils = EXCLUDED.min_price_ils,
                         max_price_ils = EXCLUDED.max_price_ils,
                         updated_at = NOW()
-                    RETURNING xmax
+                    RETURNING xmax, id::text
                 """, sku, part_num, eng_name[:255], brand, brand_id,
                      category, desc, il_retail, _gm_importer_cost(price), GM_PRICE_BASIS, price)
                 if result:
+                    touched_part_ids.append(result['id'])
                     # xmax=0 means inserted, >0 means updated
                     if result['xmax'] == 0:
                         inserted += 1
@@ -261,6 +263,7 @@ async def import_parts(conn: asyncpg.Connection, parts: list[dict]) -> dict:
             log.warning("Failed %s: %s", sku, e)
             skipped += 1
 
+    await base_price_rule.apply_and_report(conn, touched_part_ids, "gmc_buick_umi_import")   # no verified cost basis -> counted as unpriced, never guessed
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 

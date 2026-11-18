@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Import prices from land_rover_parts.json, subaru_il_parts.json, bydil_parts.json.
-Applies importer_price_ils, max_price_ils, base_price per 45% margin policy.
+Applies importer_price_ils (ex-VAT cost) and max_price_ils (retail); base_price is base_price_rule's.
 """
 import asyncio, json, os, sys, time, asyncpg
+import base_price_rule
 
 DB_URL = os.environ.get("DATABASE_URL", "").replace("postgresql+asyncpg://", "postgresql://")
 VAT = 0.18
@@ -20,6 +21,7 @@ async def import_land_rover(conn):
     # Keys: sku, name, description, price, oem_number, category, image_url, in_stock
     # price is likely retail incl. VAT (check typical LR prices)
     updated = not_found = errors = 0
+    touched = []
     spec = json.dumps({"importer": "Delek Motors - Land Rover Israel", "source": "land_rover_parts.json"})
     for p in parts:
         oem = str(p.get('oem_number', '') or '').strip()
@@ -29,22 +31,25 @@ async def import_land_rover(conn):
         # Assume price is excl. VAT (most LR sources)
         retail = round(price_raw * (1 + VAT), 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
-                    importer_price_ils=$1, max_price_ils=$2, base_price=$2,
+                    importer_price_ils=$1, max_price_ils=$2,
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE oem_number=$4 AND manufacturer='Land Rover' AND is_active=true
+                RETURNING id::text
             """, price_raw, retail, spec, oem)
-            n = int(res.split()[-1])
+            n = len(res)
             if n > 0:
                 updated += n
+                touched.extend(r_[0] for r_ in res)
             else:
                 not_found += 1
         except Exception as e:
             errors += 1
             if errors <= 3: print(f"  LR error [{oem}]: {e}")
     print(f"  updated={updated:,} not_found={not_found:,} errors={errors}")
+    await base_price_rule.apply_and_report(conn, touched, "lr_subaru_byd_import")   # ONE base_price rule
     return updated
 
 
@@ -58,6 +63,7 @@ async def import_subaru(conn):
     print(f"\n[Subaru] {len(parts):,} parts from {path}")
     # Keys: Material, MatDescHe, MatDescEn, PriceNoVat, PriceWithVat, StockExist
     updated = not_found = errors = 0
+    touched = []
     spec = json.dumps({"importer": "Subaru Israel", "source": "subaru_il_parts.json"})
     for p in parts:
         oem = str(p.get('Material', '') or '').strip()
@@ -68,22 +74,25 @@ async def import_subaru(conn):
         if retail <= 0:
             retail = round(cost * (1 + VAT), 2)
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
-                    importer_price_ils=$1, max_price_ils=$2, base_price=$2,
+                    importer_price_ils=$1, max_price_ils=$2,
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE oem_number=$4 AND manufacturer='Subaru' AND is_active=true
+                RETURNING id::text
             """, cost, retail, spec, oem)
-            n = int(res.split()[-1])
+            n = len(res)
             if n > 0:
                 updated += n
+                touched.extend(r_[0] for r_ in res)
             else:
                 not_found += 1
         except Exception as e:
             errors += 1
             if errors <= 3: print(f"  Subaru error [{oem}]: {e}")
     print(f"  updated={updated:,} not_found={not_found:,} errors={errors}")
+    await base_price_rule.apply_and_report(conn, touched, "lr_subaru_byd_import")   # ONE base_price rule
     return updated
 
 
@@ -97,6 +106,7 @@ async def import_byd(conn):
     print(f"\n[BYD] {len(parts):,} parts from {path}")
     # Keys: catalog_number, brand, model_he, name_he, price_ils_vat, price_ils, in_stock
     updated = not_found = errors = 0
+    touched = []
     mfr = await conn.fetchrow("SELECT id FROM car_brands WHERE LOWER(name)='byd' LIMIT 1")
     mfr_id = str(mfr['id']) if mfr else None
     spec_base = {"importer": "BYD Israel (Colmobil)", "source": "bydil_parts.json"}
@@ -113,22 +123,25 @@ async def import_byd(conn):
         spec = json.dumps({**spec_base, "model_he": model_he})
 
         try:
-            res = await conn.execute("""
+            res = await conn.fetch("""
                 UPDATE parts_catalog SET
-                    importer_price_ils=$1, max_price_ils=$2, base_price=$2,
+                    importer_price_ils=$1, max_price_ils=$2,
                     specifications=COALESCE(specifications,'{}')::jsonb || $3::jsonb,
                     updated_at=NOW()
                 WHERE (oem_number=$4 OR sku=$4) AND manufacturer='BYD' AND is_active=true
+                RETURNING id::text
             """, cost, retail, spec, oem)
-            n = int(res.split()[-1])
+            n = len(res)
             if n > 0:
                 updated += n
+                touched.extend(r_[0] for r_ in res)
             else:
                 not_found += 1
         except Exception as e:
             errors += 1
             if errors <= 3: print(f"  BYD error [{oem}]: {e}")
     print(f"  updated={updated:,} not_found={not_found:,} errors={errors}")
+    await base_price_rule.apply_and_report(conn, touched, "lr_subaru_byd_import")   # ONE base_price rule
     return updated
 
 
