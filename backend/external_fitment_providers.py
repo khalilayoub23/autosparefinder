@@ -7,6 +7,8 @@ import threading
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus, urlencode, urlparse
 
+import ebay_api_watch
+
 DEFAULT_AUTODOC_PROVIDER_URLS: List[str] = []
 
 # Module-level eBay OAuth2 token cache — auto-refreshes via client credentials.
@@ -560,6 +562,9 @@ def classify_external_payload(
             "fitment_usable": False,
             "content_type": "",
         }
+
+    if source_kind == "ebay_browse":
+        ebay_api_watch.check_sync("browse/item_summary/search", response)
 
     content_type = str(response.headers.get("content-type") or "").lower()
     if int(response.status_code) != 200:

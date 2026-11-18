@@ -20,6 +20,7 @@ import os
 import re
 import time
 import httpx
+import ebay_api_watch
 import asyncpg
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -269,6 +270,7 @@ async def search_ebay(
         for attempt in range(3):
             try:
                 resp = await client.get(EBAY_SEARCH_URL, params=params, headers=headers, timeout=20)
+                await ebay_api_watch.check("browse/item_summary/search", resp)
                 if resp.status_code == 200:
                     break
                 if resp.status_code == 429:

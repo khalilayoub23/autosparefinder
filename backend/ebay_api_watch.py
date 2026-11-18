@@ -3,7 +3,8 @@ Script: ebay_api_watch.py
 Purpose: Early warning that eBay is retiring / changing an endpoint we depend on
          (Buy Browse API: item_summary/search, item/{id}), so a retirement does
          not show up as a silent "0 results" in the supplier search / price sync.
-Process: ebay_supplier calls `await check(endpoint, response)` on every Browse
+Process: ebay_supplier, ebay_brand_importer (async `check`) and
+         external_fitment_providers.classify_external_payload (sync `check_sync`) call `await check(endpoint, response)` on every Browse
          response BEFORE raise_for_status(). A signal is (a) a Deprecation /
          Sunset / Warning header, (b) a redirect, 404, 410 or 501 on the
          endpoint, or (c) a 4xx body that says deprecated / decommissioned /
@@ -13,20 +14,25 @@ Process: ebay_supplier calls `await check(endpoint, response)` on every Browse
 Data Imported/Modified: none (Redis alert state is handled by notify_owner).
 Data Sources: eBay Browse API response status / headers / body.
 Missing Data Delegation: n/a
-Last Updated: 2026-11-17
+Last Updated: 2026-11-18
 Context: eBay announced Modernized API GA on 2026-10-27; verified 2026-11-17 that the
          official deprecation page lists NO Browse entry (Finding/Shopping were
          decommissioned 2025-02-04 and replaced BY Browse). This is the tripwire
          in case that changes.
 """
+import asyncio
 import hashlib
 import logging
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
 _HEADER_SIGNALS = ("deprecation", "sunset", "warning")
 _STATUS_SIGNALS = {301, 302, 307, 308, 404, 410, 501}
+_THROTTLE_S = 3600  # in-process: one alert attempt per (endpoint, reason) per hour (notify_owner de-dupes across processes)
+_last_alert: dict = {}
+_pending_tasks: set = set()
 _BODY_RE = re.compile(r"deprecat|decommission|retired|no longer (?:available|supported)", re.I)
 
 
@@ -50,11 +56,13 @@ def detect(response, endpoint: str = "") -> str:
     return ""
 
 
-async def check(endpoint: str, response) -> None:
-    """Alert the owner once per distinct (endpoint, reason). Never raises."""
-    reason = detect(response, endpoint)
-    if not reason:
+async def _alert(endpoint: str, reason: str) -> None:
+    """Log + owner alert for one detected signal. Never raises."""
+    key = (endpoint, reason)
+    now = time.monotonic()
+    if now - _last_alert.get(key, -_THROTTLE_S) < _THROTTLE_S:
         return
+    _last_alert[key] = now
     logger.error("eBay API change signal on %s: %s", endpoint, reason)
     try:
         from BACKEND_API_ROUTES import notify_owner
@@ -72,3 +80,33 @@ async def check(endpoint: str, response) -> None:
         )
     except Exception as exc:
         logger.error("ebay_api_watch alert failed: %s", exc)
+
+
+async def check(endpoint: str, response) -> None:
+    """Alert the owner once per distinct (endpoint, reason). Never raises."""
+    try:
+        reason = detect(response, endpoint)
+        if reason:
+            await _alert(endpoint, reason)
+    except Exception as exc:  # a watcher must never break the caller
+        logger.error("ebay_api_watch check failed: %s", exc)
+
+
+def check_sync(endpoint: str, response) -> None:
+    """Same inspection for SYNC call sites (e.g. external_fitment_providers.classify_external_payload).
+    With a running event loop the alert is scheduled as a task; without one (CLI pass) the
+    signal is logged at ERROR only. Never raises, never blocks."""
+    try:
+        reason = detect(response, endpoint)
+        if not reason:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error("eBay API change signal on %s: %s (no event loop - owner alert skipped)", endpoint, reason)
+            return
+        task = loop.create_task(_alert(endpoint, reason))
+        _pending_tasks.add(task)
+        task.add_done_callback(_pending_tasks.discard)
+    except Exception as exc:
+        logger.error("ebay_api_watch check_sync failed: %s", exc)
