@@ -4834,10 +4834,10 @@ def is_running() -> bool:
 _bg_task: Optional[asyncio.Task] = None
 
 
-# run_all_tasks schedule (owner 2026-10-27: 3 times a day, never in customer hours).
+# run_all_tasks schedule (owner 2026-10-27: 3 times a day, never in customer hours; moved to the night block 2026-11-18 so evening/daytime deploys are not blocked).
 # Fixed local (Israel) slots replace the old "every 3 h around the clock" interval, which also
 # caught up IMMEDIATELY after every restart — a 11:52 deploy started a midday cycle at 11:54.
-DB_AGENT_RUN_TIMES_IL = os.getenv("DB_AGENT_RUN_TIMES_IL", "21:30,00:15,07:15")
+DB_AGENT_RUN_TIMES_IL = os.getenv("DB_AGENT_RUN_TIMES_IL", "01:00,03:00,05:00")
 # A missed slot (backend down / lock busy / deferred) is caught up only this long after it; later
 # than that the cycle waits for the next slot instead of running at an unplanned hour.
 DB_AGENT_CATCHUP_WINDOW_S = float(os.getenv("DB_AGENT_CATCHUP_WINDOW_S", "7200"))

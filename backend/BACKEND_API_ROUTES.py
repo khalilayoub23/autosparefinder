@@ -2817,23 +2817,26 @@ async def _meili_sync_loop() -> None:
     this had no scheduling whatsoever (no cron, not in run_all_tasks) — it ran
     once manually on 2026-06-24 and then drifted for 6 days, ending up ~580K
     documents behind the catalog (everything harvested since wasn't searchable).
-    Runs incremental (MEILI_REBUILD=0 in env, not a full rebuild) every 2h,
+    Runs incremental (MEILI_REBUILD=0 in env, not a full rebuild) at the fixed night slots MEILI_SYNC_TIMES_IL,
     then verifies the destination actually matches the source (parity check).
     """
     import sys as _sys
 
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "meili_sync.py")
-    # Restart-safe cadence (2026-10-10): 2 h after the last COMPLETED sync, not 600 s after
-    # every container start. An interrupted sync (checkpoint not complete) resumes at 600 s.
-    _first = 600.0
-    try:
-        from local_schedule import delay_after_restart
-        from meili_checkpoint_state import last_completed_sync
-        _first = delay_after_restart(last_completed_sync(), 7200, 600)
-    except Exception as _mexc:
-        print(f"[meili_sync_loop] restart-cadence check skipped: {_mexc}", flush=True)
-    print(f"[meili_sync_loop] first sync after this start in {_first / 60:.0f} min", flush=True)
-    await asyncio.sleep(_first)
+    # Fixed night slots (owner 2026-11-18): the sync used to run every 2 h around the clock, so it
+    # blocked every daytime restart/deploy preflight. Now it runs only at MEILI_SYNC_TIMES_IL (Israel
+    # local), each after a run_all_tasks cycle. Restart-safe by construction: a restart just waits
+    # for the next slot; an interrupted sync resumes from its checkpoint at the next slot.
+    from local_schedule import parse_times, next_slot_utc, LOCAL_TZ
+    _times = parse_times(os.getenv("MEILI_SYNC_TIMES_IL", "02:15,04:15,06:15"))
+
+    async def _wait_next_meili_slot():
+        _nxt = next_slot_utc(_times)
+        _wait = max(1.0, (_nxt - datetime.now(timezone.utc)).total_seconds())
+        print(f"[meili_sync_loop] next sync {_nxt.astimezone(LOCAL_TZ):%Y-%m-%d %H:%M %Z} (in {_wait / 60:.0f} min)", flush=True)
+        await asyncio.sleep(_wait)
+
+    await _wait_next_meili_slot()
     while True:
         try:
             print("[meili_sync_loop] starting incremental sync", flush=True)
@@ -2897,7 +2900,7 @@ async def _meili_sync_loop() -> None:
             await _meili_verify_parity()
         except Exception as exc:
             print(f"[meili_sync_loop] error: {exc}", flush=True)
-        await asyncio.sleep(7200)  # every 2h
+        await _wait_next_meili_slot()
 
 
 # Single job_registry-name → Redis-lock-name map for the jobs that run as asyncio tasks
@@ -3100,7 +3103,7 @@ async def startup():
     import night_pipeline as _night_pipeline
     _supervised_task("night_pipeline",              _night_pipeline.controller_loop())
     start_scraper_task()           # ← catalog scraper: FX refresh + Jaguar todos every 3h (heavy night work → night_pipeline)
-    start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent — fixed Israel slots DB_AGENT_RUN_TIMES_IL (default 21:30,00:15,07:15); the 3.0 is ignored
+    start_db_agent(get_db, 3.0)   # ← DB cleaning / normalisation agent — fixed Israel slots DB_AGENT_RUN_TIMES_IL (default 01:00,03:00,05:00); the 3.0 is ignored
     _supervised_task("cleanup_loop",                run_cleanup_loop())
     _supervised_task("noa_marketing_loop",          _noa_marketing_loop(), restart=_noa_marketing_loop)
     _supervised_task("noa_engagement_loop",         _noa_engagement_loop(), restart=_noa_engagement_loop)

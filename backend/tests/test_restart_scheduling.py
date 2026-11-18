@@ -72,8 +72,10 @@ def test_both_loops_use_the_restart_safe_delay():
     api = (BACKEND / "BACKEND_API_ROUTES.py").read_text(encoding="utf-8")
     meili = next(n for n in ast.walk(ast.parse(api)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_meili_sync_loop")
     body = ast.get_source_segment(api, meili)
-    assert "delay_after_restart(last_completed_sync(), 7200, 600)" in body
-    assert "await asyncio.sleep(600)" not in body                              # the start-anchored sleep is gone
+    # 2026-11-18 (owner): fixed night slots (MEILI_SYNC_TIMES_IL) replace the 2 h interval; a restart
+    # only waits for the next slot, never starts a sync.
+    assert "MEILI_SYNC_TIMES_IL" in body and "next_slot_utc(_times)" in body
+    assert "await asyncio.sleep(7200)" not in body and "await asyncio.sleep(600)" not in body                              # the start-anchored sleep is gone
     agent = (BACKEND / "db_update_agent.py").read_text(encoding="utf-8")
     loop = next(n for n in ast.walk(ast.parse(agent)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_agent_loop")
     body = ast.get_source_segment(agent, loop)

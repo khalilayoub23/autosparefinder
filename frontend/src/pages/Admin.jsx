@@ -3351,11 +3351,14 @@ export default function Admin() {
           {/* Format guide */}
           <div className="card p-5">
             <h4 className="text-sm font-semibold text-gray-700 mb-3">מבנה קובץ Excel לדוגמה</h4>
+            <p className="text-xs text-gray-500 mb-2" data-testid="admin-upload-price-hint">
+              <span className="font-mono">max_price_ils</span> — מחיר קמעונאי / מחיר ייחוס (לא עלות רכש מספק). הכותרת הישנה <span className="font-mono">base_price</span> עדיין מתקבלת.
+            </p>
             <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-gray-100">
-                    {['sku / pin', 'name', 'category', 'manufacturer', 'part_type', 'base_price', 'compatible_vehicles'].map(h => (
+                    {['sku / pin', 'name', 'category', 'manufacturer', 'part_type', 'max_price_ils', 'compatible_vehicles'].map(h => (
                       <th key={h} className="text-left p-2 border border-gray-200 font-mono whitespace-nowrap">{h}</th>
                     ))}
                   </tr>

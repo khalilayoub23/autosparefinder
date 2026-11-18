@@ -4465,7 +4465,7 @@ async def import_parts_excel(
     _MFR   = {'manufacturer', 'יצרן', 'brand', 'מותג'}
     _TYPE  = {'part_type', 'type', 'סוג', 'סוג חלק'}
     _DESC  = {'description', 'תיאור', 'desc'}
-    _PRICE = {'base_price', 'price', 'מחיר', 'base price'}
+    _PRICE = {'max_price_ils', 'base_price', 'price', 'מחיר', 'base price'}  # base_price = legacy alias; both -> max_price_ils
     _COMPAT= {'compatible_vehicles', 'רכבים', 'רכבים תואמים', 'compatible vehicles'}
 
     def _col(names):

@@ -649,8 +649,8 @@ Which code a process runs is proven with `maintenance/runtime_identity_check.py 
 never authorizes a supplier order or payment; `אשררכש` / `אשרתשלוםספק` / `אשרספק` / `אשרפניותספקים` are the only
 approval sources. BOAZ owns todos under every spelling (`agent_identity.py`) and executes them (`boaz_tasks.py`).
 **Layer B — pipeline workers**: `catalog_scraper` (ingest), `db_cleanup_agent` (30s self-heal),
-`db_update_agent` (`run_all_tasks` 3×/day at 21:30/00:15/07:15 Israel, `DB_AGENT_RUN_TIMES_IL`), `ai_catalog_builder` (enrichment), `meili_sync`
-(indexing, 2h loop), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
+`db_update_agent` (`run_all_tasks` 3×/day at 01:00/03:00/05:00 Israel, `DB_AGENT_RUN_TIMES_IL`), `ai_catalog_builder` (enrichment), `meili_sync` (fixed 02:15/04:15/06:15 IL, `MEILI_SYNC_TIMES_IL`)
+(indexing), `run_rex_transport_office_pipeline` (vehicle registry), REX harvest queue,
 `services/ebay_price_sync` + `aliexpress_price_sync`, `auto_backup` (24h). Phase order →
 `docs/phases.md`.
 
@@ -1066,7 +1066,7 @@ Every scraper/importer must write to these 3 tables together (atomically):
 | Owner | File | Schedule | Responsibility |
 |---|---|---|---|
 | **REX** | `catalog_scraper.py` | Every 3h | Catalog discovery — scrapes OEM sites, writes parts_catalog + supplier_parts |
-| **DB Update Agent** | `db_update_agent.py` | 21:30/00:15/07:15 Israel | Data quality — normalizes names, types, categories, prices, fitment |
+| **DB Update Agent** | `db_update_agent.py` | 01:00/03:00/05:00 Israel | Data quality — normalizes names, types, categories, prices, fitment |
 | **DB Cleanup Agent** | `db_cleanup_agent.py` | Every 30s | Continuous self-healing — fixes types, OEM numbers, categories, zombie jobs, **importer_price_ils=0 → heal**, **'New'→'new' → heal** |
 | **Boaz** | `BACKEND_AI_AGENTS.py` | Daily | Price pipeline — market price drift on supplier_parts |
 | **Importers** | `samelet_import_v2.py` etc. | On-demand | IL importer data — must follow Rules 1-3 above |

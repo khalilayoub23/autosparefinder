@@ -15,6 +15,7 @@ import db_update_agent as dua
 import local_schedule as ls
 
 IL = ZoneInfo("Asia/Jerusalem")
+# Algorithm fixture (independent of the production default below): slots 21:30, 00:15, 07:15.
 TIMES = ls.parse_times("21:30,00:15,07:15")
 
 
@@ -23,8 +24,8 @@ def il(y, mo, d, h, mi):
 
 
 def test_default_slots_are_the_owner_choice():
-    assert dua.DB_AGENT_RUN_TIMES_IL == "21:30,00:15,07:15"
-    assert ls.parse_times(dua.DB_AGENT_RUN_TIMES_IL) == [(0, 15), (7, 15), (21, 30)]
+    assert dua.DB_AGENT_RUN_TIMES_IL == "01:00,03:00,05:00"
+    assert ls.parse_times(dua.DB_AGENT_RUN_TIMES_IL) == [(1, 0), (3, 0), (5, 0)]
     assert dua.DB_AGENT_CATCHUP_WINDOW_S == 7200
 
 
