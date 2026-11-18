@@ -52,6 +52,7 @@ CRITICAL BUSINESS RULES (enforced in prompts & code):
 import json
 import os
 import offer_classification as _oc
+from price_sync_report import price_sync_breakdown
 import re
 import random
 import string
@@ -4664,7 +4665,8 @@ class SupplierManagerAgent(BaseAgent):
                 db.add(SystemLog(
                     level="INFO",
                     logger_name="supplier_manager_agent",
-                    message=f"[Price Sync] real-data-only mode updated={report['parts_updated']} errors={len(report['errors'])}",
+                    message=(f"[Price Sync] real-data-only mode updated={report['parts_updated']} errors={len(report['errors'])} "
+                             + price_sync_breakdown(ebay_report, aliexpress_report)),
                     endpoint="/background/price-sync",
                     method="CRON",
                 ))
@@ -4677,7 +4679,7 @@ class SupplierManagerAgent(BaseAgent):
                     version_tag=f"price-sync-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     description=(
                         f"Real-data sync only: {report['parts_updated']} updated via provider APIs; "
-                        "synthetic drift disabled"
+                        "synthetic drift disabled; " + price_sync_breakdown(ebay_report, aliexpress_report)
                     ),
                     parts_added=0,
                     parts_updated=report["parts_updated"],

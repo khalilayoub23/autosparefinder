@@ -942,6 +942,16 @@ async def _status_update_loop() -> None:
                     SELECT COUNT(*) FROM parts_catalog WHERE is_active = TRUE
                 """))).scalar() or 0
 
+                # Price-update activity is a DIFFERENT metric from catalog size (2026-11-18): the active-part count
+                # cannot move when a price changes. Last real price-sync run, straight from its own audit row.
+                try:
+                    _psync = (await _db.execute(text("""
+                        SELECT created_at, parts_updated, description FROM catalog_versions
+                        WHERE source = 'supplier_manager_agent' ORDER BY created_at DESC LIMIT 1
+                    """))).fetchone()
+                except Exception:
+                    _psync = None
+
                 # Harvest-queue progress: add live IL-queue coverage + 24h delta.
                 _hq = (await _db.execute(text("""
                     SELECT
@@ -1004,7 +1014,15 @@ async def _status_update_loop() -> None:
                 lines.append("\n*משימות REX לקטלוג:*")
                 lines.extend(_rex_lines)
 
-            lines.append(f"\n*קטלוג:* {total_parts:,} חלקים פעילים")
+            lines.append(f"\n*קטלוג (גודל בלבד, לא פעילות מחירים):* {total_parts:,} חלקים פעילים")
+            if _psync is not None:
+                _age_h = int((datetime.utcnow() - _psync.created_at).total_seconds() // 3600)
+                lines.append(f"*עדכוני מחיר (eBay/AliExpress), ריצה אחרונה לפני {_age_h} שע':* {_psync.parts_updated} עודכנו")
+                _why = (_psync.description or "").split("synthetic drift disabled;")[-1].strip()
+                if _why and "checked=" in _why:
+                    lines.append(f"  {_why}")
+            else:
+                lines.append("*עדכוני מחיר:* אין נתונים (נתוני הניטור לא זמינים)")
             if new_parts:
                 lines.append(f"  +{new_parts} נוספו ב-30 דקות האחרונות")
 
