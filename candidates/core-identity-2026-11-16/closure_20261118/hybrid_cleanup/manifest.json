@@ -1,0 +1,152 @@
+[
+ {
+  "fitment_id": "0178ac84-4fab-4831-82a7-c0190ecffdfc",
+  "part_id": "7fe39988-b9b4-48e9-b636-9d19260cd129",
+  "part_sku": "686S0003",
+  "part_name": "Spark plug (RIDEX, 686S0003)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Spark plug (RIDEX, 686S0003)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "2b8bfb1a-81d4-4518-b19b-ab13d98c4ce8",
+  "part_id": "16cb1320-f74d-4411-b543-7ca8cf087d69",
+  "part_sku": "1 987 302 777",
+  "part_name": "High beam bulb (BOSCH, 1 987 302 777)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'High beam bulb (BOSCH, 1 987 302 777)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "b8808351-c4a0-4f4a-ada6-79cb764231f1",
+  "part_id": "c09cd01c-1199-40e9-98a0-6798496a9d04",
+  "part_sku": "7O0005",
+  "part_name": "Oil filter (RIDEX, 7O0005)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Oil filter (RIDEX, 7O0005)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "58274d4d-c015-4cb1-b6e8-c35ea52c3206",
+  "part_id": "0656b4c5-062e-4481-b35b-bd569eaae9c9",
+  "part_sku": "243G0006",
+  "part_name": "Glow plug (RIDEX, 243G0006)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Glow plug (RIDEX, 243G0006)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "43578f41-e924-4d82-a8ad-7579477fe104",
+  "part_id": "741cc033-b1e5-4d82-9b4b-73ac74c0c512",
+  "part_sku": "402B0033",
+  "part_name": "Brake pad set (RIDEX, 402B0033)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Brake pad set (RIDEX, 402B0033)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "2fadc3c0-e01b-4a11-aa0a-969df21aca95",
+  "part_id": "9fba435d-7264-4ff7-a9f1-89721d308e90",
+  "part_sku": "8GD 002 078-121",
+  "part_name": "Indicator bulb (HELLA, 8GD 002 078-121)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Indicator bulb (HELLA, 8GD 002 078-121)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "5335b36c-41c0-446b-a928-f8c6979c3bae",
+  "part_id": "9ce8b170-397f-472a-94a5-0088b050555a",
+  "part_sku": "108 647",
+  "part_name": "Sump plug washer (TOPRAN, 108 647)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Sump plug washer (TOPRAN, 108 647)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "c2df78c2-0f0c-4172-a344-fb582db3632b",
+  "part_id": "f5d49027-9f13-492b-aed9-4c482d64670f",
+  "part_sku": "7501",
+  "part_name": "Brake Fluid (A.B.S., 7501)",
+  "manufacturer": "Hyundai",
+  "model": "Elantra Hev",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Brake Fluid (A.B.S., 7501)' came from the page-wide popular-parts block of the Elantra Hev listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "b132b953-4a5e-40a5-87f5-61b2e5af0c72",
+  "part_id": "1c9589ab-114f-477e-beba-d643f0ebb372",
+  "part_sku": "686S0003",
+  "part_name": "Spark plug (RIDEX, 686S0003)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Spark plug (RIDEX, 686S0003)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "901962df-a32d-4b85-8f79-f8d121deeb4f",
+  "part_id": "80d22fba-7bd6-4344-a159-4156b3d66034",
+  "part_sku": "243G0006",
+  "part_name": "Glow plug (RIDEX, 243G0006)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Glow plug (RIDEX, 243G0006)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "da5b3f88-e182-48ea-88ae-78ad4c50b3b5",
+  "part_id": "f9f87efc-4b88-4eed-91fc-783d61d4faa0",
+  "part_sku": "402B0033",
+  "part_name": "Brake pad set (RIDEX, 402B0033)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Brake pad set (RIDEX, 402B0033)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "400b5272-dca1-43e8-91d1-63eb621e33ef",
+  "part_id": "a2c94082-c6d3-44aa-87aa-a32dfbb27f4e",
+  "part_sku": "8GD 002 078-121",
+  "part_name": "Indicator bulb (HELLA, 8GD 002 078-121)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Indicator bulb (HELLA, 8GD 002 078-121)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "7016522d-c683-4874-815c-348091d4d556",
+  "part_id": "082c8040-6d9c-4d29-a973-7138dcf85f55",
+  "part_sku": "1 987 302 777",
+  "part_name": "High beam bulb (BOSCH, 1 987 302 777)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'High beam bulb (BOSCH, 1 987 302 777)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "abec9563-b7c7-4565-90af-aadba02d509b",
+  "part_id": "d8ac9aad-c816-4a22-84e0-0d2b1c28fb15",
+  "part_sku": "108 647",
+  "part_name": "Sump plug washer (TOPRAN, 108 647)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Sump plug washer (TOPRAN, 108 647)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ },
+ {
+  "fitment_id": "a4653b1f-e5e8-4d11-a636-5693f8fb1668",
+  "part_id": "443c26d2-5ec7-4de4-be1b-a4a46f824729",
+  "part_sku": "7501",
+  "part_name": "Brake Fluid (A.B.S., 7501)",
+  "manufacturer": "Toyota",
+  "model": "Rav4 Hybrid",
+  "action": "DELETE_FITMENT_ROW",
+  "evidence": "'Brake Fluid (A.B.S., 7501)' came from the page-wide popular-parts block of the Rav4 Hybrid listing (payload <100 items; listing page 'brakes-auto', name category 'block-item (generic popular-parts block, year 1990-2030)'); no vehicle-specific evidence"
+ }
+]
