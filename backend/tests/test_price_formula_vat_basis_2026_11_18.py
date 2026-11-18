@@ -130,3 +130,22 @@ def test_admin_parts_import_file_is_a_multipart_upload_not_a_query_param():
     fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "import_parts_excel")
     arg = next(a for a in fn.args.args if a.arg == "file")
     assert arg.annotation is not None and ast.unparse(arg.annotation) == "UploadFile"
+
+
+def test_admin_parts_import_new_part_has_manufacturer_id_lowercase_condition_and_savepoint():
+    """2026-11-18 live finding #2: a NEW part was inserted without manufacturer_id (NOT NULL) -> 500 and nothing stored."""
+    src = (BACKEND / "routes" / "admin.py").read_text()
+    body = src.split("async def import_parts_excel", 1)[1].split("# JOB FAILURES", 1)[0]
+    assert "manufacturer_id=_mfr_id" in body
+    assert "rejected_manufacturer" in body and "LOWER(name) = LOWER(:n)" in body      # exact brand match, no create, no LIKE
+    assert "part_condition='new'" in body
+    assert "db.begin_nested()" in body
+    assert "base_price=" not in body                                                  # the upload never writes base_price
+
+
+def test_admin_frontend_import_overrides_json_content_type():
+    f = BACKEND.parent / "frontend" / "src" / "pages" / "Admin.jsx"
+    if not f.exists():
+        pytest.skip("frontend sources are not mounted in the backend container (runs on the host)")
+    src = f.read_text()
+    assert "api.post('/admin/parts/import', fd, { headers: { 'Content-Type': undefined } })" in src

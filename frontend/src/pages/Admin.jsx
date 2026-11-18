@@ -3162,12 +3162,14 @@ export default function Admin() {
                 try {
                   const fd = new FormData()
                   fd.append('file', importFile)
-                  const { data } = await api.post('/admin/parts/import', fd)
+                  const { data } = await api.post('/admin/parts/import', fd, { headers: { 'Content-Type': undefined } })
                   setImportResult({ ok: true, ...data })
                   toast.success(`נוספו ${data.created} חלקים, עודכנו ${data.updated}`)
                   setImportFile(null)
                 } catch (err) {
-                  const msg = err.response?.data?.detail || 'שגיאה בייבוא'
+                  const _d = err.response?.data?.detail
+                  const msg = Array.isArray(_d) ? _d.map((e) => e?.msg || JSON.stringify(e)).join('; ')
+                    : (typeof _d === 'string' ? _d : 'שגיאה בייבוא')
                   setImportResult({ ok: false, msg })
                   toast.error(msg)
                 } finally {

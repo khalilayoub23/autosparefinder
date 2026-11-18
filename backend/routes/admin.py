@@ -4498,6 +4498,7 @@ async def import_parts_excel(
     rejected_prices = []   # [{row, value, reason}] - unusable price cells are reported, never guessed
     errors = []
     rejected_part_type = []   # [{row, label, reason}] - labels variant_identity cannot place are reported, never guessed
+    rejected_manufacturer = []   # [{row, manufacturer, reason}] - a NEW part needs a known brand (parts_catalog.manufacturer_id is NOT NULL)
 
     for row_num, row in enumerate(rows[1:], start=2):
         sku_val = _get(row, 'sku')
@@ -4539,6 +4540,20 @@ async def import_parts_excel(
                 select(PartsCatalog).where(PartsCatalog.sku == sku_val)
             )).scalars().first()
 
+            _mfr_name = _get(row, 'manufacturer')
+            _mfr_id = None
+            if not existing:
+                # parts_catalog.manufacturer_id is NOT NULL: resolve by EXACT brand name only (never create a brand from an upload typo,
+                # never substring-match - FIXES_TRACKER #150). Missing/unknown brand -> the row is rejected and reported.
+                if _mfr_name:
+                    _mfr_id = (await db.execute(text("SELECT id FROM car_brands WHERE LOWER(name) = LOWER(:n) LIMIT 1"),
+                                                {"n": _mfr_name})).scalar()
+                if _mfr_id is None:
+                    rejected_manufacturer.append({"row": row_num, "manufacturer": _mfr_name,
+                                                  "reason": "manufacturer missing or not an existing car brand (exact name required for a new part)"})
+                    skipped += 1
+                    continue
+
             if existing:
                 existing.name          = name_val
                 existing.category      = _get(row, 'category') or existing.category
@@ -4553,17 +4568,21 @@ async def import_parts_excel(
                 existing.updated_at = datetime.utcnow()
                 updated += 1
             else:
-                db.add(PartsCatalog(
-                    sku=sku_val,
-                    name=name_val,
-                    category=_get(row, 'category'),
-                    manufacturer=_get(row, 'manufacturer'),
-                    part_type=_pt_class or 'aftermarket',
-                    description=_get(row, 'description'),
-                    max_price_ils=price,                    # retail/reference only; base_price starts unset (rule-owned)
-                    compatible_vehicles=compat,
-                    is_active=True,
-                ))
+                async with db.begin_nested():            # savepoint: one bad row must not poison the whole upload's transaction
+                    db.add(PartsCatalog(
+                        sku=sku_val,
+                        name=name_val,
+                        category=_get(row, 'category'),
+                        manufacturer=_mfr_name,
+                        manufacturer_id=_mfr_id,
+                        part_condition='new',                   # lowercase (CLAUDE.md pattern 3); the model default 'New' is wrong
+                        part_type=_pt_class or 'aftermarket',
+                        description=_get(row, 'description'),
+                        max_price_ils=price,                    # retail/reference only; base_price starts unset (rule-owned)
+                        compatible_vehicles=compat,
+                        is_active=True,
+                    ))
+                    await db.flush()
                 created += 1
                 if price is not None:
                     prices_stored_as_reference += 1
@@ -4579,6 +4598,7 @@ async def import_parts_excel(
         "skipped": skipped,
         "errors": errors,
         "rejected_part_type": rejected_part_type,
+        "rejected_manufacturer": rejected_manufacturer,
         "defaulted_part_type": defaulted_part_type,
         "total_processed": created + updated,
         # the price column is kept as the retail/reference price (max_price_ils); base_price is derived by the price policy
