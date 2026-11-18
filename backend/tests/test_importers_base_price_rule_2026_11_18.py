@@ -304,7 +304,7 @@ def test_samelet_upsert_statement_has_14_parameters_and_no_base_price_update():
 # NO file outside this allowlist may write base_price or compute `x 1.45`/`x MARGIN`. The scan reads CODE only (comments/docstrings are
 # stripped), over every .py/.sh of backend/ except tests/devtests/legacy/alembic/candidates/state/data/uploads.
 _WRITER_PAT = re.compile(r"(?<![A-Za-z_])base_price\s*(?:=(?!=)(?!\s*0(?:\.0+)?\b)|:=)|EXCLUDED\.base_price|SET\s+base_price|"
-                         r"\*\s*1\.45|1\.45\s*\*|\*\s*(?:_?pp\.|_pp\.)?MARGIN\b|\b(?:_?pp\.)?MARGIN\s*\*")
+                         r"\*\s*1\.45|1\.45\s*\*|/\s*1\.45\b|Decimal\(\s*[\"']1\.45|\*\s*(?:_?pp\.|_pp\.)?MARGIN\b|\b(?:_?pp\.)?MARGIN\s*\*|/\s*(?:_?pp\.)?MARGIN\b")
 _SCAN_EXCLUDE = {"tests", "devtests", "legacy", "alembic", "candidates", "node_modules", "__pycache__", "state", "data", "uploads", "test_images", "archive"}
 ALLOWED_WRITERS = {
     # the ONE rule and the maintenance tasks that call it
@@ -322,8 +322,6 @@ ALLOWED_WRITERS = {
     "maintenance/cpie_overwrite_repair.py": "owner-run repair, manifest-pinned",
     "maintenance/repair_double_margin_129.py": "owner-run journaled repair (rollback)",
     "maintenance/repair_vat_paths_151.py": "owner-run journaled repair (rollback)",
-    # human-entered admin spreadsheet price: NOT migrated, open owner decision (FIXES_TRACKER 2026-11-18)
-    "routes/admin.py": "admin bulk upload stores the HUMAN-entered price column; cost semantics undefined - owner decision pending",
 }
 
 
@@ -662,3 +660,276 @@ def test_retry_queue_skips_a_malformed_line_and_rejects_non_uuid_ids(tmp_path, m
     assert "malformed line" in caplog.text and "non-UUID" in caplog.text
     assert f.read_text() == ""
     assert bpr._retry_take() == []
+
+
+# ───────────────── mission 2026-11-18 (2): max_price_ils is never cost evidence for base_price ─────────────────
+def test_rule_target_ignores_max_price_ils_but_the_customer_estimate_still_reads_it():
+    from types import SimpleNamespace
+    import base_price_rule as bpr
+    import price_policy as pp
+    base = dict(offer_ils=None, offer_usd=None, offer_supplier=None, offer_country=None, has_visible=False, other_class_only=False,
+                importer_price_ils=None, online_price_ils=None, max_price_ils=118.0, base_price=0)
+    assert bpr.target(SimpleNamespace(**base), 3.2) == (None, "no_basis")                       # retail reference alone -> unpriced
+    assert bpr.target(SimpleNamespace(**{**base, "importer_price_ils": 100.0}), 3.2) == (145.0, "estimate")
+    assert bpr.target(SimpleNamespace(**{**base, "online_price_ils": 50.0}), 3.2) == (72.5, "estimate")   # foreign buy price counts
+    assert pp.catalog_estimate(None, 118.0, None) == (100.0, "il")                               # display policy UNCHANGED (customer-facing)
+
+
+async def test_apply_to_parts_never_prices_a_part_from_max_price_alone():
+    import base_price_rule as bpr
+    c = await _connect()
+    tag = "BPM" + uuid.uuid4().hex[:6].upper()
+    try:
+        pid = await _seed_part(c, tag, "Kia", oem=f"{tag}M1")
+        await c.execute("UPDATE parts_catalog SET max_price_ils=118, importer_price_ils=NULL, online_price_ils=NULL, base_price=0 WHERE id=$1::uuid", pid)
+        res = await bpr.apply_to_parts(c, [pid])
+        assert res["updated"] == 0 and res["reasons"].get("no_basis") == 1
+        assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == 0.0
+    finally:
+        await _cleanup(c, tag)
+        await c.close()
+
+
+def test_catalog_estimate_output_is_never_written_into_a_cost_column():
+    """The estimate is display-only: no module may take catalog_estimate*(...) output and store it as importer/online/offer cost."""
+    callers = []
+    for p in sorted(ROOT.rglob("*.py")):
+        if any(x in p.parts for x in _SCAN_EXCLUDE):
+            continue
+        code = _strip_code(p.read_text(errors="replace"), ".py")
+        if "catalog_estimate" in code:
+            callers.append(str(p.relative_to(ROOT)))
+    assert set(callers) <= {"BACKEND_AI_AGENTS.py", "base_price_rule.py", "db_update_agent.py", "price_policy.py", "routes/cart.py", "routes/parts.py",
+                            "maintenance/repair_foreign_max_price_127.py", "BACKEND_DATABASE_MODELS.py"}, callers
+    rp = _strip_code((ROOT / "maintenance/repair_foreign_max_price_127.py").read_text(), ".py")
+    assert "importer_price_ils" in rp   # read-only comparison of before/after estimate (no write of the estimate)
+    for rel in ("BACKEND_AI_AGENTS.py", "routes/cart.py", "routes/parts.py"):
+        code = _strip_code((ROOT / rel).read_text(), ".py")
+        assert not re.search(r"(INSERT|UPDATE)[^;]{0,200}(importer_price_ils|supplier_parts)[^;]{0,200}catalog_estimate", code, re.S), rel
+
+
+def test_scraped_price_never_rescales_or_creates_a_supplier_cost():
+    import catalog_scraper as cs
+    assert cs.scraped_price_refresh(100.0, 108.0) == (108.0, "refreshed")
+    assert cs.scraped_price_refresh(100.0, 150.0)[0] is None                    # outside the band: parse/basis mismatch, not a price
+    assert cs.scraped_price_refresh(0.0, 250.0)[0] is None                      # an unpriced offer is never given a price from a page
+    assert cs.scraped_price_refresh(100.0, 0.0)[0] is None
+    src = _strip_code((ROOT / "catalog_scraper.py").read_text(), ".py")
+    assert "/ 1.18 / 1.45" not in src and "median_ils / 1.18" not in src
+
+
+# ───────────────── mission 2026-11-18 (2): supplier_pdf_import refreshes the offers of EXISTING parts ─────────────────
+async def _pdf_run(c, manufacturer, rows):
+    """One import pass exactly as the pipeline does it: read the DB rows, upsert, return metrics."""
+    import supplier_pdf_import as sp
+    db_rows = await sp.fetch_manufacturer_rows(c, manufacturer)
+    return await sp.upsert_parts(c, manufacturer, rows, db_rows, dry_run=False)
+
+
+def _pdf_row(oem, price, available=True):
+    import supplier_pdf_import as sp
+    return sp.PdfRow(oem_number=oem, oem_norm=sp.normalize_key(oem), name=f"Part {oem}", name_he="חלק", price=price, available=available)
+
+
+async def _offers(c, pid):
+    return await c.fetch("SELECT sp.id::text, sp.price_ils, sp.is_available, sp.supplier_sku, s.name sup FROM supplier_parts sp "
+                         "JOIN suppliers s ON s.id=sp.supplier_id WHERE sp.part_id=$1::uuid ORDER BY s.name", pid)
+
+
+@pytest.fixture
+async def pdf_env():
+    import price_policy as pp
+    c = await _connect()
+    tag = "BPD" + uuid.uuid4().hex[:6].upper()
+    await _brand(c, "Porsche")
+    sid = await _supplier(c, "Porsche Official Importer Israel", basis="exclusive")
+    yield c, tag, sid
+    await c.execute("DELETE FROM supplier_parts WHERE supplier_sku LIKE $1", f"{tag}%")
+    await _cleanup(c, tag)
+    await c.close()
+
+
+async def test_pdf_new_part_gets_its_offer_and_a_rule_priced_base(pdf_env):
+    c, tag, sid = pdf_env
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}N1", 118.0)])           # PDF price embeds 18% VAT -> ex-VAT cost 100
+    assert m["inserted"] == 1 and m["offers"].get("inserted") == 1, m
+    pid = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}N1")
+    off = await _offers(c, pid)
+    assert len(off) == 1 and float(off[0]["price_ils"]) == 100.0 and off[0]["supplier_sku"] == f"{tag}N1"
+    row = await c.fetchrow("SELECT importer_price_ils, max_price_ils, base_price FROM parts_catalog WHERE id=$1::uuid", pid)
+    assert float(row["importer_price_ils"]) == 100.0 and float(row["max_price_ils"]) == 118.0 and float(row["base_price"]) == _expected_net(100.0)
+
+
+async def test_pdf_existing_part_changed_price_refreshes_offer_and_base(pdf_env):
+    c, tag, sid = pdf_env
+    await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}E1", 118.0)])
+    pid = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}E1")
+    offer_id = (await _offers(c, pid))[0]["id"]
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}E1", 236.0)])           # supplier raised the price
+    assert m["inserted"] == 0 and m["offers"].get("updated") == 1, m
+    off = await _offers(c, pid)
+    assert len(off) == 1 and off[0]["id"] == offer_id and float(off[0]["price_ils"]) == 200.0      # SAME offer row, new cost
+    assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == _expected_net(200.0)
+    # availability follows the PDF too
+    await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}E1", 236.0, available=False)])
+    assert (await _offers(c, pid))[0]["is_available"] is False
+
+
+async def test_pdf_unchanged_price_and_repeat_import_are_idempotent(pdf_env):
+    c, tag, sid = pdf_env
+    await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}I1", 118.0)])
+    pid = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}I1")
+    snap = (await _offers(c, pid), await c.fetchrow("SELECT importer_price_ils, max_price_ils, base_price FROM parts_catalog WHERE id=$1::uuid", pid))
+    for _ in range(2):
+        m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}I1", 118.0)])
+        assert m["offers"] == {"unchanged": 1} and m["inserted"] == 0, m
+    assert (await _offers(c, pid), await c.fetchrow("SELECT importer_price_ils, max_price_ils, base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == snap
+    assert await c.fetchval("SELECT count(*) FROM parts_catalog WHERE oem_number=$1", f"{tag}I1") == 1
+
+
+async def test_pdf_never_touches_another_suppliers_offer_or_another_parts_offer(pdf_env):
+    c, tag, sid = pdf_env
+    other = await _supplier(c, f"Other Supplier {tag}", basis="exclusive")
+    pid = await _seed_part(c, tag, "Porsche", oem=f"{tag}X1")
+    await c.execute("INSERT INTO supplier_parts(id,supplier_id,part_id,supplier_sku,price_ils,price_usd,availability,is_available,supplier_url,created_at,updated_at)"
+                    " VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3,77,0,'in_stock',true,'https://o.example',NOW(),NOW())", other, pid, f"{tag}OTHER")
+    await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}X1", 118.0)])
+    mine = [o for o in await _offers(c, pid) if o["sup"] == "Porsche Official Importer Israel"]
+    theirs = [o for o in await _offers(c, pid) if o["sup"] != "Porsche Official Importer Israel"]
+    assert len(mine) == 1 and float(mine[0]["price_ils"]) == 100.0
+    assert len(theirs) == 1 and float(theirs[0]["price_ils"]) == 77.0                      # untouched
+    # (supplier, sku) owned by ANOTHER part: that offer is left alone, the import reports it and does not price the part from it
+    p2 = await _seed_part(c, tag + "Z", "Porsche", oem=f"{tag}X2")
+    p3 = await _seed_part(c, tag + "Y", "Porsche", oem=f"{tag}X3")
+    await c.execute("INSERT INTO supplier_parts(id,supplier_id,part_id,supplier_sku,price_ils,price_usd,availability,is_available,supplier_url,created_at,updated_at)"
+                    " VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3,55,0,'in_stock',true,'https://p.example',NOW(),NOW())", sid, p3, f"{tag}X2")
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}X2", 118.0)])
+    assert m["offers"].get("skipped_sku_owned_by_other_part") == 1 and m["offer_skips"][0]["reason"] == "skipped_sku_owned_by_other_part", m
+    assert float(await c.fetchval("SELECT price_ils FROM supplier_parts WHERE part_id=$1::uuid", p3)) == 55.0
+    assert await c.fetchval("SELECT count(*) FROM supplier_parts WHERE part_id=$1::uuid", p2) == 0
+
+
+async def test_pdf_variant_offer_and_missing_price_are_reported_never_guessed(pdf_env):
+    c, tag, sid = pdf_env
+    pid = await _seed_part(c, tag, "Porsche", oem=f"{tag}V1")
+    await c.execute("INSERT INTO supplier_parts(id,supplier_id,part_id,supplier_sku,price_ils,price_usd,availability,is_available,supplier_url,part_type,created_at,updated_at)"
+                    " VALUES (gen_random_uuid(),$1::uuid,$2::uuid,$3,60,0,'in_stock',true,'https://v.example','aftermarket',NOW(),NOW())", sid, pid, f"{tag}V1-ALT")
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}V1", 118.0)])
+    assert m["offers"].get("skipped_other_offer_of_this_supplier_for_part") == 1, m             # differently-keyed variant offer: not guessed
+    assert float((await _offers(c, pid))[0]["price_ils"]) == 60.0 and len(await _offers(c, pid)) == 1
+    m2 = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}V2", None)])                                # no price evidence at all
+    p2 = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}V2")
+    assert not await _offers(c, p2) and float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", p2) or 0) == 0.0
+
+
+async def test_pdf_vat_basis_exclusive_prices_and_inclusive_supplier_is_blocked(pdf_env):
+    c, tag, sid = pdf_env
+    await c.execute("UPDATE suppliers SET vat_price_basis='inclusive' WHERE id=$1::uuid", sid)
+    import price_policy as pp
+    pp.load_vat_bases(None)
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}B1", 118.0)])
+    assert "offers_blocked" in m and m["offers"] == {}, m                                          # would be stripped of VAT twice by the rule
+    pid = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}B1")
+    assert not await _offers(c, pid)
+    await c.execute("UPDATE suppliers SET vat_price_basis='exclusive' WHERE id=$1::uuid", sid)
+    pp.load_vat_bases(None)
+    m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}B1", 118.0)])
+    assert m["offers"].get("inserted") == 1 or m["offers"].get("unchanged") == 1, m
+    assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == _expected_net(100.0)
+
+
+async def test_pdf_failed_offer_write_is_reported_and_does_not_price_the_part(pdf_env, monkeypatch, caplog):
+    import supplier_pdf_import as sp
+    c, tag, sid = pdf_env
+    await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}F1", 118.0)])
+    pid = await c.fetchval("SELECT id::text FROM parts_catalog WHERE oem_number=$1", f"{tag}F1")
+    real = sp._upsert_supplier_part
+
+    async def boom(conn, *a, **k):
+        return "failed:RuntimeError"
+    monkeypatch.setattr(sp, "_upsert_supplier_part", boom)
+    with caplog.at_level("ERROR"):
+        m = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}F1", 236.0)])
+    assert m["offers"] == {"failed": 1} and m["offer_failed_part_ids"] == [pid]
+    assert "offer writes FAILED" in caplog.text
+    assert float((await _offers(c, pid))[0]["price_ils"]) == 100.0                                    # offer not changed
+    assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == _expected_net(100.0)   # no misleading new base
+    monkeypatch.setattr(sp, "_upsert_supplier_part", real)                                             # recovery: the same PDF again
+    m2 = await _pdf_run(c, "Porsche", [_pdf_row(f"{tag}F1", 236.0)])
+    assert m2["offers"].get("updated") == 1
+    assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1::uuid", pid)) == _expected_net(200.0)
+
+
+# ───────────────── mission 2026-11-18 (2): routes/admin.py bulk upload - price is a reference, never base_price ─────────────────
+async def _admin_upload(rows, header=("sku", "name", "manufacturer", "part_type", "price")):
+    import io, openpyxl
+    from starlette.datastructures import UploadFile
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+    from routes import admin as adm
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(list(header))
+    for r in rows:
+        ws.append(list(r))
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    eng = create_async_engine(os.environ["DATABASE_URL"], poolclass=NullPool)
+    try:
+        async with AsyncSession(eng) as s:
+            return await adm.import_parts_excel(file=UploadFile(filename="parts.xlsx", file=buf), current_user=None, db=s)
+    finally:
+        await eng.dispose()
+
+
+async def test_admin_bulk_upload_keeps_the_price_as_a_reference_and_never_writes_base_price():
+    c = await _connect()
+    tag = "BPA" + uuid.uuid4().hex[:6].upper()
+    try:
+        # an EXISTING part whose base_price the rule already owns (cost 100 -> 145.00)
+        pid = await _seed_part(c, tag, "Kia", oem=f"{tag}-E")
+        await c.execute("UPDATE parts_catalog SET sku=$2, importer_price_ils=100, base_price=145, max_price_ils=0 WHERE id=$1::uuid", pid, f"{tag}-EX")
+        res = await _admin_upload([
+            (f"{tag}-EX", "Existing part", "Kia", "oem", 236.456),          # existing: reference price updated, base_price untouched
+            (f"{tag}-NEW", "New part", "Kia", "aftermarket", "1,180.50"),     # new: reference price kept, base_price unset
+            (f"{tag}-NOP", "No price part", "Kia", "oem", None),              # no price: unchanged behaviour
+            (f"{tag}-BAD", "Bad price part", "Kia", "oem", "abc"),            # unusable: reported, part still created
+            (f"{tag}-NEG", "Negative price", "Kia", "oem", -5),
+        ])
+        assert res["created"] == 4 and res["updated"] == 1 and res["errors"] == [], res
+        assert res["prices_stored_as_reference"] == 2 and res["price_target_column"] == "max_price_ils"
+        assert sorted(r["value"] for r in res["rejected_prices"]) == ["-5", "abc"]
+        ex = await c.fetchrow("SELECT base_price, max_price_ils, importer_price_ils FROM parts_catalog WHERE sku=$1", f"{tag}-EX")
+        assert float(ex["base_price"]) == 145.0 and float(ex["max_price_ils"]) == 236.46 and float(ex["importer_price_ils"]) == 100.0
+        new = await c.fetchrow("SELECT base_price, max_price_ils, importer_price_ils, part_type FROM parts_catalog WHERE sku=$1", f"{tag}-NEW")
+        assert float(new["base_price"] or 0) == 0.0 and float(new["max_price_ils"]) == 1180.5 and new["importer_price_ils"] is None and new["part_type"] == "aftermarket"
+        nop = await c.fetchrow("SELECT base_price, max_price_ils FROM parts_catalog WHERE sku=$1", f"{tag}-NOP")
+        assert float(nop["base_price"] or 0) == 0.0 and nop["max_price_ils"] is None
+        # the reference price is NOT cost evidence: the rule leaves the new part unpriced
+        import base_price_rule as bpr
+        pid_new = await c.fetchval("SELECT id::text FROM parts_catalog WHERE sku=$1", f"{tag}-NEW")
+        r = await bpr.apply_to_parts(c, [pid_new])
+        assert r["updated"] == 0 and r["reasons"].get("no_basis") == 1
+        # idempotent: the same file again changes nothing
+        res2 = await _admin_upload([(f"{tag}-EX", "Existing part", "Kia", "oem", 236.456)])
+        assert res2["created"] == 0 and res2["updated"] == 1
+        assert float(await c.fetchval("SELECT base_price FROM parts_catalog WHERE sku=$1", f"{tag}-EX")) == 145.0
+        assert await c.fetchval("SELECT count(*) FROM parts_catalog WHERE sku LIKE $1", f"{tag}-%") == 5
+    finally:
+        await c.execute("DELETE FROM parts_catalog WHERE sku LIKE $1", f"{tag}-%")
+        await _cleanup(c, tag)
+        await c.close()
+
+
+@pytest.mark.parametrize("price_header", ["price", "base_price", "מחיר", "base price"])
+async def test_admin_bulk_upload_accepts_every_existing_price_header(price_header):
+    c = await _connect()
+    tag = "BPH" + uuid.uuid4().hex[:5].upper()
+    try:
+        res = await _admin_upload([(f"{tag}-1", "Part", "Kia", "oem", 50)], header=("sku", "name", "manufacturer", "part_type", price_header))
+        assert res["created"] == 1 and res["prices_stored_as_reference"] == 1
+        assert float(await c.fetchval("SELECT max_price_ils FROM parts_catalog WHERE sku=$1", f"{tag}-1")) == 50.0
+    finally:
+        await c.execute("DELETE FROM parts_catalog WHERE sku LIKE $1", f"{tag}-%")
+        await c.close()

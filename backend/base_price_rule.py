@@ -61,7 +61,10 @@ def target(row: Any, usd_to_ils: float) -> Tuple[Optional[float], str]:
             return u.net, "offer"
     if row.has_visible or row.other_class_only:
         return None, "other_class_only"
-    est = pp.catalog_estimate_price(row.importer_price_ils, row.max_price_ils, row.online_price_ils)
+    # max_price_ils is the IL CONSUMER REFERENCE (a retail figure incl. VAT): the customer-facing estimate (price_policy.catalog_estimate)
+    # may read it as a display fallback, but it is NEVER cost evidence for base_price (owner rule 2026-11-18): only the importer's
+    # ex-VAT cost or the foreign buy price count. A part with neither stays unpriced (reason 'no_basis'), visibly.
+    est = pp.catalog_estimate_price(row.importer_price_ils, None, row.online_price_ils)
     if est is not None:
         return est.net, "estimate"
     return None, "no_basis"

@@ -229,7 +229,10 @@ print()
 print("=== TEST 20 — Decimal rounding ===")
 rec = fr.parse_freesbe_item({"partId": "RE-1", "price": "0.10", "priceWithoutVat": "0.10"})
 exp = fr.expected_values(rec)
-check("20: 0.10 * 1.45 rounds to exactly 0.15", str(exp["expected_base_price"]), "0.15")
+# the EXPECTED base_price is price_policy's own net (the value base_price_rule writes), not a literal Decimal formula of this tool:
+# round(0.10 * 1.45, 2) in the policy's float arithmetic is 0.14 (0.145 is not exactly representable) - the tool must agree with the rule.
+import price_policy as _pp
+check("20: expected base_price == the policy/rule net for this cost", str(exp["expected_base_price"]), f"{_pp.unit_price(0.10, supplier_country='il').net:.2f}")
 check_true("20: no float artifacts anywhere in parsed values", isinstance(rec["price"], Decimal) and isinstance(rec["price_without_vat"], Decimal))
 
 print()

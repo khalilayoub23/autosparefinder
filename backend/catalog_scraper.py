@@ -2196,6 +2196,25 @@ async def get_fitment_by_gov_codes(
     return [dict(r._mapping) for r in results]
 
 
+SCRAPED_PRICE_MAX_DRIFT = 0.25   # a scraped price differing from the stored offer by more than this is a parse/basis mismatch, not a price change
+
+
+def scraped_price_refresh(current_price_ils: float, scraped_ils: float) -> "tuple[Optional[float], str]":
+    """(new offer price, reason). A scraped supplier page price may refresh an offer that ALREADY has a price (so the VAT basis
+    the importer established is inherited) when it is within SCRAPED_PRICE_MAX_DRIFT of it; otherwise None + the reason, and the
+    stored price is left alone. Never derives a cost from a markup/VAT inversion."""
+    cur = float(current_price_ils or 0)
+    new = float(scraped_ils or 0)
+    if new <= 0:
+        return None, "no_scraped_price"
+    if cur <= 0:
+        return None, "offer_has_no_established_price_or_vat_basis"
+    if abs(new - cur) / cur > SCRAPED_PRICE_MAX_DRIFT:
+        return None, "outside_drift_band_probable_parse_or_vat_basis_mismatch"
+    return round(new, 2), "refreshed"
+
+
+
 async def _scrape_one_part(
     db: AsyncSession,
     part_id: str, sku: str, name: str,
@@ -2324,16 +2343,18 @@ async def _scrape_one_part(
     scraped_prices.sort()
     median_ils = scraped_prices[len(scraped_prices) // 2]
 
-    # Business rules:
-    # - Customer price = cost × 1.45 + 18% VAT + 91₪ shipping
-    # - Scraped market price ≈ final customer price at competitors
-    # - Derive our cost from scraped reference / 1.45 / 1.18 (rough)
-    derived_cost_ils = median_ils / 1.18 / 1.45
-
-    # Clamp update: don't move more than ±25% from current in a single run
-    old = current_price_ils or derived_cost_ils
-    new_ils = round(max(old * 0.75, min(derived_cost_ils, old * 1.25)), 2)
-
+    # The scraped number is THIS supplier's own quoted price for the part (the same quantity supplier_parts.price_ils stores), not a
+    # competitor's customer price. It used to be divided by 1.18 and 1.45 ("derive our cost from the market price") - a double
+    # adjustment that invented a supplier cost (and, clamped to +-25% per run, would have walked an offer down on every cycle).
+    # Evidence trail + decision: FIXES_TRACKER 2026-11-18 "catalog_scraper:2331". The page price's VAT basis is not known per
+    # supplier, so it may only CONFIRM/REFRESH an offer that already carries an established price (same basis), within a sane band;
+    # it never creates a price and never rescales one.
+    new_ils, _why = scraped_price_refresh(current_price_ils, median_ils)
+    old = current_price_ils
+    if new_ils is None:
+        logger.info("scraped price NOT applied for supplier_part_id=%s: %s (scraped=%.2f stored=%.2f)",
+                    supplier_part_id, _why, median_ils, current_price_ils)
+        new_ils = old
     # Hard cap: reject obviously corrupt prices (scraper parse errors produce huge numbers)
     _MAX_PRICE_ILS = 99_999.0
     if new_ils > _MAX_PRICE_ILS:

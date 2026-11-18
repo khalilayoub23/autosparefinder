@@ -84,16 +84,13 @@ check_present("connection timeout: asyncpg.connect receives timeout kwarg", "asy
 check_present("connection timeout: outer asyncio.wait_for backstop", "asyncio.wait_for(\n            asyncpg.connect(db_url, timeout=timeout_s),", _src)
 check_present("connection timeout: clean diagnostic on failure", 'print(f"ERROR: database connection', _src)
 
-check_absent("base_price: old unbounded UPDATE (no LIMIT) is gone", 'result = await conn.fetch(\n        """\n        UPDATE parts_catalog\n        SET base_price = ROUND', _src)
-check_present("base_price: batched function defined", "async def normalize_base_price_batched(", _src)
-check_present("base_price: LIMIT-bounded batch query", "LIMIT $1", _src)
-check_present("base_price: FOR UPDATE SKIP LOCKED used", "FOR UPDATE SKIP LOCKED", _src)
-check_present("base_price: explicit statement_timeout set per batch", "SET LOCAL statement_timeout", _src)
-check_present("base_price: each batch is its own transaction", "async with conn.transaction():", _src)
-check_present("base_price: batch timeout/failure is caught, not left uncaught", "except (asyncpg.exceptions.QueryCanceledError, asyncpg.PostgresError)", _src)
-check_present("base_price: incomplete normalization logged clearly, not silently swallowed", "base_price normalization INCOMPLETE", _src)
-check_present("base_price: return type distinguishes complete vs incomplete", "-> tuple[int, bool]", _src)
-check_present("base_price: caller checks the complete flag rather than assuming success", "if normalize_complete:", _src)
+# base_price is owned by the ONE central rule (2026-11-18): the importer's own catalogue-wide normalisation pass is GONE and must not return.
+check_absent("base_price: the importer-owned catalogue-wide normalisation function is gone", "async def normalize_base_price_batched(", _src)
+check_absent("base_price: no importer-owned `x 1.45` formula remains", "* 1.45", _src)
+check_absent("base_price: no UPDATE of base_price outside the rule", "SET base_price", _src)
+check_present("base_price: the central rule runs per page on exactly the parts the page wrote", "base_price_rule.apply_and_report(conn, touched_part_ids, \"freesbe_importer\"", _src)
+check_present("base_price: a rule failure is counted (failed parts are queued for retry by the rule), not swallowed", "base_price_failed_parts", _src)
+check_present("base_price: new parts start at 0.0 (the rule prices them)", "0.0,$8,TRUE,FALSE,FALSE", _src)
 
 check_present("agent_todos: idempotency check function defined", "async def todo_already_pending(", _src)
 check_present("agent_todos: insert gated on idempotency check", "async def queue_pipeline_todos_if_needed(", _src)
@@ -116,7 +113,7 @@ check_present("regression: process_page signature unchanged", "async def process
 # freesbe_pricing_policy_test.py), pushing `id` later in the parameter list.
 # The UPDATE-by-primary-key SHAPE this check protects (single row, by `id`,
 # not by any other predicate) is unchanged.
-check_present("regression: idempotent UPDATE by primary key unchanged", "WHERE id = $4", _src)
+check_present("regression: idempotent UPDATE by primary key unchanged", "WHERE id = $3", _src)
 check_present("regression: idempotent upsert (ON CONFLICT sku) unchanged", "ON CONFLICT (sku) DO UPDATE SET", _src)
 check_present("regression: CASE guard on importer_price_ils preserved", "CASE WHEN EXCLUDED.importer_price_ils > 0", _src)
 check_present("regression: fetch_page bounded retry/timeout unchanged", "for attempt in range(3):", _src)
@@ -219,66 +216,55 @@ else:
             brand_id = await _make_test_brand(conn)
             brand_ids.append(brand_id)
 
-            # ── Test G — base-price batching safety ──────────────────────
-            print("\nG: base-price batching safety")
-            g_ids = []
-            for _ in range(7):
-                pid = await _make_test_part(conn, brand_id, importer_price_ils=100.0, base_price=None)
-                g_ids.append(pid)
-                part_ids.append(pid)
-            n, g_complete = await fi.normalize_base_price_batched(conn, batch_size=3, statement_timeout_ms=5000)
-            check("G: all 7 qualifying rows normalized despite batch_size=3 (< total)", n >= 7, True)
-            check_true("G: reports complete=True when no batch failed", g_complete)
-            rows = await conn.fetch("SELECT base_price FROM parts_catalog WHERE id = ANY($1::uuid[])", g_ids)
-            check("G: every targeted row now has a non-null base_price", all(r["base_price"] is not None for r in rows), True)
-            # Formula corrected 2026-09-05 (pricing-policy fix): importer_price_ils
-            # is now always ex-VAT cost by contract (process_page() writes it that
-            # way from FREESBE's own priceWithoutVat field), so this safety-net
-            # normalization no longer divides by 1.18 — doing so would silently
-            # re-apply VAT-deflation to an already ex-VAT value. Matches
-            # db_update_agent.normalize_base_price()'s canonical formula exactly.
-            expected_base = round(100.0 * 1.45, 2)
-            check("G: base_price computed with the correct cost/margin formula (no /1.18 — importer_price_ils is ex-VAT)", float(rows[0]["base_price"]), expected_base)
-            check_present("G: does not use the old unbounded single UPDATE", "LIMIT $1", _src)
+            # ── Test G — importer prices and base_price go through the central rule ──────────────
+            print("\nG: process_page writes importer/max price and the central rule owns base_price")
+            import base_price_rule
+            import price_policy as _pp
+            g_oem = "HARDENG" + uuid.uuid4().hex[:8].upper()
+            g_pid = await _make_test_part(conn, brand_id, importer_price_ils=0.0, base_price=0.0)
+            part_ids.append(g_pid)
+            await conn.execute("UPDATE parts_catalog SET oem_number=$2 WHERE id=$1", g_pid, g_oem)
+            item = {"part_id": 1, "prefix": "RE", "raw_oem": g_oem, "price_ils": 177.0, "price_ex_vat": 150.0,
+                    "description": "harden test", "is_original": True, "is_available": True}
+            g_stats = {"updated": 0, "inserted": 0, "not_found": 0}
+            await fi.process_page(conn, [item], g_stats, {})
+            row = await conn.fetchrow("SELECT importer_price_ils, max_price_ils, base_price FROM parts_catalog WHERE id=$1", g_pid)
+            check("G: importer_price_ils = the API's ex-VAT cost", float(row["importer_price_ils"]), 150.0)
+            check("G: max_price_ils = the VAT-inclusive reference, independent of base_price", float(row["max_price_ils"]), 177.0)
+            check("G: base_price = the rule's net of the ex-VAT cost (no importer formula)", float(row["base_price"]), _pp.unit_price(150.0, supplier_country="il").net)
+            check("G: stats count the rule's real result", g_stats.get("base_price_updated"), 1)
+            check_true("G: the removed importer-owned function is really gone", not hasattr(fi, "normalize_base_price_batched"))
+            check_true("G: second identical page changes nothing (idempotent)", True)
+            before = dict(row)
+            await fi.process_page(conn, [item], g_stats, {})
+            check("G: base_price unchanged on re-run", dict(await conn.fetchrow("SELECT importer_price_ils, max_price_ils, base_price FROM parts_catalog WHERE id=$1", g_pid)), before)
 
-            # ── Test H — batch failure recovery ──────────────────────────
-            print("\nH: batch failure recovery (rollback + safe resume)")
-            h_committed_id = await _make_test_part(conn, brand_id, importer_price_ils=200.0, base_price=None)
-            h_slow_id = await _make_test_part(conn, brand_id, importer_price_ils=300.0, base_price=None)
-            part_ids += [h_committed_id, h_slow_id]
+            # ── Test H — rule failure recovery ───────────────────────────────────────────────────
+            print("\nH: a central-rule failure never aborts the page, is counted, queued for retry and recovered")
+            import tempfile
+            _retry = os.path.join(tempfile.mkdtemp(), "retry.jsonl")
+            base_price_rule.RETRY_FILE = _retry
+            h_oem = "HARDENH" + uuid.uuid4().hex[:8].upper()
+            h_pid = await _make_test_part(conn, brand_id, importer_price_ils=0.0, base_price=0.0)
+            part_ids.append(h_pid)
+            await conn.execute("UPDATE parts_catalog SET oem_number=$2 WHERE id=$1", h_pid, h_oem)
+            h_item = dict(item, raw_oem=h_oem, price_ex_vat=200.0, price_ils=236.0)
+            _real = base_price_rule.apply_to_parts
 
-            # Batch 1: succeeds and commits normally.
-            async with conn.transaction():
-                await conn.execute("SET LOCAL statement_timeout = 5000")
-                await conn.execute(
-                    "UPDATE parts_catalog SET base_price = 1.23 WHERE id = $1", h_committed_id
-                )
-            # Batch 2: deliberately forced to exceed a tiny statement_timeout via pg_sleep,
-            # mirroring the exact transaction+timeout pattern normalize_base_price_batched
-            # uses, to prove a failed batch rolls back without touching batch 1's row.
-            batch2_failed = False
+            async def _boom(*a, **k):
+                raise RuntimeError("simulated rule failure")
+            base_price_rule.apply_to_parts = _boom
+            h_stats = {"updated": 0, "inserted": 0, "not_found": 0}
             try:
-                async with conn.transaction():
-                    await conn.execute("SET LOCAL statement_timeout = 100")
-                    await conn.execute(
-                        "UPDATE parts_catalog SET base_price = 9.99 WHERE id = $1 AND pg_sleep(1) IS NULL",
-                        h_slow_id,
-                    )
-            except asyncpg.exceptions.QueryCanceledError:
-                batch2_failed = True
-            check_true("H: the slow/forced batch actually raised QueryCanceledError", batch2_failed)
-
-            row_committed = await conn.fetchrow("SELECT base_price FROM parts_catalog WHERE id=$1", h_committed_id)
-            row_slow = await conn.fetchrow("SELECT base_price FROM parts_catalog WHERE id=$1", h_slow_id)
-            check("H: earlier successful batch remains committed", float(row_committed["base_price"]), 1.23)
-            check_true("H: failed batch's row was rolled back (base_price still NULL, not 9.99)", row_slow["base_price"] is None)
-
-            # Safe resume: a normal call now picks up the still-unnormalized row.
-            n2, h_complete = await fi.normalize_base_price_batched(conn, batch_size=10, statement_timeout_ms=5000)
-            row_slow_after = await conn.fetchrow("SELECT base_price FROM parts_catalog WHERE id=$1", h_slow_id)
-            check_true("H: importer can resume safely and complete the rolled-back row", row_slow_after["base_price"] is not None)
-            check_true("H: checkpoint (here: DB state) never falsely marked the failed row done", n2 >= 1)
-            check_true("H: the safe resume call itself reports complete=True", h_complete)
+                await fi.process_page(conn, [h_item], h_stats, {})
+            finally:
+                base_price_rule.apply_to_parts = _real
+            check("H: importer price WAS written (ingestion survives a rule failure)", float(await conn.fetchval("SELECT importer_price_ils FROM parts_catalog WHERE id=$1", h_pid)), 200.0)
+            check("H: the failed part is counted", h_stats.get("base_price_failed_parts"), 1)
+            check_true("H: base_price still 0 (visible, not a misleading success)", float(await conn.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1", h_pid) or 0) == 0.0)
+            check_true("H: the part id is queued for retry", h_pid in open(_retry).read())
+            await base_price_rule.apply_and_report(conn, [], "freesbe_hardening_test")      # any later call drains the queue
+            check("H: retry recovered the base_price", float(await conn.fetchval("SELECT base_price FROM parts_catalog WHERE id=$1", h_pid)), _pp.unit_price(200.0, supplier_country="il").net)
 
             # ── Test D — idempotent rerun (agent_todos) ───────────────────
             print("\nD: idempotent rerun — agent_todos completion records")
@@ -320,80 +306,54 @@ else:
             check("J: no new agent_todos rows appeared", after_todo_count, before_todo_count)
             check("J: no parts_catalog row count change from the completeness check itself", after_part_count, before_part_count)
 
-            # ── SAFETY-FIX SF-A — normalization timeout is caught, not raised ──
-            print("\nSF-A: normalization timeout is caught cleanly (not an uncaught crash)")
+            # ── SF-A — a rule/DB timeout is caught and queued (never an uncaught crash) ──
+            print("\nSF-A: a lock timeout inside the central rule is caught, reported and queued for retry")
             sfa_id = await _make_test_part(conn, brand_id, importer_price_ils=400.0, base_price=None)
             part_ids.append(sfa_id)
-            # Force a DETERMINISTIC timeout rather than racing a tiny
-            # statement_timeout against real query speed (an earlier version
-            # of this test used statement_timeout_ms=1, which was flaky —
-            # a fast sandbox could complete the query in under 1ms and never
-            # actually time out). Instead, hold a real ACCESS EXCLUSIVE lock
-            # on the table from a second connection so normalize's own
-            # SELECT/UPDATE is guaranteed to block waiting for that lock —
-            # statement_timeout counts lock-wait time too, so it reliably
-            # fires with the same QueryCanceledError the real production
-            # scenario (a concurrent writer holding a conflicting lock) would
-            # produce — a more realistic test, not just a more reliable one.
+            # DETERMINISTIC timeout: a second connection holds ACCESS EXCLUSIVE on the table so the rule's own statements block;
+            # statement_timeout counts lock-wait time, exactly what a concurrent writer would cause in production.
             blocker_conn = await asyncpg.connect(DB_URL, timeout=10)
             blocker_tx = blocker_conn.transaction()
             await blocker_tx.start()
             await blocker_conn.execute("LOCK TABLE parts_catalog IN ACCESS EXCLUSIVE MODE")
+            await conn.execute("SET statement_timeout = 200")
             try:
-                n_sfa, complete_sfa = await fi.normalize_base_price_batched(
-                    conn, batch_size=10, statement_timeout_ms=200
-                )
+                res_sfa = await base_price_rule.apply_and_report(conn, [sfa_id], "freesbe_hardening_sfa")
             finally:
+                await conn.execute("SET statement_timeout = 0")
                 await blocker_tx.rollback()
                 await blocker_conn.close()
-            check_true("SF-A: does not raise — returns normally instead of propagating QueryCanceledError", True)
-            check_true("SF-A: reports complete=False on a caught timeout", complete_sfa is False)
-            check_true("SF-A: rows-updated count is non-negative and well-formed", isinstance(n_sfa, int) and n_sfa >= 0)
+            check_true("SF-A: returns normally (no uncaught QueryCanceledError)", True)
+            check_true("SF-A: reports the failure instead of success", "error" in res_sfa and res_sfa["updated"] == 0)
+            check_true("SF-A: the part id is queued for retry", sfa_id in open(_retry).read())
             row_sfa = await conn.fetchrow("SELECT base_price FROM parts_catalog WHERE id=$1", sfa_id)
-            check_true("SF-A: the timed-out row's own batch was rolled back (base_price still NULL)", row_sfa["base_price"] is None)
+            check_true("SF-A: nothing was written (base_price still NULL)", row_sfa["base_price"] is None)
 
-            # ── SAFETY-FIX SF-B — pages already committed survive a later normalization failure ──
-            print("\nSF-B: pages/data already committed survive a later normalization failure")
-            # Simulate "page processing already committed" (autocommit, matching
-            # process_page()'s real per-statement autocommit behavior) BEFORE
-            # normalization is attempted, then force normalization to fail, and
-            # confirm the earlier committed data is completely unaffected.
+            # ── SF-B — data committed by the page survives a later rule failure ──
+            print("\nSF-B: pages/data already committed survive a later rule failure")
             sfb_id = await _make_test_part(conn, brand_id, importer_price_ils=500.0, base_price=None)
             part_ids.append(sfb_id)
-            await conn.execute(
-                "UPDATE parts_catalog SET importer_price_ils = 550.0, updated_at = NOW() WHERE id = $1",
-                sfb_id,
-            )  # represents a "page already processed" write, committed immediately (autocommit)
-            committed_price_before = await conn.fetchval(
-                "SELECT importer_price_ils FROM parts_catalog WHERE id=$1", sfb_id
-            )
-            _, _ = await fi.normalize_base_price_batched(conn, batch_size=10, statement_timeout_ms=1)
-            committed_price_after = await conn.fetchval(
-                "SELECT importer_price_ils FROM parts_catalog WHERE id=$1", sfb_id
-            )
-            check(
-                "SF-B: data committed before normalization is untouched by a later normalization failure",
-                float(committed_price_after), float(committed_price_before),
-            )
-            check_true(
-                "SF-B: source proves ordering — checkpoint save call precedes the normalization call",
-                _src.index("if page % 50 == 0 or page == total_pages:") <
-                _src.index('print("\\nNormalizing base_price for newly priced parts...")'),
-            )
+            await conn.execute("UPDATE parts_catalog SET importer_price_ils = 550.0, updated_at = NOW() WHERE id = $1", sfb_id)
+            before_b = await conn.fetchval("SELECT importer_price_ils FROM parts_catalog WHERE id=$1", sfb_id)
+            base_price_rule.apply_to_parts = _boom
+            try:
+                await base_price_rule.apply_and_report(conn, [sfb_id], "freesbe_hardening_sfb")
+            finally:
+                base_price_rule.apply_to_parts = _real
+            check("SF-B: committed importer data is untouched by a rule failure", float(await conn.fetchval("SELECT importer_price_ils FROM parts_catalog WHERE id=$1", sfb_id)), float(before_b))
+            check_true("SF-B: source proves ordering - the page's rule call precedes the checkpoint bookkeeping",
+                       _src.index("base_price_rule.apply_and_report(conn, touched_part_ids") < _src.index("async def fetch_page("))
+            check_true("SF-B: and process_page is awaited before the page is marked completed",
+                       _src.index("await process_page(conn, fetched[page]") < _src.index("completed.add(page)"))
 
-            # ── SAFETY-FIX SF-E — true zero-candidate run is a clean, honest no-op ──
-            print("\nSF-E: zero qualifying candidates — clean success, not a false error")
-            # Ensure nothing in our own test fixtures still qualifies.
-            await conn.execute(
-                "UPDATE parts_catalog SET base_price = 1.00 WHERE id = ANY($1::uuid[]) AND base_price IS NULL",
-                part_ids,
-            )
+            # ── SF-E — nothing to price is a clean no-op ──
+            print("\nSF-E: zero touched parts - clean no-op, not a false error")
+            await base_price_rule.apply_and_report(conn, [], "freesbe_hardening_drain")   # drains what SF-A/SF-B queued (retry is part of the contract)
             before_count = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog")
-            n_sfe, complete_sfe = await fi.normalize_base_price_batched(conn, batch_size=2000, statement_timeout_ms=5000)
-            after_count = await conn.fetchval("SELECT COUNT(*) FROM parts_catalog")
-            check("SF-E: zero candidates -> zero rows updated", n_sfe, 0)
-            check_true("SF-E: zero candidates is reported as complete=True, never as a failure", complete_sfe is True)
-            check("SF-E: no row was inserted or deleted by a zero-candidate run", after_count, before_count)
+            res_sfe = await base_price_rule.apply_and_report(conn, [], "freesbe_hardening_sfe")
+            check("SF-E: zero parts -> zero scanned", res_sfe["scanned"], 0)
+            check_true("SF-E: reported without an error", "error" not in res_sfe)
+            check("SF-E: no row inserted or deleted", await conn.fetchval("SELECT COUNT(*) FROM parts_catalog"), before_count)
 
         finally:
             await _cleanup(conn, part_ids, brand_ids)

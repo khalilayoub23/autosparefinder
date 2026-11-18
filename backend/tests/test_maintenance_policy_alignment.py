@@ -170,11 +170,11 @@ async def test_url_less_offer_does_not_set_base_price_the_estimate_does(db):
 
 
 async def test_estimate_order_follows_the_policy(db):
-    a = await part(db, importer=0, mx=118, online=50)      # max before online
+    a = await part(db, importer=0, mx=118, online=50)      # max_price_ils is a consumer REFERENCE: never base_price cost evidence (2026-11-18)
     b = await part(db, importer=0, mx=0, online=50)
     c = await part(db, importer=80, mx=118, online=50)
     await normalize(db, [a, b, c])
-    assert await base_of(db, a) == pp.catalog_estimate_price(0, 118, 50).net == 145.0
+    assert await base_of(db, a) == pp.catalog_estimate_price(0, None, 50).net == 72.5   # falls to the foreign buy price, not max/1.18
     assert await base_of(db, b) == 72.5
     assert await base_of(db, c) == 116.0
 

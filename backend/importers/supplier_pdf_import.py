@@ -147,6 +147,8 @@ class ImportReport:
     db_active_before: int = 0
     inserted: int = 0
     updated_price: int = 0
+    offers: dict = field(default_factory=dict)          # {inserted|updated|unchanged|skipped_*|failed: n}
+    offer_failures: int = 0
     updated_name: int = 0
     deactivated_unavailable: int = 0
     reactivated: int = 0
@@ -705,7 +707,8 @@ SUPPLIER_URL_MAP = {
 
 
 async def _ensure_supplier(conn, manufacturer: str) -> str:
-    """Get-or-create an official Israeli importer supplier record."""
+    """Get-or-create an official Israeli importer supplier record. A supplier CREATED here gets vat_price_basis='exclusive': the offers
+    this importer writes are ex-VAT costs (compute_prices strips the VAT the list embeds). An existing supplier's basis is never changed."""
     supplier_name = f'{manufacturer} Official Importer Israel'
     row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)
     if row:
@@ -716,48 +719,71 @@ async def _ensure_supplier(conn, manufacturer: str) -> str:
         INSERT INTO suppliers (id, name, website, country,
                                is_active, is_manufacturer,
                                manufacturer_name, manufacturer_id,
-                               reliability_score, created_at, updated_at)
+                               reliability_score, vat_price_basis, created_at, updated_at)
         VALUES ($1, $2, $3, 'IL', true, true, $4::text,
                 (SELECT id FROM car_brands WHERE LOWER(name)=LOWER($4::text) LIMIT 1),
-                0.90, NOW(), NOW())
+                0.90, 'exclusive', NOW(), NOW())
         ON CONFLICT (name) DO NOTHING
     """, sid, supplier_name, url, manufacturer)
     row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)
     return str(row['id']) if row else sid
 
 
+OFFER_OK = ("inserted", "updated", "unchanged")
+
+
 async def _upsert_supplier_part(conn, part_id: str, supplier_id: str,
                                  oem: str, price: float,
                                  warranty_months: int, warranty_source: str, available: bool,
-                                 supplier_url: str):
-    """Insert/update supplier_parts record."""
+                                 supplier_url: str) -> str:
+    """Create or refresh THIS supplier's offer for THIS part and say what happened (never swallowed):
+      inserted | updated | unchanged                       - the offer now carries `price` (ex-VAT cost) / availability
+      skipped_sku_owned_by_other_part                      - (supplier, sku) already belongs to another part: never touched
+      skipped_other_offer_of_this_supplier_for_part        - the supplier already has a differently-keyed (variant) offer for the part: never guessed
+      skipped_no_price                                     - no usable cost evidence
+      failed:<ExceptionName>                               - the write failed (logged at ERROR)
+    Identity is (supplier_id, supplier_sku=OEM) and part_id; only price/availability/warranty/updated_at of an offer that
+    already belongs to this part are changed, never part_id, supplier, sku or variant."""
+    if not price or price <= 0:
+        return "skipped_no_price"
     try:
-        await conn.execute("""
-            INSERT INTO supplier_parts (
-                id, supplier_id, part_id, supplier_sku,
-                price_ils, price_usd,
-                availability, is_available, warranty_months, warranty_source,
-                estimated_delivery_days, supplier_url,
-                created_at, updated_at
-            ) VALUES (
-                gen_random_uuid(), $1::uuid, $2::uuid, $3,
-                $4, 0.0,
-                $5, $6, $7, $8,
-                21, $9,
-                NOW(), NOW()
-            )
-            ON CONFLICT ON CONSTRAINT supplier_parts_supplier_id_supplier_sku_key DO UPDATE SET
-                price_ils       = EXCLUDED.price_ils,
-                is_available    = EXCLUDED.is_available,
-                availability    = EXCLUDED.availability,
-                warranty_months = EXCLUDED.warranty_months,
-                warranty_source = EXCLUDED.warranty_source,
-                updated_at      = NOW()
-        """, supplier_id, part_id, oem, price,
-             'in_stock' if available else 'out_of_stock', available,
-             warranty_months, warranty_source, supplier_url)
+        async with conn.transaction():
+            owner = await conn.fetchrow(
+                "SELECT id, part_id::text AS part_id, price_ils, is_available FROM supplier_parts "
+                "WHERE supplier_id=$1::uuid AND supplier_sku=$2 FOR UPDATE", supplier_id, oem)
+            avail_txt = 'in_stock' if available else 'out_of_stock'
+            if owner:
+                if owner["part_id"] != str(part_id):
+                    return "skipped_sku_owned_by_other_part"
+                if round(float(owner["price_ils"] or 0), 2) == round(float(price), 2) and bool(owner["is_available"]) == bool(available):
+                    return "unchanged"
+                await conn.execute("""
+                    UPDATE supplier_parts SET price_ils=$2::numeric, is_available=$3, availability=$4,
+                           warranty_months=$5, warranty_source=$6, updated_at=NOW()
+                    WHERE id=$1""", owner["id"], price, available, avail_txt, warranty_months, warranty_source)
+                return "updated"
+            others = await conn.fetchval(
+                "SELECT count(*) FROM supplier_parts WHERE supplier_id=$1::uuid AND part_id=$2::uuid", supplier_id, part_id)
+            if others:
+                return "skipped_other_offer_of_this_supplier_for_part"
+            await conn.execute("""
+                INSERT INTO supplier_parts (
+                    id, supplier_id, part_id, supplier_sku,
+                    price_ils, price_usd,
+                    availability, is_available, warranty_months, warranty_source,
+                    estimated_delivery_days, supplier_url,
+                    created_at, updated_at
+                ) VALUES (
+                    gen_random_uuid(), $1::uuid, $2::uuid, $3,
+                    $4::numeric, 0.0,
+                    $5, $6, $7, $8,
+                    21, $9,
+                    NOW(), NOW()
+                )""", supplier_id, part_id, oem, price, avail_txt, available, warranty_months, warranty_source, supplier_url)
+            return "inserted"
     except Exception as e:
-        log.debug(f'supplier_parts upsert skip: {e}')
+        log.error("supplier_pdf_import: offer write FAILED for part=%s sku=%s: %s: %s", part_id, oem, type(e).__name__, str(e)[:160])
+        return f"failed:{type(e).__name__}"
 
 
 async def _create_rex_fitment_todo(conn, manufacturer: str, count: int, source: str):
@@ -849,6 +875,9 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
     supplier_id = await _ensure_supplier(conn, manufacturer)
     _ph = PriceHistoryTracker(conn, "supplier_pdf_import"); await _ph.snapshot(supplier_id)
     supplier_url = SUPPLIER_URL_MAP.get(manufacturer.upper(), '')
+    supplier_basis = await conn.fetchval("SELECT vat_price_basis FROM suppliers WHERE id=$1::uuid", supplier_id)
+    metrics["supplier_vat_basis"] = supplier_basis
+    to_offer = []   # (part_id, oem, ex-VAT offer cost, available, warranty_months, warranty_source) for parts that already exist
 
     for pdf_row in pdf_rows:
         nk = pdf_row.oem_norm
@@ -911,6 +940,12 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                 if abs(db_max - new_max) > 0.01 or (new_importer > 0 and abs(db_importer - new_importer) > 0.01):
                     to_uprice.append((new_importer, new_max, rid))
                     metrics["updated_price"] += 1
+                # the supplier's OFFER follows the PDF too (it used to be written only for newly inserted parts, so a price change on an
+                # existing part never reached the offer the rule prices from)
+                _w_months, _w_source = _warranty_resolve(f"{pdf_row.warranty_years} years" if pdf_row.warranty_years else None)
+                to_offer.append((rid, pdf_row.oem_number, offer_cost(new_importer, new_max), pdf_row.available, _w_months, _w_source))
+            else:
+                metrics["offers_skipped_no_price"] = metrics.get("offers_skipped_no_price", 0) + 1
 
             if pdf_row.name and existing.get("name"):
                 db_name = str(existing["name"])
@@ -972,10 +1007,35 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
         # Write supplier_parts for every inserted/updated part
         # price in inserted_ids is the offer cost (importer_price_ils, ex-VAT; the foreign price for international brands) -
         # NEVER base_price (it used to be, so an offer carried a retail/marked-up number as its cost)
-        for pid, oem, price, warranty_months, warranty_source, available, sid, surl in inserted_ids:
-            await _upsert_supplier_part(conn, pid, sid, oem, price,
-                                        warranty_months, warranty_source, available, surl)
-            touched_part_ids.append(pid)
+        offer_stats: dict = {}
+        offer_failed_ids: list = []
+        offer_skips: list = []
+
+        def _count(status, pid, oem):
+            offer_stats[status.split(":")[0]] = offer_stats.get(status.split(":")[0], 0) + 1
+            if status.startswith("failed"):
+                offer_failed_ids.append(pid)
+            elif status not in OFFER_OK:
+                if len(offer_skips) < 20:
+                    offer_skips.append({"part_id": pid, "oem": oem, "reason": status})
+            else:
+                touched_part_ids.append(pid)     # only parts whose offer is now known-good reach the rule
+
+        if supplier_basis == "inclusive":
+            # this importer writes EX-VAT costs; an 'inclusive' supplier would have its offers stripped of VAT a second time by the rule
+            metrics["offers_blocked"] = "supplier vat_price_basis is 'inclusive' but this importer writes ex-VAT costs: no offer written"
+            log.error("supplier_pdf_import: %s", metrics["offers_blocked"])
+        else:
+            for pid, oem, price, warranty_months, warranty_source, available, sid, surl in inserted_ids:
+                _count(await _upsert_supplier_part(conn, pid, sid, oem, price, warranty_months, warranty_source, available, surl), pid, oem)
+            for pid, oem, price, available, w_months, w_source in to_offer:
+                _count(await _upsert_supplier_part(conn, pid, supplier_id, oem, price, w_months, w_source, available, supplier_url), pid, oem)
+        metrics["offers"] = offer_stats
+        metrics["offer_skips"] = offer_skips
+        metrics["offer_failed_part_ids"] = offer_failed_ids
+        if offer_failed_ids:
+            log.error("supplier_pdf_import: %d offer writes FAILED - those parts are NOT priced from this import (re-run the same PDF: idempotent)",
+                      len(offer_failed_ids))
         # Delegate fitment to REX
         if inserted_ids:
             await _create_rex_fitment_todo(conn, manufacturer, len(inserted_ids),
@@ -986,7 +1046,8 @@ async def upsert_parts(conn, manufacturer, pdf_rows, db_rows, dry_run):
                    SET importer_price_ils = CASE WHEN $1::numeric > 0 THEN $1::numeric ELSE importer_price_ils END, max_price_ils=$2, updated_at=NOW()
                    WHERE id=$3::uuid""",
                 to_uprice)
-            touched_part_ids.extend(t[2] for t in to_uprice)
+            _failed = set(offer_failed_ids)
+            touched_part_ids.extend(t[2] for t in to_uprice if t[2] not in _failed)
         if to_uname:
             await conn.executemany(
                 "UPDATE parts_catalog SET name=$1,name_he=$2,updated_at=NOW() WHERE id=$3::uuid", to_uname)
@@ -1097,6 +1158,8 @@ async def run_pipeline(pdf_path, manufacturer, apply):
         m = await upsert_parts(conn, manufacturer, unique, db_rows, dry_run=not apply)
         report.inserted = m["inserted"]
         report.updated_price = m["updated_price"]
+        report.offers = m.get("offers", {})
+        report.offer_failures = len(m.get("offer_failed_part_ids", []))
         report.updated_name = m["updated_name"]
         report.category_counts = m.get("category_counts", {})
         report.deactivated_unavailable = m["deactivated_unavailable"]
@@ -1144,6 +1207,7 @@ def _print_report(r, dry_run):
         f"  --- Changes ---",
         f"  Inserted new         : {r.inserted}",
         f"  Price updated        : {r.updated_price}",
+        f"  Supplier offers      : {r.offers}  (failed: {r.offer_failures})",
         f"  Name updated         : {r.updated_name}",
         f"  Deactivated (unavail): {r.deactivated_unavailable}",
         f"  Reactivated          : {r.reactivated}",
@@ -1170,6 +1234,8 @@ def _print_report(r, dry_run):
         "db_active_before": r.db_active_before,
         "inserted": r.inserted,
         "updated_price": r.updated_price,
+        "offers": r.offers,
+        "offer_failures": r.offer_failures,
         "updated_name": r.updated_name,
         "deactivated_unavailable": r.deactivated_unavailable,
         "reactivated": r.reactivated,

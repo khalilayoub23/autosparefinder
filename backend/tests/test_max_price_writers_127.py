@@ -86,6 +86,7 @@ ISRAELI = [
     'scrapers/bydil_scraper.py',
     'scrapers/eliteparts_scraper.py',
     'scrapers/selected_parts_scraper.py',
+    'routes/admin.py',   # 2026-11-18: admin bulk upload stores the admin-typed price as the Israeli consumer REFERENCE (never base_price)
 ]
 MAINTENANCE = [
     'maintenance/repair_foreign_max_price_127.py',

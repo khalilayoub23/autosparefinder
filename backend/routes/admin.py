@@ -27,6 +27,7 @@ Endpoints:
   PUT    /api/v1/admin/orders/{order_id}/status
 """
 import asyncio
+import math
 import base64
 import binascii
 import json
@@ -4493,6 +4494,8 @@ async def import_parts_excel(
         return str(v).strip() if v is not None else None
 
     created = updated = skipped = defaulted_part_type = 0
+    prices_stored_as_reference = 0
+    rejected_prices = []   # [{row, value, reason}] - unusable price cells are reported, never guessed
     errors = []
     rejected_part_type = []   # [{row, label, reason}] - labels variant_identity cannot place are reported, never guessed
 
@@ -4513,11 +4516,21 @@ async def import_parts_excel(
             continue
         _pt_class = _pt_res.key if _pt_res.ok else None
         try:
+            # The upload's price column (headers base_price / price / מחיר) is a HUMAN-entered figure with no stated supplier or VAT basis:
+            # it is a retail/reference price, never a supplier cost. It is stored in max_price_ils (the IL consumer reference) and NEVER in
+            # base_price - base_price belongs to base_price_rule.apply_to_parts, which prices only from a real offer or importer cost
+            # (2026-11-18; the maint-safety candidate had made the column 'unsupported', which also dropped the value).
             price_raw = _get(row, 'base_price')
-            try:
-                price = float(price_raw) if price_raw else None
-            except (ValueError, TypeError):
-                price = None
+            price = None
+            if price_raw not in (None, ''):
+                try:
+                    _pv = float(str(price_raw).replace(',', ''))
+                except (ValueError, TypeError):
+                    _pv = None
+                if _pv is None or not math.isfinite(_pv) or _pv <= 0 or _pv >= 10 ** 8:
+                    rejected_prices.append({"row": row_num, "value": str(price_raw)[:40], "reason": "not a positive number below 100,000,000"})
+                else:
+                    price = round(_pv, 2)
 
             compat_raw = _get(row, 'compatible_vehicles')
             compat = [v.strip() for v in compat_raw.split(',')] if compat_raw else []
@@ -4533,7 +4546,8 @@ async def import_parts_excel(
                 existing.part_type     = _pt_class or existing.part_type
                 existing.description   = _get(row, 'description') or existing.description
                 if price is not None:
-                    existing.base_price = price
+                    existing.max_price_ils = price          # retail/reference only; base_price untouched
+                    prices_stored_as_reference += 1
                 if compat:
                     existing.compatible_vehicles = compat
                 existing.updated_at = datetime.utcnow()
@@ -4546,11 +4560,13 @@ async def import_parts_excel(
                     manufacturer=_get(row, 'manufacturer'),
                     part_type=_pt_class or 'aftermarket',
                     description=_get(row, 'description'),
-                    base_price=price,
+                    max_price_ils=price,                    # retail/reference only; base_price starts unset (rule-owned)
                     compatible_vehicles=compat,
                     is_active=True,
                 ))
                 created += 1
+                if price is not None:
+                    prices_stored_as_reference += 1
                 if not _pt_class:
                     defaulted_part_type += 1
         except Exception as e:
@@ -4565,6 +4581,12 @@ async def import_parts_excel(
         "rejected_part_type": rejected_part_type,
         "defaulted_part_type": defaulted_part_type,
         "total_processed": created + updated,
+        # the price column is kept as the retail/reference price (max_price_ils); base_price is derived by the price policy
+        "prices_stored_as_reference": prices_stored_as_reference,
+        "price_target_column": "max_price_ils",
+        "rejected_prices": rejected_prices,
+        "warnings": ([f"{prices_stored_as_reference} מחירים נשמרו כמחיר צרכן/ייחוס (max_price_ils); מחיר הבסיס אינו נקבע מהעלאה ידנית אלא ממחיר ספק אמיתי"]
+                     if prices_stored_as_reference else []),
     }
 
 
@@ -4815,10 +4837,14 @@ async def scraper_run_one_part(
         if prices:
             prices.sort()
             median = prices[len(prices) // 2]
-            import price_policy as _pp
-            derived_cost = median / (1 + _pp.VAT_RATE) / _pp.MARGIN
-            old = float(row.price_ils or derived_cost)
-            new_ils = round(max(old * 0.75, min(derived_cost, old * 1.25)), 2)
+            # ONE rule for a scraped page price (catalog_scraper.scraped_price_refresh): it may refresh an offer that already carries a price,
+            # within a sane band; it never rescales it (the old `median / 1.18 / 1.45` invented a supplier cost) and never creates one.
+            from catalog_scraper import scraped_price_refresh
+            old = float(row.price_ils or 0)
+            new_ils, why = scraped_price_refresh(old, median)
+            if new_ils is None:
+                results.append({"supplier": row.supplier_name, "old_price": old, "scraped_price": median, "action": "not_applied", "reason": why})
+                continue
             await db_update_supplier_part(
                 db,
                 supplier_part_id=str(row.sp_id),

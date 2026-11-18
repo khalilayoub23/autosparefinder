@@ -20,6 +20,8 @@ channel uses the same policy and shows the same price.
 | Payment provider amount | ILS → agorot **rounded** (`int(x*100)` truncated ₪29.99 to 2998) | `agorot()` |
 | Part with no live offer | an **estimate** with the same rule from the catalog importer cost: `importer_price_ils` (local) → `max_price_ils / 1.18` (IL consumer reference incl. VAT, local) → `online_price_ils` (foreign); flagged `is_estimate` / `is_base_price_fallback` | `catalog_estimate_price()` |
 
+> **Boundary (2026-11-18, mission 2):** the `max_price_ils / 1.18` step is a **customer-facing display** fallback only. `base_price_rule.target` (the `base_price` writer used by every importer and the maintenance tasks) calls `catalog_estimate_price(importer_price_ils, None, online_price_ils)`: `max_price_ils` is a retail reference and is **never** cost evidence for `base_price`; a part with neither an importer cost nor a foreign buy price stays unpriced (`no_basis`, reported). `maintenance`/admin uploads store a human-entered price in `max_price_ils`, never in `base_price`. Guarded by `tests/test_importers_base_price_rule_2026_11_18.py`.
+
 **Never a customer price:** `base_price`, `min_price_ils`, `importer_price_ils`, `online_price_ils`,
 `supplier_parts.price_ils` / `price_usd` (internal columns). The website never computes a price — it displays
 the backend's `customer_price_ils` / `customer_vat_ils` / `customer_total_ils`.

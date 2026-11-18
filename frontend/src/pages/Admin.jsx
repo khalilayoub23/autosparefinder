@@ -3116,7 +3116,7 @@ export default function Admin() {
             </h3>
             <p className="text-sm text-gray-400 mb-5">
               הקובץ חייב לכלול עמודות: <span className="font-mono text-xs bg-gray-100 px-1 rounded">sku / pin</span> ו-<span className="font-mono text-xs bg-gray-100 px-1 rounded">name</span> (שם חלק).
-              אפשר גם: category, manufacturer, part_type, description, base_price, compatible_vehicles.
+              אפשר גם: category, manufacturer, part_type, description, price (מחיר צרכן/ייחוס — נשמר כמחיר ייחוס ואינו קובע עלות או מחיר בסיס), compatible_vehicles.
             </p>
 
             {/* Drop zone */}
