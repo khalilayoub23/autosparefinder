@@ -41,6 +41,7 @@ Tools exposed to admin API via /api/v1/admin/scraper/*:
 # CATALOG PIPELINE OWNER: Rex — writes parts_catalog + supplier_parts (real scraped prices).
 from __future__ import annotations
 
+import cpie_fitment_guard
 import asyncio
 import contextlib
 import hashlib
@@ -1955,6 +1956,7 @@ async def _sync_vehicle_fitment(
                 break
 
         upserted_rows = 0
+        _c1_part_name = None
         for item in items[:20]:
             mfr_name = item.get("make") or item.get("brand") or item.get("manufacturer") or ""
             model     = item.get("model") or item.get("modelName") or ""
@@ -1966,6 +1968,13 @@ async def _sync_vehicle_fitment(
             try:
                 year_from_int = int(year_from)
             except Exception:
+                continue
+
+            # C1 (2026-11-18): an ICE-only product never fits a pure-BEV vehicle (provider lists can over-list)
+            if _c1_part_name is None:
+                _nm = await db.execute(text("SELECT name FROM parts_catalog WHERE id = CAST(:pid AS uuid)"), {"pid": part_id})
+                _c1_part_name = (_nm.scalar() or "")
+            if cpie_fitment_guard.bev_ice_conflict(_c1_part_name, str(mfr_name), str(model)):
                 continue
 
             gov_match = await db.execute(

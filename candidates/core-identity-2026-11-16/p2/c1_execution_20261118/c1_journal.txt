@@ -1,0 +1,6 @@
+2026-11-18T06:01:05+01:00
+APPLIED: pvf deleted 7229 , parts compat updated 1331 remaining of manifest: 0
+2026-11-18T06:01:48+01:00
+RuntimeError: DRY-RUN ok: would delete 1295 rows, update 197 parts; transaction rolled back
+APPLIED: pvf deleted 1295 , parts compat updated 197 remaining of manifest: 0
+2026-11-18T06:02:03+01:00

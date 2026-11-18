@@ -1,0 +1,12 @@
+{
+ "affected_pids": 4329,
+ "mis_rows": 2469,
+ "mis_md5": "76a100b5e4c6712d0eef9332ceb827a6",
+ "del_present": 0,
+ "pvf_other_rows_of_affected_parts": 166595,
+ "pvf_other_md5": "161e40b3b3883fbd2c67b4d3e4b74621",
+ "parts_md5_excl_compat": "1390450ee665d823307d0430709b9fea",
+ "sp_count": 1708,
+ "sp_md5": "770e36049858013c004884bdd9375749",
+ "orderitems_ref": null
+}

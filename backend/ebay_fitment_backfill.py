@@ -23,6 +23,7 @@ import time
 import uuid
 from typing import Optional
 
+import cpie_fitment_guard
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -183,6 +184,7 @@ async def _write_fitment(
     db: AsyncSession,
     part_id: str,
     fitment_rows: list[dict],
+    part_name: str = "",
 ) -> int:
     """Insert fitment rows, skip duplicates. Returns count inserted."""
     inserted = 0
@@ -190,6 +192,10 @@ async def _write_fitment(
         mfr = row.get("manufacturer", "").strip()
         model = row.get("model", "").strip()
         if not mfr:
+            continue
+        # C1 (2026-11-18): an ICE-only product never fits a pure-BEV vehicle - same rule as the car-parts.ie importer
+        if cpie_fitment_guard.bev_ice_conflict(part_name, mfr, model):
+            logger.info("C1 guard: skip ICE-only fitment %s %s for part %s", mfr, model, part_id)
             continue
         # Check for existing
         existing = await db.execute(
@@ -252,7 +258,7 @@ async def run_backfill(
                 """
                 SELECT DISTINCT ON (sp.part_id)
                     sp.part_id, sp.supplier_sku, sp.supplier_url,
-                    pc.oem_number, pc.manufacturer
+                    pc.oem_number, pc.manufacturer, pc.name AS part_name
                 FROM supplier_parts sp
                 JOIN suppliers s ON sp.supplier_id = s.id
                 JOIN parts_catalog pc ON sp.part_id = pc.id
@@ -325,7 +331,7 @@ async def run_backfill(
                 # Write fitment rows
                 if fitment_rows:
                     if not dry_run:
-                        inserted = await _write_fitment(db, part_id, fitment_rows)
+                        inserted = await _write_fitment(db, part_id, fitment_rows, getattr(row, "part_name", "") or "")
                         fitment_added += inserted
                     else:
                         fitment_added += len(fitment_rows)

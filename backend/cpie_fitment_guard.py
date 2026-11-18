@@ -64,6 +64,19 @@ def _load_bev(path: str = _BEV_FILE):
 
 BEV_SLUGS, BEV_MODELS = _load_bev()
 
+
+def _norm(v: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (v or "").lower())
+
+
+def _norm_pair(mfr: str, model: str) -> tuple:
+    m = _norm(mfr)
+    return ({"vw": "volkswagen", "mercedes": "mercedesbenz"}.get(m, m), _norm(model))
+
+
+# Case/punctuation-insensitive but still EXACT (no prefix match): eBay/provider spellings ("BMW"/"i4", "ID.4") must hit, hybrids must not.
+BEV_MODELS_NORM = frozenset(_norm_pair(a, b) for a, b in BEV_MODELS)
+
 _OILNEG = r"transmission|gearbox|gear oil|automatic|\batf\b|differential|axle|power steering|steering|hydraulic|shock|brake|compressor|\bdsg\b|cvt|haldex"
 _ICE_ONLY = [(re.compile(p), re.compile(n) if n else None) for p, n in (
     (r"\bengine oil\b|\bmotor oil\b", _OILNEG),
@@ -93,7 +106,12 @@ def is_ice_only(name: str) -> bool:
 
 
 def _is_bev(vehicle_slug: str = "", manufacturer: str = "", model: str = "") -> bool:
-    return (vehicle_slug or "").strip("/").lower() in BEV_SLUGS or (manufacturer, model) in BEV_MODELS
+    return (vehicle_slug or "").strip("/").lower() in BEV_SLUGS or (manufacturer, model) in BEV_MODELS or _norm_pair(manufacturer, model) in BEV_MODELS_NORM
+
+
+def bev_ice_conflict(name: str = "", manufacturer: str = "", model: str = "", vehicle_slug: str = "") -> bool:
+    """C1 rule A as ONE function for every fitment writer: True = an ICE-only product on a pure-BEV vehicle (do NOT write the row)."""
+    return _is_bev(vehicle_slug, manufacturer, model) and is_ice_only(name)
 
 
 def fitment_allowed(payload_size: int, name: str = "", slug: str = "", extra: str = "",
