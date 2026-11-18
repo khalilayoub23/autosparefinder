@@ -18,7 +18,11 @@ Process:
 Data Imported/Modified: suppliers.credentials.qualification (+ credentials.status='rejected' for FAILED business).
 Data Sources: the candidates' own websites.
 Last Updated: 2026-11-13
-Usage: python3 /app/maintenance/nir_requalify.py [--apply] [--out /app/state/nir_requalify_report.json]
+Recheck mode (2026-11-18): --recheck needs_manual_check[,needs_information,...] re-evaluates INACTIVE candidates already
+         carrying a qualification record; --browser adds a Playwright fallback (own browser, closed INSIDE the
+         async_playwright block, 2 pages at a time) for sites plain HTTP cannot read (bot wall / JS-rendered). Existing
+         evidence is kept unless a requirement is re-evaluated; nothing is activated; no email is sent.
+Usage: python3 /app/maintenance/nir_requalify.py [--apply] [--recheck STATUS[,STATUS]] [--browser] [--out /app/state/nir_requalify_report.json]
 """
 from __future__ import annotations
 
@@ -59,6 +63,43 @@ async def get(cx, url):
     except Exception:
         pass
     return None, ""
+
+
+async def collect_browser(domain: str) -> dict:
+    """Same evidence shape as collect(), fetched through headless Chromium (bounded: 12s per page, <= 14 page loads)."""
+    from playwright.async_api import async_playwright
+    base = f"https://{domain.replace('https://', '').replace('http://', '').strip('/')}"
+    ev = {"base": base, "pages": {}, "home_url": None, "home": ""}
+
+    async def pg_get(page, url):
+        try:
+            resp = await page.goto(url, wait_until="domcontentloaded", timeout=12000)
+            await page.wait_for_timeout(1500)
+            html = await page.content()
+            if resp and resp.status < 400 and len(html) > 200:
+                return page.url, html[:400000]
+        except Exception:
+            pass
+        return None, ""
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        try:
+            ctx = await browser.new_context(user_agent=UA["User-Agent"], viewport={"width": 1366, "height": 768})
+            page = await ctx.new_page()
+            u, home = await pg_get(page, base + "/")
+            ev["home_url"], ev["home"] = u, home
+            if u:
+                for kind, paths in PATHS.items():
+                    for pth in paths[:3]:
+                        pu, body = await pg_get(page, base + pth)
+                        if pu and "/" != pu.replace(base, "").strip():
+                            ev["pages"][kind] = (pu, body)
+                            break
+            await ctx.close()
+        finally:
+            await browser.close()          # INSIDE the async_playwright block (CLAUDE.md zombie-Chrome rule)
+    return ev
 
 
 async def collect(domain: str) -> dict:
@@ -154,20 +195,36 @@ async def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--out", default="/app/state/nir_requalify_report.json")
+    ap.add_argument("--recheck", default="", help="comma list of credentials.status values to re-evaluate (inactive only)")
+    ap.add_argument("--browser", action="store_true", help="Playwright fallback for sites plain HTTP cannot read")
     a = ap.parse_args()
     db = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
     c = await asyncpg.connect(db)
-    rows = await c.fetch("""SELECT id::text id,name,website,is_active,credentials FROM suppliers
-        WHERE credentials->>'source'='nir_sourcing' AND NOT (credentials ? 'qualification') ORDER BY created_at""")
-    sem = asyncio.Semaphore(8)
+    if a.recheck:
+        wanted = [x.strip() for x in a.recheck.split(",") if x.strip()]
+        rows = await c.fetch("""SELECT id::text id,name,website,is_active,credentials FROM suppliers
+            WHERE credentials->>'source'='nir_sourcing' AND NOT is_active AND credentials->>'status' = ANY($1::text[])
+            ORDER BY created_at""", wanted)
+    else:
+        rows = await c.fetch("""SELECT id::text id,name,website,is_active,credentials FROM suppliers
+            WHERE credentials->>'source'='nir_sourcing' AND NOT (credentials ? 'qualification') ORDER BY created_at""")
+    sem = asyncio.Semaphore(2 if a.browser else 8)
     report = []
+    ev_via: dict = {}
 
     async def one(r):
         cr = r["credentials"] if isinstance(r["credentials"], dict) else json.loads(r["credentials"])
         async with sem:
             ev = await collect(r["website"] or "")
+            if a.browser and (not ev.get("home_url") or len(ev.get("home") or "") < 1500):
+                try:
+                    ev = await asyncio.wait_for(collect_browser(r["website"] or ""), timeout=150)
+                    ev["via"] = "browser"
+                except Exception as exc:
+                    ev["via"] = f"browser-failed:{type(exc).__name__}"
+        ev_via[r["id"]] = ev.get("via", "http")
         now = datetime.now(timezone.utc)
-        rec = Q.new_record(r["id"], now)
+        rec = Q.ensure_schema(cr["qualification"], now) if (a.recheck and cr.get("qualification")) else Q.new_record(r["id"], now)
         verdict, why = judge(rec, ev, now)
         if r["id"][:8] in MANUAL_REJECT:
             verdict, why = "rejected", MANUAL_REJECT[r["id"][:8]]
@@ -179,11 +236,11 @@ async def main():
     for r, cr, rec, verdict, why, cls in await asyncio.gather(*[one(r) for r in rows]):
         reqs = {k: v["status"] for k, v in rec["requirements"].items() if k in Q.REQUIREMENTS}
         report.append({"id": r["id"], "name": r["name"][:50], "website": r["website"], "active": r["is_active"],
-                       "verdict": verdict, "reason": why, "classification": cls["classification"],
+                       "via": ev_via.get(r["id"], "http"), "verdict": verdict, "reason": why, "classification": cls["classification"],
                        "requirements": reqs})
         if a.apply:
             cr["qualification"] = rec
-            protected = r["is_active"] or cr.get("status") != "pending_review"   # existing relationships: evidence only
+            protected = r["is_active"] or cr.get("status") not in ("pending_review", *([x.strip() for x in a.recheck.split(",")] if a.recheck else []))   # existing relationships: evidence only
             if verdict == "rejected" and not protected:
                 cr["status"] = "rejected"
                 cr["rejected_reason"] = why

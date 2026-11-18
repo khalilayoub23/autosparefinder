@@ -14,13 +14,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from currency_rate import get_usd_to_ils_rate
 from services.suppliers.ebay_supplier import EbaySupplier
+from services import sync_checkpoint
+from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
 # Rotating cursor (id) for walking the unpriced-parts backlog across runs so
 # every daily run prices FRESH unpriced parts instead of re-selecting the same
 # ones. Resets on restart (starts from the lowest id again — harmless).
-_EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+def same_listing(result: Any, stored_url: Optional[str]) -> bool:
+    """True when an eBay search result IS the listing the offer was priced from (item id, else URL without query)."""
+    if not stored_url:
+        return False
+    iid = str(getattr(result, "item_id", "") or "")
+    # eBay Browse item ids look like v1|1234567890|0 ; the public URL carries the numeric part (/itm/1234567890)
+    parts = [x for x in iid.replace("|", " ").split() if x.isdigit() and len(x) >= 9]
+    if any(x in stored_url for x in parts):
+        return True
+    u = str(getattr(result, "item_url", "") or "").split("?")[0]
+    return bool(u) and u == stored_url.split("?")[0]
+
+
+_ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+_CURSOR_KEY = "ebay_unpriced_last_id"   # durable (services/sync_checkpoint.py): survives restart / recreation
+# Refresh policy (2026-11-18): an existing eBay offer is re-checked when its last_checked_at is older than
+# EBAY_REFRESH_INTERVAL_DAYS (default 30: 37.8K offers / 30d ~ 1.3K per night, inside the daily eBay call budget).
+# last_checked_at IS the persistent due-time: every check (found, not found, blocked) advances it; an API error does not.
 
 ebay = EbaySupplier()
 USD_TO_ILS_FALLBACK = float(os.getenv("USD_TO_ILS", "3.72"))
@@ -239,6 +258,8 @@ async def sync_ebay_prices(
         "parts_checked": 0,
         "parts_updated": 0,
         "parts_not_found": 0,
+        "refresh_checked": 0, "refresh_updated": 0, "refresh_unchanged": 0, "refresh_no_listing": 0, "refresh_listing_changed": 0,
+        "unpriced_checked": 0, "calls_used": 0, "call_budget_hit": False,
         "blocked_non_il_shipping": 0,
         "price_history_rows": 0,
         "api_calls_logged": 0,
@@ -289,13 +310,42 @@ async def sync_ebay_prices(
         # Target ONLY unpriced parts (base_price 0/NULL) so every run CLOSES the
         # gap instead of re-pricing already-priced rows (the old ORDER BY RANDOM()
         # over millions wasted its budget on priced parts AND took 48s). Walk the
-        # unpriced backlog in id order via a rotating cursor (`_EBAY_SYNC_LAST_ID`)
+        # unpriced backlog in id order via a durable cursor (`_CURSOR_KEY`, services/sync_checkpoint.py)
         # — cheap (pkey index, ~1.8s) and makes deterministic forward progress;
         # wraps to the start when it reaches the end. Priced parts still get
         # market-drift refresh from the synthetic pass in sync_prices.
-        global _EBAY_SYNC_LAST_ID
+        # Population 1 (priority): existing eBay offers DUE for refresh, oldest check first. Identity is the OFFER row
+        # (exact supplier_part id), so a refresh can never touch another supplier's or another variant's offer.
+        refresh_limit = int(os.getenv("EBAY_REFRESH_LIMIT", "1300"))
+        refresh_days = int(os.getenv("EBAY_REFRESH_INTERVAL_DAYS", "30"))
+        refresh_rows = []
+        if refresh_limit > 0:
+            rr = await db.execute(
+                text(
+                    """
+                    SELECT sp.id AS offer_id, sp.supplier_url AS offer_url, pc.id AS id, pc.oem_number, pc.name
+                    FROM supplier_parts sp
+                    JOIN parts_catalog pc ON pc.id = sp.part_id
+                    WHERE sp.supplier_id = CAST(:sid AS uuid)
+                      AND sp.price_ils > 0
+                      AND sp.part_type IS NULL
+                      AND pc.is_active
+                      AND pc.oem_number IS NOT NULL AND pc.oem_number != ''
+                      AND (sp.last_checked_at IS NULL
+                           OR sp.last_checked_at < NOW() - make_interval(days => :days))
+                    ORDER BY sp.last_checked_at NULLS FIRST, sp.id
+                    LIMIT :lim
+                    """
+                ),
+                {"sid": ebay_supplier_id, "days": refresh_days, "lim": refresh_limit},
+            )
+            refresh_rows = [SimpleNamespace(offer_id=str(r.offer_id), offer_url=r.offer_url, id=r.id, oem_number=r.oem_number, name=r.name,
+                                            population="refresh") for r in rr.fetchall()]
+
+        # Population 2: parts with no price yet, walked in id order via a DURABLE cursor.
+        _last_id = str(sync_checkpoint.load(_CURSOR_KEY, _ZERO_UUID) or _ZERO_UUID)
         _brand_filter = "" if _all_brands else "AND manufacturer = ANY(:brands)"
-        _q_params = {"limit": limit_per_run, "last_id": _EBAY_SYNC_LAST_ID}
+        _q_params = {"limit": limit_per_run, "last_id": _last_id}
         if not _all_brands:
             _q_params["brands"] = _brands
         parts = await db.execute(
@@ -315,18 +365,36 @@ async def sync_ebay_prices(
             ),
             _q_params,
         )
-        part_rows = parts.fetchall()
-        # Advance / wrap the cursor.
-        if len(part_rows) < limit_per_run:
-            _EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"  # reached end → wrap
-        elif part_rows:
-            _EBAY_SYNC_LAST_ID = str(part_rows[-1].id)
+        unpriced_rows = [SimpleNamespace(offer_id=None, offer_url=None, id=r.id, oem_number=r.oem_number, name=r.name,
+                                         population="unpriced") for r in parts.fetchall()]
+        # Cursor wrap is persisted immediately (nothing to replay); otherwise it advances only after commits (below).
+        _wrapped = len(unpriced_rows) < limit_per_run
+        if _wrapped:
+            sync_checkpoint.save(_CURSOR_KEY, _ZERO_UUID)
+        part_rows = refresh_rows + unpriced_rows
+        call_budget = int(os.getenv("EBAY_RUN_CALL_BUDGET", "4800"))
+        _last_committed_unpriced = None
 
         logger.info("eBay price sync: checking %d parts", len(part_rows))
         search_url_base = f"{getattr(ebay, '_base_url', 'https://api.ebay.com')}/buy/browse/v1/item_summary/search"
 
+        _cur = {"prev": None, "done": None}
+
+        def _save_cursor() -> None:
+            # Called only right AFTER a commit: every unpriced part before the current one is durably written.
+            if _cur["done"] is not None and not _wrapped:
+                sync_checkpoint.save(_CURSOR_KEY, str(_cur["done"]))
+
         for part in part_rows:
+            if _cur["prev"] is not None and _cur["prev"].population == "unpriced":
+                _cur["done"] = _cur["prev"].id
+            _cur["prev"] = part
+            if report["calls_used"] >= call_budget:
+                report["call_budget_hit"] = True
+                break
             report["parts_checked"] += 1
+            report[part.population + "_checked"] += 1
+            report["calls_used"] += 1
             part_number = str(part.oem_number or "")
             query = part_number
             call_started = time.monotonic()
@@ -366,15 +434,34 @@ async def sync_ebay_prices(
 
             if not results:
                 report["parts_not_found"] += 1
+                if part.offer_id:
+                    # Missing listing never erases a valid price; the check is recorded so it is not re-fetched until due.
+                    report["refresh_no_listing"] += 1
+                    await db.execute(text("UPDATE supplier_parts SET last_checked_at = NOW() WHERE id = CAST(:i AS uuid)"),
+                                     {"i": part.offer_id})
+                    pending_writes += 1
                 if pending_writes >= 25:
                     await db.commit()
                     pending_writes = 0
+                    _save_cursor()
                 continue
 
+            if part.offer_id and os.getenv("EBAY_REFRESH_ALLOW_RELISTING", "0") != "1":
+                # Identity: a refresh may only take the price of the SAME listing. A different listing for the same OEM
+                # number is a different product/seller/condition: keep the stored price, record the check, report it.
+                same = [r for r in results if same_listing(r, part.offer_url)]
+                if not same:
+                    report["refresh_listing_changed"] += 1
+                    await db.execute(text("UPDATE supplier_parts SET last_checked_at = NOW() WHERE id = CAST(:i AS uuid)"),
+                                     {"i": part.offer_id})
+                    pending_writes += 1
+                    continue
+                results = same
             cheapest = min(results, key=lambda r: float(getattr(r, "total_cost", 0) or 0))
             detail = None
             if getattr(cheapest, "item_id", None):
                 try:
+                    report["calls_used"] += 1
                     detail = await ebay.get_part_details(str(cheapest.item_id))
                 except Exception as exc:
                     report["errors"].append(f"details:{part_number}:{exc}")
@@ -406,12 +493,18 @@ async def sync_ebay_prices(
                 if pending_writes >= 25:
                     await db.commit()
                     pending_writes = 0
+                    _save_cursor()
                 continue
 
             raw_price = Decimal(str(getattr(selected, "price", None) or getattr(cheapest, "price", 0) or 0))
             raw_shipping = Decimal(str(getattr(selected, "shipping_cost", 0) or 0))
             if raw_price <= 0:
                 report["parts_not_found"] += 1
+                if part.offer_id:
+                    report["refresh_no_listing"] += 1
+                    await db.execute(text("UPDATE supplier_parts SET last_checked_at = NOW() WHERE id = CAST(:i AS uuid)"),
+                                     {"i": part.offer_id})
+                    pending_writes += 1
                 continue
 
             # eBay returns ILS-denominated prices when X-EBAY-C-ENDUSERCTX: country=IL is sent.
@@ -497,6 +590,16 @@ async def sync_ebay_prices(
                 },
             )
             existing = existing_res.fetchone()
+            if part.offer_id:
+                # Refresh targets ONE exact offer row (identity = supplier_part id); never fall back to a sku/part match.
+                forced = await db.execute(
+                    text("SELECT id, price_usd, price_ils FROM supplier_parts WHERE id = CAST(:i AS uuid) "
+                         "AND supplier_id = CAST(:sid AS uuid) AND part_id = CAST(:pid AS uuid)"),
+                    {"i": part.offer_id, "sid": ebay_supplier_id, "pid": str(part.id)})
+                existing = forced.fetchone()
+                if existing is None:
+                    report["errors"].append(f"refresh offer {part.offer_id} no longer matches supplier/part - skipped")
+                    continue
 
             old_price_usd: Optional[Decimal] = None
             old_price_ils: Optional[Decimal] = None
@@ -593,7 +696,6 @@ async def sync_ebay_prices(
                     },
                 )
 
-            report["parts_updated"] += 1
             pending_writes += 1
 
             catalog_doc = await _update_catalog_metadata(
@@ -630,6 +732,9 @@ async def sync_ebay_prices(
                 or old_price_ils != price_ils
             )
             if price_changed:
+                report["parts_updated"] += 1
+                if part.offer_id:
+                    report["refresh_updated"] += 1
                 change_pct = None
                 if old_price_ils is not None and old_price_ils > 0:
                     change_pct = float(((price_ils - old_price_ils) / old_price_ils * Decimal("100")).quantize(Decimal("0.0001")))
@@ -683,6 +788,11 @@ async def sync_ebay_prices(
                 report["price_history_rows"] += 1
                 pending_writes += 1
 
+            if not price_changed:
+                report["parts_unchanged"] = report.get("parts_unchanged", 0) + 1
+                if part.offer_id:
+                    report["refresh_unchanged"] += 1
+
             logger.info(
                 "Updated eBay part %s: usd=%s ils=%s indexed=%s",
                 part.oem_number,
@@ -694,9 +804,16 @@ async def sync_ebay_prices(
             if pending_writes >= 25:
                 await db.commit()
                 pending_writes = 0
+                _save_cursor()
 
         if pending_writes:
             await db.commit()
+        # Loop finished: everything is committed, so the last unpriced part processed is the new cursor
+        # (skipped when the run wrapped, or when the budget cut the run: the cursor then stops at the last done part).
+        if _cur["prev"] is not None and _cur["prev"].population == "unpriced" and not report["call_budget_hit"]:
+            _cur["done"] = _cur["prev"].id
+        if not _wrapped:
+            _save_cursor()
 
         logger.info("eBay price sync complete: %s", report)
         return report

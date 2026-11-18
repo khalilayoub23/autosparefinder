@@ -59,8 +59,9 @@ async def db():
 
 
 @pytest.fixture(autouse=True)
-def mocks(monkeypatch):
-    monkeypatch.setattr(eb, "_EBAY_SYNC_LAST_ID", "00000000-0000-0000-0000-000000000000")
+def mocks(monkeypatch, tmp_path):
+    monkeypatch.setattr(eb.sync_checkpoint, "_PATH", tmp_path / "cursors.json")
+    monkeypatch.setenv("EBAY_REFRESH_LIMIT", "0")      # these tests cover the unpriced path; refresh has its own file
     monkeypatch.setattr(eb, "get_usd_to_ils_rate", AsyncMock(return_value=3.7))
     monkeypatch.setattr(eb, "_meili_sync_part", AsyncMock(return_value=True))
     monkeypatch.setattr(eb.asyncio, "sleep", AsyncMock())
@@ -100,7 +101,7 @@ async def _rows(db, sup, pid):
 
 async def _run(db):
     await db.execute(sa.text("UPDATE parts_catalog SET base_price = 0 WHERE manufacturer LIKE 'zz-ebay-%'"))
-    eb._EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+    eb.sync_checkpoint.save(eb._CURSOR_KEY, "00000000-0000-0000-0000-000000000000")
     return await eb.sync_ebay_prices(db, limit_per_run=5000)
 
 

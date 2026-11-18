@@ -1553,6 +1553,9 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
       - `online_price_ils = 0` → only IL-sourced parts; NEVER touch foreign parts (their cost
         is online_price_ils and importer_price_ils=0 is correct there).
       - `FOR UPDATE SKIP LOCKED` → never fights the harvester/importers for row locks.
+      - Root-fixed 2026-11-18: the scan walked the whole pkey (4.3M rows, planner estimated 420K matches, real 207) and
+        hit the statement timeout every run -> endless backoff. Partial index `idx_parts_catalog_importer_gap`
+        (migration 0063) makes it instant; the EXISTS keeps unhealable rows out of the batch.
       - Fixed 2026-07-18: the old version skipped any row that already had a base_price
         (`AND base_price = 0`), so parts whose base_price was written but importer cost was
         left 0 were NEVER healed — that left a permanent backlog of margin-less parts."""
@@ -1573,6 +1576,10 @@ async def task_heal_importer_price(batch_size: int = 500) -> int:
                       AND max_price_ils > 0
                       AND (importer_price_ils IS NULL OR importer_price_ils = 0)
                       AND (online_price_ils IS NULL OR online_price_ils = 0)
+                      -- Only rows that CAN be healed (an Israeli priced offer exists). Without this the same
+                      -- unhealable rows were re-selected every run and, once > batch, would starve healable ones.
+                      AND EXISTS (SELECT 1 FROM supplier_parts sp0 JOIN suppliers s0 ON s0.id = sp0.supplier_id
+                                  WHERE sp0.part_id = parts_catalog.id AND sp0.price_ils > 0 AND s0.country = 'Israel')
                     ORDER BY id
                     LIMIT :batch
                     FOR UPDATE SKIP LOCKED

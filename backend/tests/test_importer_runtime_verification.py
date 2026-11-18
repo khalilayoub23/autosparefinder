@@ -615,7 +615,7 @@ def test_ebay_sync_first_repeat_change_and_non_il(state, monkeypatch):
     url = DSN.replace("postgresql://", "postgresql+asyncpg://")
 
     async def sync():
-        es._EBAY_SYNC_LAST_ID = "00000000-0000-0000-0000-000000000000"
+        es.sync_checkpoint.save(es._CURSOR_KEY, "00000000-0000-0000-0000-000000000000")
         eng = create_async_engine(url, poolclass=NullPool)
         try:
             async with AsyncSession(eng, expire_on_commit=False) as db:
