@@ -69,7 +69,7 @@ def test_solve_timeout_is_logged_and_surfaced(tmp_path, monkeypatch, caplog):
 def test_failed_collection_is_released_not_recorded_empty(monkeypatch):
     done, released = [], []
     monkeypatch.setattr(h, "claim_next_model", lambda: ("q1", "bmw/x5"))
-    monkeypatch.setattr(h, "complete_model", lambda q, n: done.append((q, n)))
+    monkeypatch.setattr(h, "complete_model", lambda q, n, partial=False: done.append((q, n)))
     monkeypatch.setattr(h, "release_model", lambda q: released.append(q))
     monkeypatch.setattr(h, "INTER_MODEL", 0)
     def failing(sid, vehicle, state):

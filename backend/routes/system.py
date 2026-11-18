@@ -47,6 +47,15 @@ async def collect_preflight():
 _COLLECT_SECRET = os.environ.get("COLLECT_SECRET", "")
 
 
+def _collect_secret_ok(provided) -> bool:
+    """The ONE check for COLLECT_SECRET-protected relay endpoints. FAILS CLOSED: an unset/empty server secret authorizes
+    nobody (the old `if _COLLECT_SECRET and ...` form accepted EVERY request when the env var was missing)."""
+    import hmac
+    if not _COLLECT_SECRET or not provided:
+        return False
+    return hmac.compare_digest(str(provided).encode(), _COLLECT_SECRET.encode())
+
+
 @router.options("/api/v1/system/unpriced-oems")
 async def unpriced_oems_preflight():
     return JSONResponse(content={}, headers=CORS_HEADERS)
@@ -88,7 +97,7 @@ async def asap_collect(request: Request):
     # `python3 /app/maintenance/mint_asap_nonce.py`; it lives in Redis for 15
     # minutes and is DELETED on first successful use.
     authorized = False
-    if _COLLECT_SECRET and secret == _COLLECT_SECRET:
+    if _collect_secret_ok(secret):
         authorized = True
     elif nonce:
         try:
@@ -100,8 +109,6 @@ async def asap_collect(request: Request):
             await _r.aclose()
         except Exception as exc:
             print(f"[asap-collect] nonce check failed: {exc}", flush=True)
-    elif not _COLLECT_SECRET:
-        authorized = True                 # no secret configured at all
 
     if not authorized:
         return JSONResponse(status_code=403, content={"error": "forbidden"}, headers=CORS_HEADERS)
@@ -186,7 +193,7 @@ async def unpriced_oems_feed(request: Request, db: AsyncSession = Depends(get_db
         except Exception:
             body = {}
     secret = request.headers.get("X-Collect-Secret", "") or (body.get("secret") if isinstance(body, dict) else "") or ""
-    if _COLLECT_SECRET and secret != _COLLECT_SECRET:
+    if not _collect_secret_ok(secret):
         from fastapi import HTTPException as _HTTPException
         raise _HTTPException(status_code=403, detail="Forbidden")
 
@@ -280,11 +287,10 @@ async def collect_scrape_data(request: Request):
         done = data.get("done", False)
         body_secret = data.get("secret", "") or ""
 
-    if _COLLECT_SECRET:
-        token = request.headers.get("X-Collect-Secret", "") or body_secret
-        if token != _COLLECT_SECRET:
-            from fastapi import HTTPException as _HTTPException
-            raise _HTTPException(status_code=403, detail="Forbidden")
+    token = request.headers.get("X-Collect-Secret", "") or body_secret
+    if not _collect_secret_ok(token):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(status_code=403, detail="Forbidden")
 
     print(f"[collect] ct={ct!r} brand={brand!r} vehicle={_vehicle_slug!r} done={done} parts={len(chunk)}", flush=True)
     # Extract brand from vehicle slug — browser harvester sends "vehicle":"toyota/corolla-ke" not "brand"
@@ -427,7 +433,7 @@ async def collect_scrape_data(request: Request):
 @router.get("/api/v1/system/collect/import-status")
 async def collect_import_status(request: Request, vehicle: str, run_id: str, brand: str = ""):
     """State of the importer for ONE relay run (running | ok | failed | unknown). Same secret as /collect."""
-    if _COLLECT_SECRET and request.headers.get("X-Collect-Secret", "") != _COLLECT_SECRET:
+    if not _collect_secret_ok(request.headers.get("X-Collect-Secret", "")):
         from fastapi import HTTPException as _HTTPException
         raise _HTTPException(status_code=403, detail="Forbidden")
     import relay_store

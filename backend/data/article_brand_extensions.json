@@ -1,0 +1,111 @@
+{
+ "_doc": "Brands the generated vocabulary (article_brands.json) lacks, or cannot use as a vehicle-first SUFFIX (<3 chars, generic word, <200 rows). Each entry: measured brand-first row count, an article-shape regex matched by >=95% of that brand's own brand-first articles, written evidence. Loaded by part_identity.load_extensions; entries without evidence are ignored. Added 2026-11-18 (CORE closure, resolver gaps).",
+ "generated_at": "2026-11-18",
+ "brands": [
+  {
+   "brand": "FRAM",
+   "rows": 31,
+   "suffix_article_regex": "^[A-Z]{1,3}\\d{3,}[A-Z]*$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 31 titles start 'FRAM <own article> ...'; 31 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "555",
+   "rows": 611,
+   "suffix_article_regex": "^[A-Z]+-[A-Z]*\\d+[A-Z0-9-]*$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 611 titles start '555 <own article> ...'; 611 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "NTK",
+   "rows": 136,
+   "suffix_article_regex": "^\\d{3,6}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 136 titles start 'NTK <own article> ...'; 136 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "EBC BRAKES",
+   "rows": 87,
+   "suffix_article_regex": "^[A-Z]{1,3}\\d+[A-Z]*$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 87 titles start 'EBC BRAKES <own article> ...'; 87 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "HI-Q",
+   "rows": 189,
+   "suffix_article_regex": "^[A-Z]{1,3}\\d+[A-Z-]*$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 189 titles start 'HI-Q <own article> ...'; 189 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "AXYO",
+   "rows": 117,
+   "suffix_article_regex": "^\\d{9,12}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 117 titles start 'AXYO <own article> ...'; 117 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "KILEN",
+   "rows": 106,
+   "suffix_article_regex": "^\\d{4,7}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 106 titles start 'KILEN <own article> ...'; 106 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "FA KROSNO",
+   "rows": 147,
+   "suffix_article_regex": "^\\d{4,6}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 147 titles start 'FA KROSNO <own article> ...'; 147 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "AE",
+   "rows": 1321,
+   "suffix_article_regex": "^[A-Z]{1,4}\\d+[A-Z]?$",
+   "coverage": 0.9985,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 1321 titles start 'AE <own article> ...'; 1319 (99.8%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "AS",
+   "rows": 704,
+   "suffix_article_regex": "^[A-Z]{0,3}\\d{4,6}[A-Z]?$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 704 titles start 'AS <own article> ...'; 704 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "K2",
+   "rows": 869,
+   "suffix_article_regex": "^[A-Z0-9]{2,4}[A-Z0-9/-]{0,10}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 869 titles start 'K2 <own article> ...'; 869 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "XL",
+   "rows": 456,
+   "suffix_article_regex": "^\\d{5,7}$",
+   "coverage": 1.0,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 456 titles start 'XL <own article> ...'; 456 (100.0%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "FAST",
+   "rows": 6310,
+   "suffix_article_regex": "^FT\\d{4,6}[A-Z-]*\\d*$",
+   "coverage": 0.997,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 6310 titles start 'FAST <own article> ...'; 6291 (99.7%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "MOTIVE",
+   "rows": 693,
+   "suffix_article_regex": "^[A-Z]{1,5}-?[A-Z]*\\d+[A-Z0-9]*$",
+   "coverage": 0.9856,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 693 titles start 'MOTIVE <own article> ...'; 683 (98.6%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  },
+  {
+   "brand": "CHAMPION",
+   "rows": 3733,
+   "suffix_article_regex": "^(?:C[A-Z]{1,2}|OE|AF[A-Z]|EON)\\d+[A-Z0-9/]*$|^\\d{5,6}CH(?:-\\d)?$",
+   "coverage": 0.9869,
+   "evidence": "Measured read-only on 2026-11-18 over the active catalogue: 3733 titles start 'CHAMPION <own article> ...'; 3684 (98.7%) of those articles match the shape regex. The brand is a real aftermarket maker standing directly before its own article number, not a vehicle word."
+  }
+ ]
+}

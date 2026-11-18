@@ -40,6 +40,11 @@ _DEFAULT_UA      = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, 
                     "Chrome/124.0.0.0 Safari/537.36")
 # How long a minted cf_clearance cookie is trusted before a refresh (car-parts.ie ~30 min).
 CLEARANCE_TTL_S  = int(os.environ.get("HARVESTER_CLEARANCE_TTL_S", "1500"))
+# A cookie older than this is NEVER used while a re-mint keeps failing: the harvester fails closed (fetches count as
+# blocked -> the model is released/partial) instead of silently collecting on a stale cookie (2026-11-17: 10 h old).
+CLEARANCE_HARD_MAX_S = int(os.environ.get("HARVESTER_CLEARANCE_HARD_MAX_S", "21600"))
+# A 'partial' model (pages missing after a retry) is handed out again after this many seconds.
+PARTIAL_RETRY_S = int(os.environ.get("HARVESTER_PARTIAL_RETRY_S", "21600"))
 RELAY            = "https://autosparefinder.co.il/api/v1/system/collect"
 _COLLECT_SECRET  = os.environ.get("COLLECT_SECRET", "")
 BASE             = "https://www.car-parts.ie"
@@ -111,11 +116,13 @@ def claim_next_model() -> "tuple[str,str] | None":
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT id, model_slug FROM harvest_queue
-                WHERE status = 'pending' AND model_slug IS NOT NULL
+                WHERE (status = 'pending'
+                       OR (status = 'partial' AND updated_at < NOW() - (%s || ' seconds')::interval))
+                  AND model_slug IS NOT NULL
                   AND id <> ALL(%s::uuid[])
                 ORDER BY priority_rank ASC NULLS LAST
                 LIMIT 1 FOR UPDATE SKIP LOCKED
-            """, (_cooling_ids(),))
+            """, (str(PARTIAL_RETRY_S), _cooling_ids(),))
             row = cur.fetchone()
             if not row:
                 conn.commit(); conn.close(); return None
@@ -128,12 +135,15 @@ def claim_next_model() -> "tuple[str,str] | None":
         log.error(f"claim_next_model failed: {e}")
         return None
 
-def complete_model(qid: str, parts_found: int) -> None:
+def complete_model(qid: str, parts_found: int, partial: bool = False) -> None:
     """Mark a claimed model done (or 'empty' if 0 parts — likely a slug that
-    car-parts.ie doesn't have; the supervisor surfaces these for remapping)."""
+    car-parts.ie doesn't have; the supervisor surfaces these for remapping).
+    partial=True (some page fetches failed at the transport/Cloudflare level even after a retry): the delivered parts ARE
+    imported, but the model is recorded 'partial', never 'done' - it is not complete, and claim_next_model hands it out
+    again after PARTIAL_RETRY_S so the missing pages are collected."""
     try:
         conn = _db_conn(); conn.autocommit = True
-        status = "done" if parts_found > 0 else "empty"
+        status = ("partial" if partial else "done") if parts_found > 0 else "empty"
         with conn.cursor() as cur:
             cur.execute("""
                 UPDATE harvest_queue
@@ -166,7 +176,8 @@ def _queue_pending_count() -> int:
     try:
         conn = _db_conn(); conn.autocommit = True
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM harvest_queue WHERE status='pending' AND model_slug IS NOT NULL")
+            cur.execute("SELECT COUNT(*) FROM harvest_queue WHERE model_slug IS NOT NULL AND (status='pending' "
+                        "OR (status='partial' AND updated_at < NOW() - (%s || ' seconds')::interval))", (str(PARTIAL_RETRY_S),))
             n = cur.fetchone()[0]
         conn.close()
         return int(n)
@@ -460,6 +471,8 @@ def _note_progress(vehicle: str = None, done: bool = False) -> None:
     name = threading.current_thread().name
     with _STATUS_LOCK:
         _STATUS["last_progress_at"] = now
+        _ca = clearance_age_s()
+        _STATUS["cookie_age_s"] = None if _ca == float("inf") else int(_ca)   # visible to the healthcheck / owner, never silent
         w = _STATUS["workers"].setdefault(name, {})
         if done:
             _STATUS["workers"].pop(name, None)
@@ -682,6 +695,13 @@ def _solve_clearance() -> bool:
     return False
 
 
+def clearance_age_s() -> float:
+    """Age of the cf_clearance cookie in use (inf when there is none)."""
+    with _CLEARANCE_LOCK:
+        ts, have = _CLEARANCE["ts"], bool(_CLEARANCE["cookie"] or _CLEARANCE.get("session_id"))
+    return time.time() - ts if (have and ts) else float("inf")
+
+
 def ensure_clearance(force: bool = False) -> bool:
     global _CLEARANCE_FAILED_TS, _FS_CONSECUTIVE_FAILS
     with _CLEARANCE_LOCK:
@@ -795,6 +815,9 @@ def _log_fetch_failure(url: str, why: str) -> None:
     n = _FETCH_FAIL_COUNTS[why] = _FETCH_FAIL_COUNTS.get(why, 0) + 1
     if n == 1 or n % 50 == 0:
         log.warning(f"fetch failed: {why} (x{n}) {url[:120]}")
+    fl = getattr(_FETCH_TL, "fails", None)
+    if fl is not None:                       # per model: EVERY failed URL is kept and logged in the model summary
+        fl.append((url, why))
 
 
 def http_get(url: str, timeout_s: int = 40) -> str:
@@ -821,6 +844,14 @@ def http_get(url: str, timeout_s: int = 40) -> str:
     for attempt in range(2):
         with _CLEARANCE_LOCK:
             ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
+        if ck and clearance_age_s() > CLEARANCE_TTL_S:
+            ensure_clearance()                  # past its TTL: re-mint (cheap no-op inside the failure back-off)
+            with _CLEARANCE_LOCK:
+                ck, ua = _CLEARANCE["cookie"], _CLEARANCE["ua"]
+        if ck and clearance_age_s() > CLEARANCE_HARD_MAX_S:
+            _log_fetch_failure(url, "cf_clearance cookie too old and re-mint failing")
+            _fetch_outcome("blocked")           # fail closed: never collect on a silently stale cookie
+            return ""
         if not ck:
             ensure_clearance()
             with _CLEARANCE_LOCK:
@@ -1023,6 +1054,12 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     log.info(f"▶ {vehicle}")
     _note_progress(vehicle)
     _FETCH_TL.c = {"ok": 0, "blocked": 0}
+    _FETCH_TL.fails = []                 # every failed (url, reason) of THIS model
+    _FETCH_TL.partial = []               # paths still missing after the retry pass (read by the worker)
+    _age = clearance_age_s()
+    log.log(logging.WARNING if _age > CLEARANCE_TTL_S else logging.INFO,
+            f"  {vehicle}: cf_clearance cookie age {'none' if _age == float('inf') else str(int(_age)) + 's'}"
+            f"{' - OLDER than TTL ' + str(CLEARANCE_TTL_S) + 's (re-mint pending/failing)' if _age > CLEARANCE_TTL_S else ''}")
 
     # Phase 1: Get additional slugs from model page
     model_html = fs_get(f"{BASE}/car-brands/{brand}/{model}-parts", session_id)
@@ -1046,9 +1083,13 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
     run_id = uuid.uuid4().hex   # one acknowledged relay run per harvest of this model
     chunks: dict = {}          # seq -> parts, kept until the importer reported success (re-sent if the server lacks one)
 
+    failed_paths: list = []
     for i, slug in enumerate(all_slugs):
         path = f"/car-parts/{brand}/{model}/{slug}"
+        _b0 = _FETCH_TL.c["blocked"]
         html = fs_get(f"{BASE}{path}", session_id, timeout_ms=15000)
+        if _FETCH_TL.c["blocked"] > _b0:
+            failed_paths.append(path)    # a transport/Cloudflare failure (not a 404): retried below, never silently dropped
         _note_progress(vehicle)
         if html:
             parts = [p for p in parse_parts(html, path) if p["sku"] not in seen]
@@ -1070,6 +1111,28 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
 
         time.sleep(0.1)  # small delay between requests
 
+    # Retry pass: the pages that failed at the transport/Cloudflare level get one more attempt (fresh clearance first) so a
+    # transient timeout does not leave a hole in the model. Whatever still fails is reported as PARTIAL, never as complete.
+    if failed_paths:
+        log.warning(f"  {vehicle}: retrying {len(failed_paths)} failed page(s): {', '.join(failed_paths[:10])}")
+        time.sleep(5)
+        ensure_clearance()
+        still: list = []
+        for path in failed_paths:
+            _b0 = _FETCH_TL.c["blocked"]
+            html = fs_get(f"{BASE}{path}", session_id, timeout_ms=30000)
+            if _FETCH_TL.c["blocked"] > _b0:
+                still.append(path)
+            elif html:
+                parts = [p for p in parse_parts(html, path) if p["sku"] not in seen]
+                for p in parts:
+                    seen.add(p["sku"])
+                batch.extend(parts)
+            _note_progress(vehicle)
+            time.sleep(1)
+        failed_paths = still
+    _FETCH_TL.partial = list(failed_paths)
+
     if batch:
         _seq = len(chunks)
         if post_relay(vehicle, batch, run_id=run_id, seq=_seq):
@@ -1085,8 +1148,12 @@ def harvest_model(session_id: str, vehicle: str, state: dict) -> int:
         # nothing was delivered AND something failed (a page blocked by Cloudflare/transport, or collected parts the relay did
         # not accept): NOT an empty model - the worker releases it for a retry
         raise HarvestFetchFailed(f"{vehicle}: nothing delivered; {_c['blocked']} blocked fetches, {len(batch)} undelivered parts, {_c['ok']} ok")
-    if _c["blocked"]:
-        log.warning(f"  {vehicle}: {_c['blocked']} page fetch(es) failed, {_c['ok']} ok - partial collection")
+    if _FETCH_TL.partial:
+        log.warning(f"  {vehicle}: PARTIAL collection - {len(_FETCH_TL.partial)} page(s) still failing after a retry "
+                    f"({_c['ok']} ok): {', '.join(_FETCH_TL.partial[:20])}; recorded 'partial', retried in {PARTIAL_RETRY_S}s")
+    for _u, _why in _FETCH_TL.fails:
+        if not _why.startswith("HTTP 404") and not _why.startswith("HTTP 410"):
+            log.warning(f"  {vehicle}: failed fetch ({_why}) {_u[:160]}")      # EVERY failed URL, not 1-per-reason-per-process
 
     relay_done(vehicle, run_id, chunks)   # raises HarvestFetchFailed unless 'done' was accepted AND the importer finished ok
     log.info(f"✓ {vehicle}: {sent} parts")
@@ -1108,7 +1175,8 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
         qid, vehicle = claim
         try:
             n = harvest_model("", vehicle, state)   # session arg unused (http_get shim)
-            complete_model(qid, n)
+            _partial = bool(getattr(_FETCH_TL, "partial", None))
+            complete_model(qid, n, partial=_partial)
             with _state_lock:
                 state["total_parts"] = state.get("total_parts", 0) + n
                 state["runs"].append({
@@ -1117,7 +1185,7 @@ def worker(worker_id: int, models_this_cycle: int, state: dict):
                 })
                 state["runs"] = state["runs"][-200:]
                 save_state(state)
-            log.info(f"Worker {worker_id}: {vehicle} → {n} parts")
+            log.info(f"Worker {worker_id}: {vehicle} → {n} parts{' (PARTIAL - will be retried)' if _partial else ''}")
         except HarvestFetchFailed as e:
             log.error(f"Worker {worker_id}: collection FAILED (not empty) - {e}; model returned to pending")
             release_model(qid)

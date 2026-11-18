@@ -41,6 +41,7 @@ SAME, DIFFERENT, UNCERTAIN = "same", "different", "uncertain"
 _DATA = Path(__file__).resolve().parent / "data"
 BRANDS_FILE = _DATA / "article_brands.json"
 ALIASES_FILE = _DATA / "article_brand_aliases.json"
+EXTENSIONS_FILE = _DATA / "article_brand_extensions.json"
 MIN_BRAND_ROWS = 30        # a title prefix is a brand when at least this many catalogue titles start with it
 MIN_SUFFIX_ROWS = 200      # vehicle-first titles: the brand is only the END of the prefix, so demand more support
 
@@ -80,6 +81,7 @@ def brand_key(text: Any) -> str:
 _NOT_A_SUFFIX_BRAND = {"CONNECT", "ENERGY", "GREEN", "START", "FAST", "FORCE", "PILOT", "HOOK", "SONIC", "RING",
                        "PROFIT", "MOTIVE", "MODULA", "NEXUS", "PULSAR", "OXFORD", "CHAMPION", "CONTINENTAL", "GENESIS"}
 _vocab: Optional[Dict[str, int]] = None
+_extensions: Optional[Dict[str, dict]] = None
 _vehicle_words: Optional[frozenset] = None
 _aliases: Optional[Dict[str, str]] = None
 
@@ -106,6 +108,36 @@ def load_aliases(path: Optional[Path] = None) -> Dict[str, str]:
     return out
 
 
+def load_extensions(path: Optional[Path] = None) -> Dict[str, dict]:
+    """{BRAND: {"rows": n, "regex": compiled|None}} - brands the generated vocabulary lacks or cannot use as a vehicle-first
+    SUFFIX (too few rows / 2-letter / a generic word), each with MEASURED written evidence (>= 20 chars) and, for suffix use,
+    an ARTICLE-SHAPE regex measured on that brand's brand-first catalogue titles (>= 95% of them match). Without evidence
+    an entry is ignored: an extension is a verified fact, not a guess (same rule as the aliases)."""
+    out: Dict[str, dict] = {}
+    try:
+        for e in json.loads(Path(path or EXTENSIONS_FILE).read_text(encoding="utf-8")).get("brands", []):
+            b, ev = brand_key(e.get("brand")), str(e.get("evidence") or "").strip()
+            if not b or len(ev) < 20:
+                continue
+            rx = None
+            if e.get("suffix_article_regex"):
+                try:
+                    rx = re.compile(str(e["suffix_article_regex"]))
+                except re.error:
+                    continue
+            out[b] = {"rows": int(e.get("rows") or 0), "regex": rx}
+    except Exception:
+        return {}
+    return out
+
+
+def _ext() -> Dict[str, dict]:
+    global _extensions
+    if _extensions is None:
+        _extensions = load_extensions()
+    return _extensions
+
+
 def load_vehicle_words(path: Optional[Path] = None) -> frozenset:
     try:
         return frozenset(brand_key(w) for w in json.loads(Path(path or BRANDS_FILE).read_text(encoding="utf-8")).get("vehicle_words", []))
@@ -113,13 +145,21 @@ def load_vehicle_words(path: Optional[Path] = None) -> frozenset:
         return frozenset()
 
 
-def _suffix_brand_ok(cand: str) -> bool:
+def _suffix_brand_ok(cand: str, article: Optional[str] = None) -> bool:
     global _vehicle_words
     if _vehicle_words is None:
         _vehicle_words = load_vehicle_words()
     if not _vehicle_words:        # list missing/unreadable: a vehicle make could pass as a brand -> no suffix brands at all
         return False
-    return (len(re.sub(r"[^A-Z0-9]", "", cand)) >= 3 and cand not in _NOT_A_SUFFIX_BRAND and cand not in _vehicle_words
+    if cand in _vehicle_words:
+        return False
+    ext = _ext().get(cand)
+    if ext and ext["regex"] is not None and article and _vocabulary().get(cand, 0) >= MIN_BRAND_ROWS:
+        # a measured brand whose own article shape matches the row's number: the short/generic-word/low-row suffix gate
+        # below exists to keep 'Ford Transit CONNECT 123' out, which an article-shape match on a KNOWN brand does not need
+        if ext["regex"].fullmatch(article):
+            return True                             # never stricter than the default gate below: a miss falls through to it
+    return (len(re.sub(r"[^A-Z0-9]", "", cand)) >= 3 and cand not in _NOT_A_SUFFIX_BRAND
             and _vocabulary().get(cand, 0) >= MIN_SUFFIX_ROWS)
 
 
@@ -127,6 +167,9 @@ def _vocabulary() -> Dict[str, int]:
     global _vocab
     if _vocab is None:
         _vocab = load_brands()
+        for b, e in _ext().items():                 # measured extensions only ever ADD support, never lower a count
+            if e["rows"] > _vocab.get(b, 0):
+                _vocab[b] = e["rows"]
     return _vocab
 
 
@@ -139,7 +182,8 @@ def _alias_map() -> Dict[str, str]:
 
 def configure(brands: Optional[Mapping[str, int]] = None, aliases: Optional[Mapping[str, str]] = None) -> None:
     """Tests / tools: replace the loaded vocabulary or alias table (None = reload from the data files)."""
-    global _vocab, _aliases, _vehicle_words
+    global _vocab, _aliases, _vehicle_words, _extensions
+    _extensions = {} if brands is not None else None      # a test-supplied vocabulary is used AS GIVEN (no extension merge)
     _vehicle_words = None if brands is None else load_vehicle_words()
     _vocab = None if brands is None else {brand_key(k): int(v) for k, v in brands.items()}
     _aliases = None if aliases is None else {brand_key(k): brand_key(v) for k, v in aliases.items()}
@@ -184,7 +228,7 @@ def title_brand(name: Any, oem_number: Any) -> Optional[str]:
             if len(toks) > k:
                 cand = brand_key(" ".join(toks[-k:]))
                 cand = _alias_map().get(cand, cand)
-                if _suffix_brand_ok(cand):
+                if _suffix_brand_ok(cand, num):
                     return cand
     return None
 
