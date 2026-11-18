@@ -707,8 +707,9 @@ SUPPLIER_URL_MAP = {
 
 
 async def _ensure_supplier(conn, manufacturer: str) -> str:
-    """Get-or-create an official Israeli importer supplier record. A supplier CREATED here gets vat_price_basis='exclusive': the offers
-    this importer writes are ex-VAT costs (compute_prices strips the VAT the list embeds). An existing supplier's basis is never changed."""
+    """Get-or-create an official Israeli importer supplier record. A supplier CREATED here gets vat_price_basis='unknown' (#151): this
+    importer's own input format is NOT evidence of the supplier's VAT basis, so a new Israeli supplier is not priced until the basis is verified
+    (maintenance/apply_supplier_vat_basis.py records basis + evidence). An existing supplier's basis is never changed."""
     supplier_name = f'{manufacturer} Official Importer Israel'
     row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)
     if row:
@@ -722,7 +723,7 @@ async def _ensure_supplier(conn, manufacturer: str) -> str:
                                reliability_score, vat_price_basis, created_at, updated_at)
         VALUES ($1, $2, $3, 'IL', true, true, $4::text,
                 (SELECT id FROM car_brands WHERE LOWER(name)=LOWER($4::text) LIMIT 1),
-                0.90, 'exclusive', NOW(), NOW())
+                0.90, 'unknown', NOW(), NOW())
         ON CONFLICT (name) DO NOTHING
     """, sid, supplier_name, url, manufacturer)
     row = await conn.fetchrow('SELECT id FROM suppliers WHERE name = $1', supplier_name)

@@ -73,3 +73,20 @@ in a customer-facing module.
 
 ## Supplier VAT price basis (2026-11-05, #131 — code only, not deployed)
 `suppliers.vat_price_basis` = `inclusive | exclusive | unknown` describes what the STORED offer cost (`supplier_parts.price_ils`) contains. Local supplier: exclusive -> VAT added once (unchanged); inclusive -> cost/1.18 first (`cost_ex_vat`), then the normal rule; unknown -> not priced (`unit_price` returns None). Not supplied (None) = legacy exclusive. Foreign suppliers: always 0% VAT whatever the basis. Example, source 100: exclusive net 145.00 + VAT 26.10 = 171.10; inclusive 145.01 total (100 x 1.45); unknown blocked. Audit evidence and the supplier list: `candidates/vat-basis-2026-11-05/REPORT.md`.
+
+
+## Approved formula, order of operations and VAT-basis evidence (2026-11-18, mission 2)
+Reconstructed from `price_policy.unit_price` and the #129/#131/#151 records; pinned by `tests/test_price_formula_vat_basis_2026_11_18.py`.
+
+| Supplier | Formula (source cost 100) | Result |
+|---|---|---|
+| Israeli, basis `exclusive` | net = round(100 × 1.45, 2) = 145.00; VAT = round(145.00 × 0.18, 2) = 26.10; total = net + VAT | **171.10** |
+| Israeli, basis `inclusive` (cost 118) | ex-VAT = round(118 / 1.18, 2) = 100.00, then the same as above | **171.10** (VAT stripped once, added once) |
+| Israeli, basis `unknown` / NULL / unregistered | not priced (`unit_price` → None) — #151 | blocked |
+| Foreign | net = round(100 × 1.45, 2) = 145.00; VAT 0 | **145.00** (no Israeli VAT, no stripping, whatever the basis) |
+
+* **Order:** markup is applied to the **ex-VAT cost**, and VAT is then taken on the **rounded net**. The product is the same as VAT-first (100 × 1.18 × 1.45 = 171.10), but the taxable base is the stored/displayed net, so rounding happens at net, then VAT, then total. Line VAT = per-unit VAT × qty.
+* **45% is a markup on cost** (net = 1.45 × cost, gross margin 31.0%), not a 45% gross margin (which would be 100 / 0.55 = 181.82). It is never converted.
+* **Fields:** `base_price` = the policy **net** (145.00), internal only; `max_price_ils` = retail/reference (never cost evidence); customer price = net + VAT (+ delivery once per supplier).
+* **VAT-basis evidence rule:** a supplier gets `exclusive` / `inclusive` only with a recorded evidence entry (`suppliers.vat_basis_evidence`, via `maintenance/apply_supplier_vat_basis.py`). A supplier created with no evidence has basis `unknown` or NULL (both blocked for a local supplier). An importer's own input format is not evidence. `supplier_pdf_import._ensure_supplier` therefore creates `unknown` (it created `exclusive` before 2026-11-18).
+* **Creation paths** (every `INSERT INTO suppliers`): oempartsonline, toyota_il, subaru_il, colmobil_v2, asap, mct, sng_barratt, delek_multi, import_delek_brands, zeekr_full, aliexpress_price_sync, supplier_sourcing write no basis (NULL ≡ unknown); supplier_pdf_import writes `unknown`; `bdv_playwright_scraper` writes `exclusive` with the `BDV_VAT_EVIDENCE` entry (BDV states prices exclude VAT). Guard: `test_no_creation_path_assigns_unverified_basis`.

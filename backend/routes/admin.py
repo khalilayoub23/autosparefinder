@@ -4436,7 +4436,7 @@ async def update_agent(
 
 @router.post("/api/v1/admin/parts/import")
 async def import_parts_excel(
-    file,
+    file: UploadFile = File(...),
     current_user: User = Depends(get_current_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
