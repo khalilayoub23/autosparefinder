@@ -1,6 +1,6 @@
 {
  "_doc": "Pure battery-electric vehicles (no combustion engine in any variant). Proposed backend/data/bev_models.json, read by cpie_fitment_guard.fitment_allowed. Key = car-parts.ie vehicle_slug exactly as the importer receives it; manufacturer/model = car_parts_ie_import_generic._parse_vehicle_slug(slug). Hybrid / PHEV / range-extender / ambiguous models are listed under not_bev and must NEVER be added.",
- "version": "2026-11-17-c1",
+ "version": "2026-11-18-c1b",
  "vehicle_slugs": [
   "abarth/500e-convertible-332-2023",
   "abarth/500e-hatchback-332",
@@ -120,7 +120,12 @@
   "xpeng/p7i",
   "zeekr/zeekr-001",
   "zeekr/zeekr-7x",
-  "zeekr/zeekr-x"
+  "zeekr/zeekr-x",
+  "citroen/ami",
+  "citroen/ami-9a",
+  "citroen/ami-break",
+  "opel/ampera-e-f17",
+  "opel/rocks-e-hatchback"
  ],
  "c1_scope": [
   {
@@ -770,6 +775,36 @@
    "vehicle_slug": "volvo/ex90-356",
    "manufacturer": "Volvo",
    "model": "Ex90 356"
+  },
+  {
+   "vehicle_slug": "citroen/ami",
+   "manufacturer": "Citroen",
+   "model": "Ami",
+   "reason": "Citroen Ami: BEV-only quadricycle"
+  },
+  {
+   "vehicle_slug": "citroen/ami-9a",
+   "manufacturer": "Citroen",
+   "model": "Ami 9A",
+   "reason": "Citroen Ami: BEV-only quadricycle"
+  },
+  {
+   "vehicle_slug": "citroen/ami-break",
+   "manufacturer": "Citroen",
+   "model": "Ami Break",
+   "reason": "Citroen Ami: BEV-only quadricycle"
+  },
+  {
+   "vehicle_slug": "opel/ampera-e-f17",
+   "manufacturer": "Opel",
+   "model": "Ampera E F17",
+   "reason": "Opel Ampera-e (Bolt EV based): BEV only (Ampera without -e is the PHEV and is NOT listed)"
+  },
+  {
+   "vehicle_slug": "opel/rocks-e-hatchback",
+   "manufacturer": "Opel",
+   "model": "Rocks E Hatchback",
+   "reason": "Opel Rocks-e: BEV-only quadricycle"
   }
  ],
  "not_bev": {
@@ -786,6 +821,9 @@
   "audi/q3-sback-etron": "Q3 Sportback 45 TFSI e (PHEV)",
   "chery/fx-ev": "unverified identity",
   "volvo/xc40-recharget5": "XC40 Recharge T5 is a PHEV",
-  "mg/mg5": "MG5 name covers ICE saloon and EV estate"
+  "mg/mg5": "MG5 name covers ICE saloon and EV estate",
+  "opel/corsa-e": "slug also names the ICE Corsa E generation (2014-19)",
+  "vauxhall/corsa-mk-iv-e": "Corsa E generation (ICE)",
+  "vauxhall/combo-mk-iv-e-mpv-x19": "Combo E generation (ICE)"
  }
 }

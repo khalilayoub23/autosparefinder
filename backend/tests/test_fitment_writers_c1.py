@@ -9,7 +9,8 @@ SKIP_DIRS = {"tests", "devtests", "legacy", "alembic", "alembic_pii", "candidate
 
 # Writers that call the C1 helper (must keep calling it).
 GUARDED = {"importers/car_parts_ie_import_generic.py": "fitment_allowed", "ebay_fitment_backfill.py": "bev_ice_conflict",
-           "catalog_scraper.py": "bev_ice_conflict"}
+           "catalog_scraper.py": "bev_ice_conflict",
+           "opel_car_parts_ie_import.py": "bev_ice_conflict"}
 # Writers that create fitment but do NOT enforce C1 yet. Documented limitation (FIXES_TRACKER 2026-11-18): none has been measured
 # to write ICE-on-BEV rows (remaining ICE-named rows on BEV models are car-parts.ie era rows), and in-process writers
 # (db_update_agent, catalog_scraper, routes/admin) only pick a change up after a restart, which needs owner approval.
@@ -26,7 +27,7 @@ KNOWN_UNGUARDED = {
     "maintenance/backfill_vw_fitment.py", "maintenance/cpie_fitment_cleanup_20261117.py", "maintenance/jaguar_fitment_from_oem_prefix.py",
     "maintenance/jaguar_fitment_prefix.py", "maintenance/kia_fitment_from_names.py", "maintenance/merge_master_parts.py",
     "maintenance/repair_brand_ids_150.py", "maintenance/run_brand_fitment_merge.py", "oempartsonline_importer.py",
-    "opel_car_parts_ie_import.py", "routes/admin.py", "scrapers/bmw_spare_parts_scraper.py", "scrapers/bydil_scraper.py",
+    "routes/admin.py", "scrapers/bmw_spare_parts_scraper.py", "scrapers/bydil_scraper.py",
     "scrapers/eliteparts_scraper.py", "scrapers/febest_scraper.py", "scripts/import_merged_catalog.py", "workbook_normalizer.py",
 }
 _WRITE = re.compile(r"INSERT\s+INTO\s+part_vehicle_fitment|PartVehicleFitment\(|SET\s+compatible_vehicles|compatible_vehicles\s*=", re.I)
@@ -73,3 +74,12 @@ def test_bev_match_is_case_and_punctuation_insensitive_but_exact():
     assert g.bev_ice_conflict("Engine oil filter ACME", "VW", "Id4")
     assert not g.bev_ice_conflict("Engine oil filter ACME", "BMW", "i4")          # unlisted spelling/model: no prefix match
     assert not g.bev_ice_conflict("Engine oil filter ACME", "Kia", "Niro Plus")   # ambiguous HEV/PHEV stays allowed
+
+
+def test_sump_plug_washer_is_not_ice_only_and_new_bev_slugs():
+    assert not g.is_ice_only("Sump plug washer (RIDEX, 135O0004)")
+    assert g.is_ice_only("Oil sump ACME")
+    assert g.bev_ice_conflict("Engine oil filter ACME", "Citroen", "Ami")
+    assert g.bev_ice_conflict("Spark plug ACME", "Opel", "Rocks E Hatchback")
+    assert not g.bev_ice_conflict("Engine oil filter ACME", "Opel", "Corsa")   # ICE Corsa stays allowed
+    assert not g.bev_ice_conflict("Engine oil filter ACME", "Opel", "Ampera")  # PHEV Ampera stays allowed

@@ -56,7 +56,7 @@ def test_slug_of():
 def test_ice_only_product_never_fits_a_bev():
     for nm in ("RIDEX 7O0002 Audi A4 B7 oil filter", "BOSCH 0 242 235 666 AUDI Q6 e-tron SUV spark plug",
                "LuK 415 0477 10 BYD Seal Saloon clutch flywheel", "RIDEX 1123T0002 AUDI Q6 e-tron SUV timing chain",
-               "LIQUI MOLY 20647 MAXUS T90EV engine oil", "Sump plug washer (RIDEX, 135O0004)"):
+               "LIQUI MOLY 20647 MAXUS T90EV engine oil"):  # "Sump plug washer" removed 2026-11-18: weak evidence, not ICE-only
         assert g.fitment_allowed(500, nm, "x", vehicle_slug="byd/seal") is False, nm
 
 

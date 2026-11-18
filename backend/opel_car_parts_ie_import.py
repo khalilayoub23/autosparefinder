@@ -17,6 +17,8 @@ from typing import Any
 
 import asyncpg
 
+from cpie_fitment_guard import bev_ice_conflict  # C1 (2026-11-18): ICE-only products never fit pure-BEV vehicles
+
 DB_DSN = f"postgresql://autospare:{_DB_PW}@postgres_catalog:5432/autospare"
 OPEL_MANUFACTURER_ID = "86106424-41ba-434b-b107-4b6db23523b7"
 SUPPLIER_NAME = "Car-Parts.ie"
@@ -112,6 +114,7 @@ async def import_file(path: Path) -> dict[str, int]:
         inserted = 0
         updated = 0
         fitment_rows = 0
+        bev_skipped = 0
         supplier_rows = 0
 
         for product in products:
@@ -122,7 +125,10 @@ async def import_file(path: Path) -> dict[str, int]:
             url = _clean(product.get("product_url") or "")
 
             compatible_vehicles = []
-            if model_name and year_from:
+            bev_block = bool(model_name) and bev_ice_conflict(name, maker.title(), model_name)
+            if bev_block:
+                bev_skipped += 1
+            if model_name and year_from and not bev_block:
                 compatible_vehicles.append(
                     {
                         "manufacturer": "Opel",
@@ -174,7 +180,7 @@ async def import_file(path: Path) -> dict[str, int]:
             else:
                 updated += 1
 
-            if model_name and year_from:
+            if model_name and year_from and not bev_block:
                 await conn.execute(
                     """
                     INSERT INTO part_vehicle_fitment (
@@ -233,6 +239,7 @@ async def import_file(path: Path) -> dict[str, int]:
             "parts_inserted": inserted,
             "parts_updated": updated,
             "fitment_rows": fitment_rows,
+            "bev_ice_skipped": bev_skipped,
             "supplier_rows": supplier_rows,
         }
     finally:

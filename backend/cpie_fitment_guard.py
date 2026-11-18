@@ -81,7 +81,9 @@ _OILNEG = r"transmission|gearbox|gear oil|automatic|\batf\b|differential|axle|po
 _ICE_ONLY = [(re.compile(p), re.compile(n) if n else None) for p, n in (
     (r"\bengine oil\b|\bmotor oil\b", _OILNEG),
     (r"\boil filter\b", _OILNEG),
-    (r"\bsump\b|\boil drain plug\b|\boil pan\b|\bdipstick\b|\boil filler\b", _OILNEG),
+    # 2026-11-18: a generic "sump plug washer" is not proven ICE-only (a BEV reduction-gearbox plug uses one) - 49 rows were deleted on that
+    # weak evidence; the washer/gasket/seal wording is therefore NOT matched by this rule.
+    (r"\bsump\b|\boil drain plug\b|\boil pan\b|\bdipstick\b|\boil filler\b", _OILNEG + r"|\bplug washer\b|\bwasher\b|\bgasket\b|\bseal(ing)? ring\b"),
     (r"\bcrankcase\b", None),
     (r"\boil cooler\b", _OILNEG),
     (r"\boil pressure (switch|sensor)\b", _OILNEG),
