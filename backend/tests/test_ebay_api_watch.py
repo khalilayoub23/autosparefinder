@@ -31,6 +31,12 @@ def test_ended_listing_404_is_not_a_signal():
     assert w.detect(R(301), "browse/item") == "HTTP 301"
 
 
+def test_ended_listing_404_by_legacy_id_is_not_a_signal_but_a_redirect_still_is():
+    ep = "browse/item/get_item_by_legacy_id"
+    assert w.detect(R(404), ep) == "" and w.detect(R(410), ep) == ""
+    assert w.detect(R(301), ep) == "HTTP 301" and w.detect(R(501), ep) == "HTTP 501"
+
+
 # ---- coverage of all four Browse entry points (2026-11-18) ----
 import asyncio
 import json

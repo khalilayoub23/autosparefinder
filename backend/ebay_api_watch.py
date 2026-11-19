@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 _HEADER_SIGNALS = ("deprecation", "sunset", "warning")
 _STATUS_SIGNALS = {301, 302, 307, 308, 404, 410, 501}
+# item lookups by id: 404/410 = the LISTING ended (normal), not an API retirement
+_ITEM_ENDPOINTS = ("browse/item", "browse/item/get_item_by_legacy_id")
 _THROTTLE_S = 3600  # in-process: one alert attempt per (endpoint, reason) per hour (notify_owner de-dupes across processes)
 _last_alert: dict = {}
 _pending_tasks: set = set()
@@ -48,7 +50,7 @@ def detect(response, endpoint: str = "") -> str:
             val = response.headers.get(h)
             if val:
                 return f"header {h}: {str(val)[:160]}"
-        if status in _STATUS_SIGNALS and not (endpoint == "browse/item" and status in (404, 410)):
+        if status in _STATUS_SIGNALS and not (endpoint in _ITEM_ENDPOINTS and status in (404, 410)):
             return f"HTTP {status}"
         if 400 <= status < 500 and status != 429:
             m = _BODY_RE.search((response.text or "")[:2000])
