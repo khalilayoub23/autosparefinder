@@ -355,6 +355,25 @@ class EbaySupplier(BaseSupplier):
     async def search_by_oem(self, oem_number: str, limit: int = 10) -> list[PartResult]:
         return await self.search(oem_number, limit)
 
+    async def browse_quota_remaining(self) -> Optional[int]:
+        """Calls left in eBay's current 24 h Browse window, from eBay's own analytics endpoint (it does NOT consume Browse quota).
+        None = unknown (the caller then keeps its configured budget)."""
+        token = await self._get_token()
+        if not token:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.get(f"{self._base_url}/developer/analytics/v1_beta/rate_limit/",
+                                     params={"api_context": "buy", "api_name": "Browse"}, headers={"Authorization": f"Bearer {token}"})
+            r.raise_for_status()
+            for lim in r.json().get("rateLimits", []):
+                for res in lim.get("resources", []):
+                    if res.get("name") == "buy.browse" and res.get("rates"):
+                        return int(res["rates"][0]["remaining"])
+        except Exception as exc:
+            logger.warning("eBay rate-limit lookup failed: %s", exc)
+        return None
+
     async def get_listing(self, legacy_id: str):
         """Fetch ONE listing by its own numeric item id (Listing Identity Guard, 2026-11-19) -> ebay_listing_identity.Live.
 

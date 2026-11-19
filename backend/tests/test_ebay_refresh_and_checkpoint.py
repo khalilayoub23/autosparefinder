@@ -253,3 +253,13 @@ async def test_discovery_rejects_a_hit_that_does_not_name_the_part(db, monkeypat
     rep = await eb.sync_ebay_prices(db, limit_per_run=5000)
     n = (await db.execute(sa.text("SELECT count(*) FROM supplier_parts WHERE part_id=CAST(:p AS uuid) AND supplier_id=CAST(:s AS uuid)"), {"p": pid, "s": sup})).scalar()
     assert n == 0 and rep["candidate_verdicts"].get("product_mismatch", 0) >= 1
+
+
+async def test_run_budget_never_exceeds_what_ebay_says_is_left(db, monkeypatch, _env):
+    sup, pid, oem = await _prep(db, monkeypatch)
+    oid = await _mk(db, sup, pid, oem)
+    calls = _serve(_env, _live())
+    async def left(): return 250                      # below the 300 reserve -> no call may be made
+    _env.browse_quota_remaining = left
+    rep = await eb.sync_ebay_prices(db, limit_per_run=1)
+    assert rep["call_budget"] == 0 and rep["call_budget_hit"] is True and calls == [] and (await _row(db, oid))[0] == 50.0

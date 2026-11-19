@@ -410,6 +410,13 @@ async def sync_ebay_prices(
             sync_checkpoint.save(_CURSOR_KEY, _ZERO_UUID)
         part_rows = refresh_rows + unpriced_rows
         call_budget = int(os.getenv("EBAY_RUN_CALL_BUDGET", "4800"))
+        # The 5,000/day Browse quota is SHARED with customer search and any manual verification: never plan past what eBay
+        # says is left (minus a reserve for live customer traffic). Unknown = keep the configured budget.
+        _remaining = await ebay.browse_quota_remaining() if hasattr(ebay, "browse_quota_remaining") else None
+        report["ebay_quota_remaining_at_start"] = _remaining
+        if _remaining is not None:
+            call_budget = min(call_budget, max(0, _remaining - int(os.getenv("EBAY_QUOTA_RESERVE", "300"))))
+        report["call_budget"] = call_budget
         _last_committed_unpriced = None
 
         logger.info("eBay price sync: checking %d parts", len(part_rows))

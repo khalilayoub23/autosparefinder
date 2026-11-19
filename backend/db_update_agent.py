@@ -301,7 +301,9 @@ _NAME_SUFFIX_RE = re.compile(
     re.UNICODE,
 )
 _TRAILING_PAREN_RE = re.compile(r"\s*\(([^()]*)\)\s*$")
-_TRAILING_DASH_RE = re.compile(r"\s*[-–]\s*([^()]{2,120})\s*$")
+# A trailing " - Vehicle" suffix: the dash must be a SEPARATOR (whitespace before it). The old pattern also matched an in-word
+# hyphen ("2007-2013", "4-Link"), so "2007-2013 GM 1500 ... Lift Kit" lost everything after "2007" (2026-11-19, BDS import).
+_TRAILING_DASH_RE = re.compile(r"\s+[-–]\s*([^()]{2,120})\s*$")
 _YEAR_TOKEN_RE = re.compile(r"\b(?:19|20)\d{2}(?:\s*[-–/]\s*(?:19|20)\d{2})?\b")
 _COMPAT_TOKEN_RE = re.compile(
     r"\b(?:RH|LH|LT|RT|ACC|AT|A/T|4X4|AWD|FWD|RWD|"
@@ -314,7 +316,9 @@ _NOISE_QUOTE_RE = re.compile(r"[׳’`]+")
 _PARENS_GROUP_RE = re.compile(r"\(\s*([^()]{1,120})\s*\)")
 _DASH_SEP_RE = re.compile(r"\s[-–]\s")
 _TRAILING_TOKEN_DASH_RE = re.compile(r"\b([A-Za-zא-ת0-9]{1,24})-(?=\s|$)")
-_YEAR_DANGLING_RANGE_RE = re.compile(r"\b((?:19|20)\d{2})\s*[-–]\s*(?=$|\b)")
+# only a DANGLING "2007-" (end of text / before whitespace or a bracket); the old `(?=$|\b)` also matched before the next digit and
+# turned a complete range "2007-2013" into "20072013" (2026-11-19).
+_YEAR_DANGLING_RANGE_RE = re.compile(r"\b((?:19|20)\d{2})\s*[-–](?=$|\s|\))")
 
 # Task 6 dictionary of known reversed French automotive terms.
 REVERSED_FRENCH_TERMS: Dict[str, str] = {
@@ -525,7 +529,7 @@ def _strip_trailing_vehicle_suffix(value: str) -> str:
         m = _TRAILING_DASH_RE.search(s)
         if m and _looks_like_vehicle_suffix(m.group(1)):
             base = s[:m.start()].strip()
-            if len(base) >= 3:
+            if len(base) >= 3 and not re.fullmatch(r"[\d\W]+", base):   # a bare year/number is never a part name
                 s = base
                 changed = True
 
