@@ -16,10 +16,11 @@ import isolated_db_guard  # noqa: E402  (tests/ on sys.path via conftest)
 
 
 class _Res:
-    def __init__(self, price):
+    def __init__(self, price, pn=""):
         self.price, self.shipping_cost, self.currency = price, 5, "USD"
-        self.ships_to_israel, self.item_id, self.item_url = True, None, "https://ebay.example/1"
+        self.ships_to_israel, self.item_id, self.item_url = True, "v1|123456789012|0", "https://www.ebay.com/itm/123456789012"
         self.condition, self.image_url, self.total_cost, self.seller, self.seller_rating = "New", None, price + 5, "s", 1
+        self.title = f"Genuine part {pn}"      # the Guard requires the part number in the title / MPN
 
 
 class _FakeEbay:
@@ -27,7 +28,7 @@ class _FakeEbay:
     price = 10.0
 
     async def search_by_oem(self, pn, limit=3):
-        return [_Res(self.price)]
+        return [_Res(self.price, pn)]
 
     async def get_part_details(self, item_id):
         return None

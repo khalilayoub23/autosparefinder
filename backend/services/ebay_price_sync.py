@@ -15,24 +15,54 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from currency_rate import get_usd_to_ils_rate
 from services.suppliers.ebay_supplier import EbaySupplier
 from services import sync_checkpoint
+from services import ebay_listing_identity as _guard
+from services.ebay_listing_identity import Live, Stored, legacy_item_id
+from services.suppliers.ebay_supplier import _extract_image_urls, _extract_specs_and_warranty
 from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
-# Rotating cursor (id) for walking the unpriced-parts backlog across runs so
-# every daily run prices FRESH unpriced parts instead of re-selecting the same
-# ones. Resets on restart (starts from the lowest id again — harmless).
-def same_listing(result: Any, stored_url: Optional[str]) -> bool:
-    """True when an eBay search result IS the listing the offer was priced from (item id, else URL without query)."""
-    if not stored_url:
-        return False
-    iid = str(getattr(result, "item_id", "") or "")
-    # eBay Browse item ids look like v1|1234567890|0 ; the public URL carries the numeric part (/itm/1234567890)
-    parts = [x for x in iid.replace("|", " ").split() if x.isdigit() and len(x) >= 9]
-    if any(x in stored_url for x in parts):
-        return True
-    u = str(getattr(result, "item_url", "") or "").split("?")[0]
-    return bool(u) and u == stored_url.split("?")[0]
+def _live_to_result(live: Live) -> SimpleNamespace:
+    """A refreshed listing shaped like a search result so the shared write block below handles both populations."""
+    raw = live.raw or {}
+    tech, wtext, wmonths = _extract_specs_and_warranty(raw)
+    imgs = _extract_image_urls(raw)
+    return SimpleNamespace(
+        item_id=str(raw.get("itemId") or live.item_id or ""), item_url=str(raw.get("itemWebUrl") or ""), title=live.title,
+        price=live.price, currency=live.currency, shipping_cost=live.shipping, total_cost=(live.price or 0) + (live.shipping or 0),
+        condition=live.condition, seller=live.seller or "", seller_rating=(raw.get("seller") or {}).get("feedbackPercentage"),
+        location=str(raw.get("itemLocation") or ""), image_url=imgs[0] if imgs else None, image_urls=imgs or None,
+        tech_specs=tech or None, warranty_text=wtext, warranty_months=wmonths, ships_to_israel=live.ships_to_israel)
+
+
+def _result_to_live(r: Any) -> Live:
+    """A search result as the guard's `Live` (search already dropped listings that do not ship to Israel)."""
+    return Live(ok=True, status="ok", item_id=legacy_item_id(str(getattr(r, "item_url", "") or "")) or legacy_item_id(str(getattr(r, "item_id", "") or "")),
+                title=str(getattr(r, "title", "") or ""), seller=str(getattr(r, "seller", "") or "") or None,
+                condition=str(getattr(r, "condition", "") or ""), price=float(getattr(r, "price", 0) or 0),
+                currency=str(getattr(r, "currency", "") or ""), shipping=float(getattr(r, "shipping_cost", 0) or 0),
+                ships_to_israel=bool(getattr(r, "ships_to_israel", False)))
+
+
+async def _record_check(db: AsyncSession, offer_id: str, verdict: Any, live_item_id: Optional[str], source: str = "ebay_refresh",
+                        detail: Optional[dict] = None) -> None:
+    """Persist the Listing Identity Guard's verdict for one offer (latest wins): why we did / did not write, and when to retry."""
+    await db.execute(
+        text("""INSERT INTO supplier_offer_checks (supplier_part_id, verdict, reason, live_item_id, source, checked_at, retry_after, detail)
+                VALUES (CAST(:i AS uuid), :v, :r, :li, :src, NOW(), NOW() + make_interval(days => :d), CAST(:det AS jsonb))
+                ON CONFLICT (supplier_part_id) DO UPDATE SET verdict = EXCLUDED.verdict, reason = EXCLUDED.reason,
+                  live_item_id = EXCLUDED.live_item_id, source = EXCLUDED.source, checked_at = NOW(),
+                  retry_after = EXCLUDED.retry_after, detail = EXCLUDED.detail"""),
+        {"i": offer_id, "v": verdict.code, "r": verdict.reason[:500], "li": live_item_id, "src": source,
+         "d": int(verdict.retry_days), "det": json.dumps(detail or {})})
+
+
+async def _mark_offer_unavailable(db: AsyncSession, offer_id: str) -> None:
+    """The listing ended / no longer ships to Israel: keep the stored price, stop presenting the offer as purchasable.
+    Exactly ONE offer row (supplier_part id) - never every offer of the part."""
+    await db.execute(
+        text("UPDATE supplier_parts SET is_available = FALSE, availability = 'on_order', updated_at = NOW() "
+             "WHERE id = CAST(:i AS uuid) AND part_type IS NULL"), {"i": offer_id})
 
 
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
@@ -258,6 +288,7 @@ async def sync_ebay_prices(
         "parts_checked": 0,
         "parts_updated": 0,
         "parts_not_found": 0,
+        "refresh_verdicts": {}, "candidate_verdicts": {},
         "refresh_checked": 0, "refresh_updated": 0, "refresh_unchanged": 0, "refresh_no_listing": 0, "refresh_listing_changed": 0,
         "unpriced_checked": 0, "calls_used": 0, "call_budget_hit": False,
         "blocked_non_il_shipping": 0,
@@ -323,24 +354,30 @@ async def sync_ebay_prices(
             rr = await db.execute(
                 text(
                     """
-                    SELECT sp.id AS offer_id, sp.supplier_url AS offer_url, pc.id AS id, pc.oem_number, pc.name
+                    SELECT sp.id AS offer_id, sp.supplier_url AS offer_url, pc.id AS id, pc.oem_number, pc.name,
+                           pc.manufacturer AS brand, pc.specifications->'ebay'->>'seller' AS spec_seller,
+                           pc.specifications->'ebay'->>'item_url' AS spec_url
                     FROM supplier_parts sp
                     JOIN parts_catalog pc ON pc.id = sp.part_id
+                    LEFT JOIN supplier_offer_checks oc ON oc.supplier_part_id = sp.id
                     WHERE sp.supplier_id = CAST(:sid AS uuid)
                       AND sp.price_ils > 0
                       AND sp.part_type IS NULL
                       AND pc.is_active
                       AND pc.oem_number IS NOT NULL AND pc.oem_number != ''
-                      AND (sp.last_checked_at IS NULL
-                           OR sp.last_checked_at < NOW() - make_interval(days => :days))
-                    ORDER BY sp.last_checked_at NULLS FIRST, sp.id
+                      -- due time: the Guard's retry date when it has judged this offer, else last check + interval
+                      AND COALESCE(oc.retry_after, sp.last_checked_at + make_interval(days => :days), '-infinity'::timestamptz) <= NOW()
+                    ORDER BY COALESCE(oc.retry_after, sp.last_checked_at + make_interval(days => :days)) NULLS FIRST, sp.id
                     LIMIT :lim
                     """
                 ),
                 {"sid": ebay_supplier_id, "days": refresh_days, "lim": refresh_limit},
             )
             refresh_rows = [SimpleNamespace(offer_id=str(r.offer_id), offer_url=r.offer_url, id=r.id, oem_number=r.oem_number, name=r.name,
-                                            population="refresh") for r in rr.fetchall()]
+                                            brand=r.brand or "", population="refresh",
+                                            # the catalog-level eBay seller is trusted ONLY when it was recorded for THIS offer's listing
+                                            seller=(r.spec_seller if legacy_item_id(r.spec_url) and legacy_item_id(r.spec_url) == legacy_item_id(r.offer_url) else None))
+                            for r in rr.fetchall()]
 
         # Population 2: parts with no price yet, walked in id order via a DURABLE cursor.
         _last_id = str(sync_checkpoint.load(_CURSOR_KEY, _ZERO_UUID) or _ZERO_UUID)
@@ -351,7 +388,7 @@ async def sync_ebay_prices(
         parts = await db.execute(
             text(
                 f"""
-                SELECT id, oem_number, name
+                SELECT id, oem_number, name, manufacturer
                 FROM parts_catalog
                 WHERE is_active = true
                   AND oem_number IS NOT NULL
@@ -366,7 +403,7 @@ async def sync_ebay_prices(
             _q_params,
         )
         unpriced_rows = [SimpleNamespace(offer_id=None, offer_url=None, id=r.id, oem_number=r.oem_number, name=r.name,
-                                         population="unpriced") for r in parts.fetchall()]
+                                         brand=r.manufacturer or "", seller=None, population="unpriced") for r in parts.fetchall()]
         # Cursor wrap is persisted immediately (nothing to replay); otherwise it advances only after commits (below).
         _wrapped = len(unpriced_rows) < limit_per_run
         if _wrapped:
@@ -402,15 +439,30 @@ async def sync_ebay_prices(
             call_success = True
             call_http_status = 200
             call_error: Optional[str] = None
+            live_refresh: Optional[Live] = None
+            verdict = None
 
-            try:
-                results = await ebay.search_by_oem(part_number, limit=3)
-            except Exception as exc:
-                call_success = False
-                call_http_status = 500
-                call_error = str(exc)
-                logger.error("eBay sync search error for part %s: %s", part.oem_number, exc)
-                report["errors"].append(f"search:{part_number}:{exc}")
+            if part.population == "refresh":
+                # Listing Identity Guard: the STORED listing is fetched BY ITS OWN ID (not found again by an OEM search that
+                # can rank it 4th, hide it behind a condition filter, or return another seller's item instead).
+                lid = legacy_item_id(part.offer_url)
+                query = f"item:{lid}" if lid else "item:none"
+                if lid:
+                    live_refresh = await ebay.get_listing(lid)
+                    if live_refresh.status == "error":
+                        call_success, call_http_status, call_error = False, 500, "listing lookup failed (rate limit / API error)"
+                else:
+                    live_refresh = Live(ok=False, status="error")
+                verdict = _guard.check_refresh(Stored(lid, part_number, part.brand, part.seller), live_refresh)
+            else:
+                try:
+                    results = await ebay.search_by_oem(part_number, limit=3)
+                except Exception as exc:
+                    call_success = False
+                    call_http_status = 500
+                    call_error = str(exc)
+                    logger.error("eBay sync search error for part %s: %s", part.oem_number, exc)
+                    report["errors"].append(f"search:{part_number}:{exc}")
 
             response_ms = int((time.monotonic() - call_started) * 1000)
             api_logged = await _record_ebay_api_call(
@@ -421,7 +473,7 @@ async def sync_ebay_prices(
                 url=f"{search_url_base}?q={part_number}",
                 http_status=call_http_status,
                 success=call_success,
-                results_count=len(results),
+                results_count=(1 if (live_refresh is not None and live_refresh.status == 'ok') else len(results)),
                 response_ms=response_ms,
                 error_message=call_error,
             )
@@ -432,34 +484,40 @@ async def sync_ebay_prices(
             # Keep eBay request pace conservative.
             await asyncio.sleep(0.2)
 
-            if not results:
-                report["parts_not_found"] += 1
-                if part.offer_id:
-                    # Missing listing never erases a valid price; the check is recorded so it is not re-fetched until due.
-                    report["refresh_no_listing"] += 1
-                    await db.execute(text("UPDATE supplier_parts SET last_checked_at = NOW() WHERE id = CAST(:i AS uuid)"),
-                                     {"i": part.offer_id})
-                    pending_writes += 1
-                if pending_writes >= 25:
-                    await db.commit()
-                    pending_writes = 0
-                    _save_cursor()
-                continue
-
-            if part.offer_id and os.getenv("EBAY_REFRESH_ALLOW_RELISTING", "0") != "1":
-                # Identity: a refresh may only take the price of the SAME listing. A different listing for the same OEM
-                # number is a different product/seller/condition: keep the stored price, record the check, report it.
-                same = [r for r in results if same_listing(r, part.offer_url)]
-                if not same:
-                    report["refresh_listing_changed"] += 1
-                    await db.execute(text("UPDATE supplier_parts SET last_checked_at = NOW() WHERE id = CAST(:i AS uuid)"),
-                                     {"i": part.offer_id})
-                    pending_writes += 1
+            if part.population == "refresh":
+                report["refresh_verdicts"][verdict.code] = report["refresh_verdicts"].get(verdict.code, 0) + 1
+                await _record_check(db, part.offer_id, verdict, getattr(live_refresh, "item_id", None),
+                                    detail={"oem": part_number, "price": getattr(live_refresh, "price", None),
+                                            "currency": getattr(live_refresh, "currency", None), "seller": getattr(live_refresh, "seller", None)})
+                pending_writes += 1
+                if not verdict.ok:
+                    # FAIL CLOSED: no price / URL / shipping is written. Ended or non-IL listings stop being purchasable
+                    # (the stored price stays as evidence); an unreadable answer changes nothing and is retried tomorrow.
+                    if verdict.makes_unavailable:
+                        await _mark_offer_unavailable(db, part.offer_id)
+                    report["parts_not_found"] += 1
+                    report["refresh_no_listing" if verdict.code in (_guard.MISSING_LISTING, _guard.NO_STORED_LISTING) else "refresh_listing_changed"] += 1
+                    if pending_writes >= 25:
+                        await db.commit()
+                        pending_writes = 0
+                        _save_cursor()
                     continue
-                results = same
-            cheapest = min(results, key=lambda r: float(getattr(r, "total_cost", 0) or 0))
+                cheapest = _live_to_result(live_refresh)
+            else:
+                # discovery: only listings that pass the candidate checks (part number in title/MPN, New, ships to IL,
+                # USD/ILS, positive price, no foreign make) may become an offer; cheapest total among those.
+                passed = []
+                for r in results:
+                    v = _guard.check_candidate(part_number, part.brand, _result_to_live(r))
+                    report["candidate_verdicts"][v.code] = report["candidate_verdicts"].get(v.code, 0) + 1
+                    if v.ok:
+                        passed.append(r)
+                if not passed:
+                    report["parts_not_found"] += 1
+                    continue
+                cheapest = min(passed, key=lambda r: float(getattr(r, "total_cost", 0) or 0))
             detail = None
-            if getattr(cheapest, "item_id", None):
+            if part.population != "refresh" and getattr(cheapest, "item_id", None):   # a refresh already holds the full item
                 try:
                     report["calls_used"] += 1
                     detail = await ebay.get_part_details(str(cheapest.item_id))
@@ -468,36 +526,11 @@ async def sync_ebay_prices(
 
             selected = detail or cheapest
 
-            ships_to_israel = bool(getattr(selected, "ships_to_israel", False))
-            if not ships_to_israel:
-                await db.execute(
-                    text(
-                        """
-                        UPDATE supplier_parts
-                        SET
-                            is_available = FALSE,
-                            availability = 'on_order',
-                            last_checked_at = NOW(),
-                            updated_at = NOW()
-                        WHERE supplier_id = CAST(:supplier_id AS uuid)
-                          AND part_id = CAST(:part_id AS uuid)
-                        """
-                    ),
-                    {
-                        "supplier_id": ebay_supplier_id,
-                        "part_id": str(part.id),
-                    },
-                )
-                report["blocked_non_il_shipping"] += 1
-                pending_writes += 1
-                if pending_writes >= 25:
-                    await db.commit()
-                    pending_writes = 0
-                    _save_cursor()
-                continue
+            ships_to_israel = True   # guaranteed by the guard (refresh) / by search + check_candidate (discovery)
 
             raw_price = Decimal(str(getattr(selected, "price", None) or getattr(cheapest, "price", 0) or 0))
-            raw_shipping = Decimal(str(getattr(selected, "shipping_cost", 0) or 0))
+            _ship_known = getattr(selected, "shipping_cost", 0) is not None
+            raw_shipping = Decimal(str(getattr(selected, "shipping_cost", 0) or 0))   # unknown (None) only on a refresh: stored shipping is kept
             if raw_price <= 0:
                 report["parts_not_found"] += 1
                 if part.offer_id:
@@ -566,7 +599,8 @@ async def sync_ebay_prices(
             existing_res = await db.execute(
                 text(
                     """
-                    SELECT id, price_usd, price_ils
+                    SELECT id, price_usd, price_ils, supplier_url,
+                           (SELECT verdict FROM supplier_offer_checks oc WHERE oc.supplier_part_id = supplier_parts.id) AS last_verdict
                     FROM supplier_parts
                     WHERE supplier_id = CAST(:supplier_id AS uuid)
                       AND (
@@ -601,6 +635,15 @@ async def sync_ebay_prices(
                     report["errors"].append(f"refresh offer {part.offer_id} no longer matches supplier/part - skipped")
                     continue
 
+            if part.population != "refresh" and existing is not None:
+                _sel_id = legacy_item_id(str(getattr(selected, "item_url", "") or "")) or legacy_item_id(str(getattr(selected, "item_id", "") or ""))
+                _ex_id = legacy_item_id(existing.supplier_url)
+                if _ex_id and _sel_id != _ex_id and existing.last_verdict not in _guard.UNAVAILABLE_VERDICTS:
+                    # a different listing (maybe another seller / variant) never silently replaces an offer whose own listing is not verified gone
+                    report["candidate_verdicts"][_guard.DIFFERENT_LISTING] = report["candidate_verdicts"].get(_guard.DIFFERENT_LISTING, 0) + 1
+                    report["parts_not_found"] += 1
+                    continue
+
             old_price_usd: Optional[Decimal] = None
             old_price_ils: Optional[Decimal] = None
 
@@ -618,8 +661,8 @@ async def sync_ebay_prices(
                         SET
                             price_usd = :price_usd,
                             price_ils = :price_ils,
-                            shipping_cost_usd = :shipping_cost_usd,
-                            shipping_cost_ils = :shipping_cost_ils,
+                            shipping_cost_usd = COALESCE(:shipping_cost_usd, shipping_cost_usd),
+                            shipping_cost_ils = COALESCE(:shipping_cost_ils, shipping_cost_ils),
                             warranty_months = COALESCE(:warranty_months, warranty_months),
                             supplier_sku = COALESCE(supplier_sku, :supplier_sku),
                             supplier_url = :supplier_url,
@@ -634,8 +677,8 @@ async def sync_ebay_prices(
                         "supplier_part_id": supplier_part_id,
                         "price_usd": float(price_usd),
                         "price_ils": float(price_ils),
-                        "shipping_cost_usd": float(shipping_usd),
-                        "shipping_cost_ils": float(shipping_ils),
+                        "shipping_cost_usd": float(shipping_usd) if _ship_known else None,
+                        "shipping_cost_ils": float(shipping_ils) if _ship_known else None,
                         "warranty_months": warranty_months,
                         "supplier_sku": part_number,
                         "supplier_url": selected_item_url,

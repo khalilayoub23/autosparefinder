@@ -355,6 +355,70 @@ class EbaySupplier(BaseSupplier):
     async def search_by_oem(self, oem_number: str, limit: int = 10) -> list[PartResult]:
         return await self.search(oem_number, limit)
 
+    async def get_listing(self, legacy_id: str):
+        """Fetch ONE listing by its own numeric item id (Listing Identity Guard, 2026-11-19) -> ebay_listing_identity.Live.
+
+        Same pacing / semaphore / circuit breaker as every other eBay call. 404 = the item ended (`status='ended'`);
+        429, 5xx, a missing token or a malformed body = `status='error'` (the caller changes NOTHING and retries)."""
+        from services.ebay_listing_identity import Live
+        token = await self._get_token()
+        if not token:
+            return Live(ok=False, status="error")
+        global _ebay_last_call, _ebay_consecutive_429s, _ebay_circuit_reset
+        if time.monotonic() < _ebay_circuit_reset:
+            return Live(ok=False, status="error")
+        url = f"{self._base_url}/buy/browse/v1/item/get_item_by_legacy_id"
+        headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-ENDUSERCTX": "contextualLocation=country=IL"}
+        item = None
+        async with _EBAY_SEMAPHORE:
+            wait = _EBAY_MIN_INTERVAL - (time.monotonic() - _ebay_last_call)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            _ebay_last_call = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    response = await client.get(url, headers=headers, params={"legacy_item_id": legacy_id})
+                    await ebay_api_watch.check("browse/item/get_item_by_legacy_id", response)
+                if response.status_code == 404:
+                    _ebay_consecutive_429s = 0
+                    return Live(ok=False, status="ended")
+                if response.status_code == 429:
+                    _ebay_consecutive_429s += 1
+                    if _ebay_consecutive_429s >= _EBAY_CIRCUIT_THRESHOLD:
+                        _ebay_circuit_reset = time.monotonic() + 3600
+                        logger.error("eBay quota exhausted - circuit open for 1h (get_listing)")
+                    return Live(ok=False, status="error")
+                response.raise_for_status()
+                _ebay_consecutive_429s = 0
+                item = response.json()
+            except Exception as exc:
+                logger.error("eBay get_listing failed for '%s': %s", legacy_id, exc)
+                return Live(ok=False, status="error")
+        try:
+            return self.live_from_item(item)
+        except Exception as exc:
+            logger.error("eBay get_listing could not map '%s': %s", legacy_id, exc)
+            return Live(ok=False, status="error")
+
+    @staticmethod
+    def live_from_item(item: dict):
+        """Map a Browse item / item_summary payload to the guard's `Live` (price and shipping kept separate)."""
+        from services.ebay_listing_identity import Live, legacy_item_id
+        price_obj = item.get("price") or {}
+        ships, ship_cost = _shipping_from_options_for_israel(item)
+        has_ship_figure = ships and any((o or {}).get("freeShipping") or ((o or {}).get("shippingCost") or {}).get("value") is not None
+                                        for o in (item.get("shippingOptions") or []) if isinstance(o, dict))
+        mpn = next((str(a.get("value")) for a in (item.get("localizedAspects") or [])
+                    if isinstance(a, dict) and "part number" in str(a.get("name", "")).lower()), None)
+        raw_id = str(item.get("legacyItemId") or "") or legacy_item_id(str(item.get("itemWebUrl") or "")) or legacy_item_id(str(item.get("itemId") or ""))
+        return Live(
+            ok=True, status="ok", item_id=raw_id or None, title=str(item.get("title") or ""),
+            seller=str((item.get("seller") or {}).get("username") or "") or None,
+            condition=str(item.get("condition") or ""),
+            price=float(price_obj.get("value")) if price_obj.get("value") not in (None, "") else None,
+            currency=str(price_obj.get("currency") or ""),
+            shipping=ship_cost if has_ship_figure else None, ships_to_israel=bool(ships), mpn=mpn, raw=item)
+
     async def get_part_details(self, item_id: str) -> Optional[PartResult]:
         token = await self._get_token()
         if not token:
