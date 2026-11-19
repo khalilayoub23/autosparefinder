@@ -146,6 +146,8 @@ def check_refresh(stored: Stored, live: Live) -> Verdict:
         return _v(NO_STORED_LISTING, "offer has no eBay item id in supplier_url")
     if live.status == "ended":
         return _v(MISSING_LISTING, "item not found / ended on eBay")
+    if live.status == "unsupported":
+        return Verdict(AMBIGUOUS_IDENTITY, "eBay cannot return this listing by its item id alone (e.g. multi-variation); not refreshed", 14)
     if not live.ok or live.status != "ok":
         return _v(AMBIGUOUS_IDENTITY, "eBay returned no usable answer (error/rate limit); nothing changed")
     if not live.item_id or live.item_id != stored.item_id:

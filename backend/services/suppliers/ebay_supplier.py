@@ -407,6 +407,11 @@ class EbaySupplier(BaseSupplier):
                         _ebay_circuit_reset = time.monotonic() + 3600
                         logger.error("eBay quota exhausted - circuit open for 1h (get_listing)")
                     return Live(ok=False, status="error")
+                if response.status_code in (400, 409):
+                    # e.g. a multi-variation listing (needs a variation id): a PERSISTENT condition, not a transient error
+                    logger.warning("eBay get_listing %s -> %s %s", legacy_id, response.status_code, response.text[:200])
+                    _ebay_consecutive_429s = 0
+                    return Live(ok=False, status="unsupported")
                 response.raise_for_status()
                 _ebay_consecutive_429s = 0
                 item = response.json()

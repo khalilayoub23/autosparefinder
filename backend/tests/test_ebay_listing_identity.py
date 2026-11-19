@@ -155,3 +155,8 @@ def test_only_two_verdicts_may_write():
     for code in (g.SELLER_MISMATCH, g.PRODUCT_MISMATCH, g.VARIANT_MISMATCH, g.MISSING_LISTING, g.NO_ISRAEL_SHIPPING,
                  g.DIFFERENT_LISTING, g.AMBIGUOUS_IDENTITY, g.CURRENCY_AMBIGUOUS, g.SHIPPING_AMBIGUOUS, g.NO_STORED_LISTING):
         assert not g.Verdict(code, "x", 1).ok
+
+
+def test_unsupported_listing_is_ambiguous_with_a_long_retry():
+    v = check_refresh(ST, Live(ok=False, status="unsupported"))
+    assert v.code == g.AMBIGUOUS_IDENTITY and not v.ok and v.retry_days == 14
