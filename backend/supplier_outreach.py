@@ -329,8 +329,9 @@ async def record_review(store, outreach_id: str, outcome: str) -> None:
     await store.update(outreach_id, state=outcome)
 
 
-async def _candidates(limit: int = 50) -> List[Dict[str, Any]]:
-    """NIR candidates (catalog DB) that are not rejected and carry a qualification record."""
+async def _candidates(limit: int = 500) -> List[Dict[str, Any]]:
+    """NIR candidates (catalog DB) that are not rejected and carry a qualification record. ALL of them (2026-11-19: the old
+    limit of 50 never reached the other 25 of the 75, because the 50 most recently updated were already contacted)."""
     import json
     from sqlalchemy import text
     from BACKEND_DATABASE_MODELS import async_session_factory

@@ -217,9 +217,19 @@ def classify(rec: Dict[str, Any], now: Optional[datetime] = None) -> Dict[str, A
 _EMAIL_RE = re.compile(r"^[\w.+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}$")
 
 
+# template / placeholder domains that web pages publish by mistake (an inquiry went to info@yourwebsite.com on 2026-11-18)
+PLACEHOLDER_DOMAINS = frozenset({"yourwebsite.com", "yourdomain.com", "yourcompany.com", "domain.com", "email.com", "mysite.com",
+                                 "website.com", "company.com", "test.com", "sentry.io", "wixpress.com", "godaddy.com"})
+
+
 def valid_email(address: Any) -> bool:
-    """Syntax check incl. a TLD of >=2 letters. A site-published typo (``@autoworks.co.i``) is not a contact."""
-    return bool(_EMAIL_RE.match(str(address or "").strip()))
+    """Syntax check incl. a TLD of >=2 letters. A site-published typo (``@autoworks.co.i``) or a template placeholder
+    (``info@yourwebsite.com``, ``name@example.com``) is not a contact."""
+    a = str(address or "").strip()
+    if not _EMAIL_RE.match(a):
+        return False
+    dom = a.rsplit("@", 1)[1].lower()
+    return dom not in PLACEHOLDER_DOMAINS and not re.match(r"example\.[a-z.]+$", dom)
 
 
 def verified_contacts(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
