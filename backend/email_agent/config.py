@@ -63,6 +63,12 @@ class EmailAgentConfig:
     scan_spam: bool = False             # supplier_flags EMAIL_AGENT_SCAN_SPAM (OFF unless "1")
     spam_query: str = "in:spam newer_than:14d"
     spam_max_per_cycle: int = 25
+    # Supplier history pass (2026-11-20): a reply from a KNOWN supplier domain is read wherever it sits (any folder or
+    # label, any age within history_window). Before this, only `in:inbox newer_than:14d` was scanned, so a supplier
+    # reply that arrived before the agent was armed, or aged past the window, was never ingested.
+    scan_history: bool = True           # EMAIL_AGENT_SCAN_HISTORY=0 turns it off
+    history_window: str = "400d"
+    history_max_per_cycle: int = 25
 
     def missing(self) -> List[str]:
         vals = {"GMAIL_OAUTH_CLIENT_ID": self.client_id,
@@ -89,6 +95,7 @@ class EmailAgentConfig:
             "interval_s": self.interval_s,
             "send_enabled": False,
             "scan_spam": self.scan_spam,
+            "scan_history": self.scan_history,
             "spam_query": self.spam_query,
         }
 
@@ -111,6 +118,9 @@ def load_config(env: Mapping[str, str] | None = None) -> EmailAgentConfig:
         scan_spam=_flags.enabled("EMAIL_AGENT_SCAN_SPAM", env),
         spam_query=g("EMAIL_AGENT_SPAM_QUERY") or "in:spam newer_than:14d",
         spam_max_per_cycle=_int(env, "EMAIL_AGENT_SPAM_MAX_PER_CYCLE", 25, 1, 100),
+        scan_history=g("EMAIL_AGENT_SCAN_HISTORY", "1") != "0",
+        history_window=g("EMAIL_AGENT_HISTORY_WINDOW") or "400d",
+        history_max_per_cycle=_int(env, "EMAIL_AGENT_HISTORY_MAX_PER_CYCLE", 25, 1, 100),
     )
     register_secrets([cfg.client_secret, cfg.refresh_token])
     return cfg

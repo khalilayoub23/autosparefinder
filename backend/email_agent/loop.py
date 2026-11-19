@@ -28,6 +28,7 @@ from email_agent.agent import audit_log, process_once
 from email_agent.config import CONFIGURED, load_config
 from email_agent.context import DbContextSource
 from email_agent.gmail_client import GmailClient
+from email_agent.supplier_intake import PgIntake as _PgIntake
 from email_agent.owner_flow import PgTodoSink, process_owner_updates
 from email_agent.supplier_routing import route_supplier_replies
 import supplier_flags as _flags
@@ -103,7 +104,8 @@ async def email_agent_loop(notify: Optional[Notify] = None) -> None:
             if schema_ok and _flags.enabled("SUPPLIER_ROUTING_ENABLED") and not summary.get("halted"):
                 try:
                     sr = await route_supplier_replies(store, outreach_store, PgTodoSink(),
-                                                      procurement_store=PgProcurementStore())
+                                                      procurement_store=PgProcurementStore(),
+                                                      intake=_PgIntake(client, cfg.mailbox))
                     if any(sr.values()):
                         audit_log("supplier_routing", **sr)
                 except Exception as _sre:

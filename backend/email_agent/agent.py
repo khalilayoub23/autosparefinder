@@ -315,8 +315,102 @@ async def process_once(cfg: EmailAgentConfig, client: GmailClient, store, source
     if cfg.scan_spam and not summary.get("halted") and not summary.get("aborted") \
             and await store.supplier_schema_ready():
         await _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary)
+    if cfg.scan_history and not summary.get("halted") and not summary.get("aborted") \
+            and await store.supplier_schema_ready():
+        await _history_pass(cfg, client, store, source, draft_mode, thread_cache, summary)
     audit_log("cycle", **{k: v for k, v in summary.items() if k not in ("errors", "connection")})
     return summary
+
+
+HISTORY_DOMAINS_PER_QUERY = 15
+HISTORY_MAX_PAGES = 12
+_HISTORY_NEXT_FULL_SCAN = 0.0          # monotonic time before which a history pass that found nothing new is skipped
+HISTORY_IDLE_REST_S = 6 * 3600
+
+
+def history_queries(domains, window: str) -> list:
+    """Gmail queries covering mail FROM known supplier domains in every folder/label (spam and trash included by the
+    caller), excluding bulk promotions/social and our own sent mail. Chunked so a query stays short."""
+    doms = sorted({d.strip().lower() for d in domains if d and "." in d})
+    out = []
+    for i in range(0, len(doms), HISTORY_DOMAINS_PER_QUERY):
+        chunk = " OR ".join(f"from:{d}" for d in doms[i:i + HISTORY_DOMAINS_PER_QUERY])
+        out.append(f"in:anywhere newer_than:{window} -from:me -category:promotions -category:social ({chunk})")
+    return out
+
+
+async def _history_pass(cfg, client, store, source, draft_mode, thread_cache, summary) -> None:
+    """Supplier history pass (2026-11-20). Reads mail from KNOWN supplier domains regardless of folder, label or age
+    (within cfg.history_window), so a supplier reply the inbox query could not see (older than 14 days, archived,
+    unlabelled) still becomes a store row that the supplier routing and intake then act on. Same claim/idempotency/
+    retry/halt handling as inbox mail; rows are tagged source_folder='history'. Reads only (no label changes)."""
+    global _HISTORY_NEXT_FULL_SCAN
+    import time as _t
+    hp = {"queries": 0, "listed": 0, "processed": 0, "failed": 0}
+    summary["history"] = hp
+    if _t.monotonic() < _HISTORY_NEXT_FULL_SCAN:
+        hp["skipped"] = "recent full scan found nothing new"
+        return
+    getter = getattr(source, "known_supplier_domains", None)
+    if getter is None:
+        return
+    try:
+        queries = history_queries(await getter(), cfg.history_window)
+    except Exception as e:
+        hp["error"] = f"domains: {safe_error(e, 120)}"
+        return
+    budget = cfg.history_max_per_cycle
+    backlog = False
+    for q in queries:
+        if budget <= 0:
+            backlog = True
+            break
+        hp["queries"] += 1
+        try:
+            scan = await unprocessed_refs(client, store, q, budget, include_spam=True, max_pages=HISTORY_MAX_PAGES)
+        except GmailError as e:
+            hp["error"] = f"{e.kind}: {safe_error(e, 120)}"
+            audit_log("history_scan_failed", error_kind=e.kind, failure_reason=safe_error(e, 200))
+            return
+        hp["listed"] += scan["seen"]
+        if not scan["exhausted"] and len(scan["refs"]) >= budget:
+            backlog = True
+        for ref in scan["refs"]:
+            if budget <= 0:
+                break
+            mid, tid = ref["id"], ref["threadId"]
+            if not _control.read_control()["running"]:
+                summary["halted"] = "halted during history pass"
+                return
+            claim = await store.claim(mid, tid, cfg.max_attempts)
+            if claim == "skip":
+                continue
+            budget -= 1
+            try:
+                await process_message(cfg, client, store, source, mid, tid, "local", thread_cache)   # no Gmail drafts for old mail
+                await store.set_source_folder(mid, "history")
+                hp["processed"] += 1
+                audit_log("history_message_processed", message_id=mid, thread_id=tid, sent=False)
+            except _control.Halted:
+                await store.release(mid)
+                summary["halted"] = "halted during history pass"
+                return
+            except GmailError as e:
+                if e.kind == "rate_limit" or e.kind in MAILBOX_LEVEL_KINDS:
+                    await store.release(mid)
+                    hp["error"] = e.kind
+                    return
+                status = await store.mark_failed(mid, safe_error(e), e.retryable, cfg.max_attempts)
+                hp["failed"] += 1
+                summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})
+            except Exception as e:
+                status = await store.mark_failed(mid, safe_error(e), False, cfg.max_attempts)
+                hp["failed"] += 1
+                summary["errors"].append({"message_id": mid, "status": status, "error": safe_error(e, 160)})
+    if backlog or hp["processed"] or hp["failed"]:
+        _HISTORY_NEXT_FULL_SCAN = 0.0                 # more may follow: next cycle runs again
+    else:
+        _HISTORY_NEXT_FULL_SCAN = _t.monotonic() + HISTORY_IDLE_REST_S
 
 
 async def _spam_pass(cfg, client, store, source, outreach_store, draft_mode, thread_cache, summary) -> None:

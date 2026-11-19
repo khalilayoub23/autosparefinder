@@ -26,6 +26,7 @@ import json
 from typing import Any, Dict
 
 import supplier_outreach as _out
+from email_agent import supplier_intake as _intake
 
 SUPPLIER_CATEGORIES = ("supplier", "aliexpress", "ebay", "shipping_eurosender")
 
@@ -73,8 +74,33 @@ async def _to_boaz_procurement(store, todos, row, proc) -> Dict[str, Any]:
     return route
 
 
+async def _to_known_supplier(store, todos, row, sup, res) -> Dict[str, Any]:
+    """A reply from a KNOWN supplier (matched by registered domain) that no outreach row covers (a manual inquiry,
+    e.g. SNG Barratt's shipping question). The extracted facts are already persisted by the intake; the owner agent
+    gets ONE task naming the supplier and what was stored. A NIR candidate -> NIR, an operating supplier -> BOAZ."""
+    owner = "NIR" if (sup.get("source") == "nir_sourcing") else "BOAZ"
+    f = res.get("facts") or {}
+    tid = await todos.create(
+        owner, f"תשובת ספק: {sup.get('name', '')[:40]}",
+        f"Reply from {sup.get('name')} (email ref {_ref(row)}). Stored in the supplier record: contact "
+        f"{f.get('name')} / {f.get('role')} / {f.get('phone')}; carriers {f.get('carriers')}; transit "
+        f"{f.get('transit_days_min')}-{f.get('transit_days_max')} days; rates variable: {f.get('rates_variable')}. "
+        f"Sender authenticated: {res.get('authenticated')}. Claims stay UNVERIFIED; a pickup address was NOT stated.",
+        "medium",
+        {"source": "email_agent", "kind": "supplier_reply_known", "email_ref": _ref(row), "supplier_id": sup["id"],
+         "gmail_thread_id": row.get("gmail_thread_id"), "source_folder": row.get("source_folder") or "inbox"})
+    prior = row.get("task_ids") or []
+    prior = json.loads(prior) if isinstance(prior, str) else list(prior)
+    await store.set_task_ids(row["id"], prior + [tid])
+    route = {"owner": owner, "supplier_id": sup["id"], "match": "supplier_domain", "task_id": tid,
+             "facts_stored": bool(res.get("stored")), "authenticated": bool(res.get("authenticated")),
+             "source_folder": row.get("source_folder")}
+    await store.set_supplier_route(row["id"], route)
+    return route
+
+
 async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
-                                 procurement_store=None) -> Dict[str, int]:
+                                 procurement_store=None, intake=None) -> Dict[str, int]:
     out = {"to_nir": 0, "to_boaz": 0, "exceptions": 0, "other": 0}
     for row in await store.supplier_route_pending(limit):
         dom = _domain(row.get("sender_email") or "")
@@ -111,6 +137,10 @@ async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
             await store.set_supplier_route(row["id"], {"owner": "exception", "reason":
                 f"{len(awaiting)} open inquiries for this sender domain - cannot tell which one"}, requires_human=True)
             out["exceptions"] += 1
+        elif intake is not None and dom and (sup := _intake.match_supplier(dom, await intake.suppliers())) \
+                and (res := await intake.process(row, sup)).get("is_reply"):
+            await _to_known_supplier(store, todos, row, sup, res)
+            out["to_nir" if sup.get("source") == "nir_sourcing" else "to_boaz"] += 1
         elif row.get("classification") in SUPPLIER_CATEGORIES:
             await store.set_supplier_route(row["id"], {"owner": "BOAZ", "source_folder": row.get("source_folder")})
             out["to_boaz"] += 1

@@ -40,7 +40,7 @@ import supplier_qualification as _q
 
 TEMPLATE_VERSION = "inquiry-v1"
 PURPOSES = ("api_info", "israel_shipping", "availability", "catalog_access", "pricing_terms",
-            "contact_routing", "dropshipping_terms", "collaboration_interest")
+            "contact_routing", "dropshipping_terms", "collaboration_interest", "pickup_address")
 # requirement gaps -> the inquiry purpose that asks about them
 GAP_PURPOSE = {"api": "api_info", "israel_shipping": "israel_shipping", "availability": "availability",
                "catalog": "catalog_access", "business": "pricing_terms", "contacts": "contact_routing",
@@ -66,6 +66,11 @@ _PARAGRAPH = {
                           "any fees or minimums, the shipping methods and tracking, whether parcels can be sent in "
                           "neutral packaging without your invoices or promotional material, and how returns, damaged "
                           "or wrong items and warranty claims are handled?",
+    "pickup_address": "- From which address do you actually dispatch parcels (the collection / pickup address, which may differ "
+                      "from your registered office)? Is it the same for every shipment, on which days and hours can a "
+                      "courier collect, who is the contact name and phone number for collections, and are there any "
+                      "packaging, handling or carrier restrictions? Would collection by a courier that we book "
+                      "(e.g. through a courier-booking platform) be possible?",
     "collaboration_interest": "- Would you be interested in exploring a possible collaboration with an online "
                               "car-parts marketplace serving customers in Israel?",
 }
@@ -242,6 +247,8 @@ async def plan(store, supplier_id: str, qualification: Dict[str, Any], *, purpos
     if not contacts:
         return {"action": "skip", "reason": "no verified contact"}
     recipient = str(contacts[0]["address"]).strip()
+    if not _q.valid_email(recipient):           # defence in depth: a placeholder/malformed address never reaches a row
+        return {"action": "skip", "reason": f"recipient {recipient!r} is not a valid business address"}
     history = await store.for_supplier(supplier_id)
     if any(r["state"] == "READY_TO_CONTACT" for r in history):
         return {"action": "skip", "reason": "an inquiry is already prepared"}
@@ -289,6 +296,9 @@ async def send_outreach(store, auth_store, client, prepared: Dict[str, Any], *, 
     row = prepared["outreach"]
     if not enabled():
         return {"sent": False, "reason": "NIR_OUTREACH_ENABLED is off"}
+    if not _q.valid_email(row.get("recipient")):   # last gate before Gmail: placeholder / malformed / example domain
+        await store.update(row["id"], state="CANCELLED", last_error="recipient is not a valid business address")
+        return {"sent": False, "reason": "recipient is not a valid business address"}
     try:
         check_scope(row["purposes"], prepared["body"], followup=prepared.get("followup", False))
         a = await _auth.require(auth_store, "supplier_message", "supplier", row["supplier_id"],
