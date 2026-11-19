@@ -62,7 +62,7 @@ async def _mark_offer_unavailable(db: AsyncSession, offer_id: str) -> None:
     Exactly ONE offer row (supplier_part id) - never every offer of the part."""
     await db.execute(
         text("UPDATE supplier_parts SET is_available = FALSE, availability = 'on_order', updated_at = NOW() "
-             "WHERE id = CAST(:i AS uuid) AND part_type IS NULL"), {"i": offer_id})
+             "WHERE id = CAST(:i AS uuid)"), {"i": offer_id})   # refresh targets are untyped by selection (part_type IS NULL)
 
 
 _ZERO_UUID = "00000000-0000-0000-0000-000000000000"

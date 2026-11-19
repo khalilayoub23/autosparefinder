@@ -111,7 +111,7 @@ async def main(args) -> None:
             d = await decide_swapped(db, ebay, oid, o)
             decisions.append(d)
             if d["action"] == "restore_original":
-                await db.execute(text("UPDATE supplier_parts SET supplier_url = :u, updated_at = NOW() WHERE id = CAST(:i AS uuid) AND part_type IS NULL"),
+                await db.execute(text("UPDATE supplier_parts SET supplier_url = :u, updated_at = NOW() WHERE id = CAST(:i AS uuid)"),
                                  {"u": d["url"], "i": oid})
             elif d["action"] == "mark_unavailable":
                 await _mark_offer_unavailable(db, oid)
