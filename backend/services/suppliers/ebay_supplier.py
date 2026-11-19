@@ -430,6 +430,17 @@ class EbaySupplier(BaseSupplier):
         from services.ebay_listing_identity import Live, legacy_item_id
         price_obj = item.get("price") or {}
         ships, ship_cost = _shipping_from_options_for_israel(item)
+        if not ships and not item.get("shippingOptions"):
+            # The by-id endpoint omits `shippingOptions` when it cannot compute a cost for the IL context, yet the item DOES ship
+            # there (shipToLocations: IL or WORLDWIDE included, IL not excluded). Treating "no options" as "no IL shipping" hid
+            # ~490 good offers on 2026-11-19. Shipping then stays UNKNOWN (None): the caller keeps the stored shipping cost.
+            loc = item.get("shipToLocations") or {}
+            inc = {str(r.get("regionId")) for r in (loc.get("regionIncluded") or []) if isinstance(r, dict)}
+            exc = {str(r.get("regionId")) for r in (loc.get("regionExcluded") or []) if isinstance(r, dict)}
+            ships = ("IL" in inc or "WORLDWIDE" in inc) and "IL" not in exc
+            region_unclear = (not ships) and "IL" not in exc and bool(inc & {"ASIA", "MIDDLE_EAST"})
+        else:
+            region_unclear = False
         has_ship_figure = ships and any((o or {}).get("freeShipping") or ((o or {}).get("shippingCost") or {}).get("value") is not None
                                         for o in (item.get("shippingOptions") or []) if isinstance(o, dict))
         mpn = next((str(a.get("value")) for a in (item.get("localizedAspects") or [])
@@ -441,7 +452,8 @@ class EbaySupplier(BaseSupplier):
             condition=str(item.get("condition") or ""),
             price=float(price_obj.get("value")) if price_obj.get("value") not in (None, "") else None,
             currency=str(price_obj.get("currency") or ""),
-            shipping=ship_cost if has_ship_figure else None, ships_to_israel=bool(ships), mpn=mpn, raw=item)
+            shipping=ship_cost if has_ship_figure else None, ships_to_israel=bool(ships), mpn=mpn,
+            ship_region_unclear=region_unclear, raw=item)
 
     async def get_part_details(self, item_id: str) -> Optional[PartResult]:
         token = await self._get_token()

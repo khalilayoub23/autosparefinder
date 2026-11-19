@@ -160,3 +160,46 @@ def test_only_two_verdicts_may_write():
 def test_unsupported_listing_is_ambiguous_with_a_long_retry():
     v = check_refresh(ST, Live(ok=False, status="unsupported"))
     assert v.code == g.AMBIGUOUS_IDENTITY and not v.ok and v.retry_days == 14
+
+
+def _item(**kw):
+    base = {"itemId": "v1|123456789012|0", "legacyItemId": "123456789012", "title": "x", "condition": "New",
+            "price": {"value": "10", "currency": "USD"}, "seller": {"username": "s"}}
+    base.update(kw)
+    return base
+
+
+def test_item_without_shipping_options_but_worldwide_ships_to_israel_with_unknown_cost():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    live = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "WORLDWIDE", "regionType": "WORLDWIDE"}]}))
+    assert live.ships_to_israel is True and live.shipping is None
+    assert check_refresh(Stored("123456789012", "X"), live).code == g.EXACT_MATCH
+
+
+def test_item_without_shipping_options_and_without_israel_does_not_ship():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    us = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "US"}]}))
+    assert us.ships_to_israel is False
+    excl = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "WORLDWIDE"}], "regionExcluded": [{"regionId": "IL"}]}))
+    assert excl.ships_to_israel is False
+    assert check_refresh(Stored("123456789012", "X"), us).code == g.NO_ISRAEL_SHIPPING
+
+
+def test_item_with_israel_listed_explicitly_ships():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    assert EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "IL"}]})).ships_to_israel is True
+
+
+def test_world_region_only_is_ambiguous_not_a_no_ship_verdict():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    asia = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "ASIA", "regionType": "WORLD_REGION"}]}))
+    assert asia.ships_to_israel is False and asia.ship_region_unclear is True
+    v = check_refresh(Stored("123456789012", "X"), asia)
+    assert v.code == g.AMBIGUOUS_IDENTITY and not v.makes_unavailable and v.retry_days == 14
+
+
+def test_worldwide_with_israel_excluded_is_a_real_no_ship():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    live = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "WORLDWIDE"}], "regionExcluded": [{"regionId": "IL"}]}))
+    assert live.ships_to_israel is False and live.ship_region_unclear is False
+    assert check_refresh(Stored("123456789012", "X"), live).code == g.NO_ISRAEL_SHIPPING

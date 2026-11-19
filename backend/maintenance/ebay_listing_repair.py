@@ -88,7 +88,29 @@ async def decide_swapped(db, ebay, offer_id: str, old: dict) -> dict:
             "reason": "neither the original nor the swapped-in listing is live"}
 
 
+async def recheck(args) -> None:
+    """Re-queue offers whose latest verdict is in --recheck-verdicts and let the (corrected) guarded refresh judge them again.
+    Used 2026-11-19 after a shipping-mapping defect produced ~490 wrong `no_israel_shipping` verdicts."""
+    verdicts = [v.strip() for v in args.recheck_verdicts.split(",") if v.strip()]
+    async with async_session_factory() as db:
+        ids = [r[0] for r in (await db.execute(text("SELECT supplier_part_id::text FROM supplier_offer_checks WHERE verdict = ANY(:v)"), {"v": verdicts})).fetchall()]
+        print(json.dumps({"recheck": {"verdicts": verdicts, "offers": len(ids)}}))
+        if not args.apply or not ids:
+            return
+        await db.execute(text("""UPDATE supplier_offer_checks SET retry_after = '-infinity'::timestamptz, source = 'ebay_listing_repair'
+                                 WHERE supplier_part_id = ANY(CAST(:ids AS uuid[]))"""), {"ids": ids})
+        await db.commit()
+        os.environ["EBAY_REFRESH_LIMIT"] = str(len(ids) + 50)
+        os.environ["EBAY_RUN_CALL_BUDGET"] = str(args.call_budget)
+        rep = await sync.sync_ebay_prices(db, limit_per_run=0)
+        keep = {k: rep[k] for k in ("refresh_checked", "refresh_updated", "refresh_unchanged", "refresh_no_listing", "refresh_listing_changed",
+                                    "calls_used", "call_budget_hit", "price_history_rows", "parts_indexed", "index_failures", "refresh_verdicts")}
+        print(json.dumps({"guarded_refresh": keep, "errors": rep["errors"][:5]}))
+
+
 async def main(args) -> None:
+    if args.recheck_verdicts:
+        return await recheck(args)
     old = read_old_rows(args.old_rows)
     async with async_session_factory() as db:
         window = await classify_window_offers(db)
@@ -137,7 +159,8 @@ async def main(args) -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--old-rows", required=True, help="TSV of supplier_parts rows from the 2026-11-18 04:03 backup")
+    ap.add_argument("--recheck-verdicts", default="", help="comma list: re-judge offers whose latest verdict is one of these")
+    ap.add_argument("--old-rows", default="", help="TSV of supplier_parts rows from the 2026-11-18 04:03 backup")
     ap.add_argument("--backup-dir", default="/app/state/ebay_repair_backup")
     ap.add_argument("--call-budget", type=int, default=1500)
     ap.add_argument("--apply", action="store_true")

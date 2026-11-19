@@ -75,6 +75,7 @@ class Live:
     shipping: Optional[float] = None  # None = eBay stated no shipping figure for IL
     ships_to_israel: bool = False
     mpn: Optional[str] = None
+    ship_region_unclear: bool = False   # only a world REGION (ASIA / MIDDLE_EAST) is listed and IL is not excluded: eBay does not say if it covers IL
     raw: Optional[dict] = field(default=None, compare=False, repr=False)   # full Browse payload (specs/images); never compared
 
 
@@ -153,6 +154,8 @@ def check_refresh(stored: Stored, live: Live) -> Verdict:
     if not live.item_id or live.item_id != stored.item_id:
         return _v(DIFFERENT_LISTING, f"live item {live.item_id!r} is not the stored listing {stored.item_id!r}")
     if not live.ships_to_israel:
+        if live.ship_region_unclear:
+            return Verdict(AMBIGUOUS_IDENTITY, "ships to a world region (ASIA/MIDDLE_EAST) that may or may not include Israel; not decided", 14)
         return _v(NO_ISRAEL_SHIPPING, "listing no longer offers shipping to Israel")
     if (live.condition or "").strip().lower() not in ("new", "new with box", "new without box", "new with tags", "new other"):
         return _v(VARIANT_MISMATCH, f"condition is {live.condition!r}, the offer is New")
