@@ -41,8 +41,22 @@ Legend: PASS / BLOCKED / FAILED / NOT VERIFIED / NOT DONE. Commits are LOCAL onl
 ## 6. Eurosender — BLOCKED per supplier (allowlist stays empty)
 SNG: awaiting reply to pickup request. ALVADI: not verified. Car-Parts.ie, eBay Motors: NOT DONE this session.
 
-## 7-9, 10 (BDS 2,349 offers; eBay 16/799/210/1,175 reconciliation; AGM; ASAP; BOAZ audit) — NOT DONE
-No work performed this session. They remain open exactly as in the 2026-11-19 report.
+## Mail agent check (owner request) — PASS
+12 recovered ASAP/LKQ/SNG messages (Jul-Sep): all classified (10 `supplier`, 2 newsletter), 10 escalated requires_human with ONE BOAZ task each (SNG welcome -> NIR), owner_notified set, 0 Gmail drafts. Mail content not read by me.
+
+## 7. BDS (2,349) / ASAP MSRP — PASS (data) with a deliberate owner-visible change
+- Finding (live): all 2,349 BDS parts had `importer_price_ils` = MSRP/1.18 (a LOCAL COST) and `base_price` derived from it; their only offer is ASAP's (supplier inactive, price_level=0). Customers saw e.g. BDS1613FS at a 12,792 ILS "estimate" (`is_estimate` true, but Parts.jsx ignores the flag, so it looks like a price).
+- Outcome per offer (all 2,349 reconciled, identical class): genuine catalog part, no valid supplier offer -> part KEPT and searchable; ASAP offer set `is_available=false` (row, prices, history kept - nothing deleted); MSRP-derived `importer_price_ils`/`base_price` cleared to 0; previous values stored in `specifications.msrp_quarantine` (exact undo: `maintenance/asap_msrp_quarantine.py --restore`). Same proven defect (importer_price_ils == offer price, no other supplier) also fixed for Fox Factory 360, Adams Driveshaft 93, AGM Products 73, Banks Power 1 = 2,876 parts total. Backup: `backups/asap_msrp_before.json` (2,876 rows). Policy gate used; script registered in POLICY_BOUND_ACTORS.
+- Live verification: BDS1613FS search -> cheapest_price None, customer_estimate None, is_estimate False; 2,876 offers avail=0.
+- Importer `importers/asap_import.py` fixed so a re-run cannot restore it (no importer_price_ils/base write, offers never available; MSRP kept in specifications.msrp_ils). Tests `tests/test_asap_msrp_not_cost.py` (3).
+- NOT DONE: Meilisearch pickup (updated_at bumped; next incremental sync) NOT VERIFIED; frontend still ignores `is_estimate` for the remaining (IL importer) estimates; per-brand dealer-terms/permissions inspection of ASAP (5 brands) not done (account price_level=0 per stored evidence). Activation path: only when a manufacturer grants a cost tier.
+
+## 8. eBay reconciliation — PASS (counts), shipping rule FIXED, recheck PENDING
+- Populations by unique offer id (backup `/app/state/ebay_repair_backup/supplier_parts_before_repair_1795075554.json`): 1,025 offers = 16 pre-guard + 210 no_listing + 799 other_listing, disjoint (1,025 unique ids). The 1,009 of the earlier report = 210 + 799 and EXCLUDES the 16 and 150 more offers judged by the same guarded refresh on 2026-11-19. Verdict table `supplier_offer_checks` (latest per offer): 1,025 in-population + 150 outside = **1,175**, each with exactly ONE verdict: exact_match 328+64=392, missing_listing 288+30=318, no_israel_shipping 362+47=409, ambiguous 40+8=48, seller_mismatch 4+1=5, product_mismatch 3+0=3 (sums match the earlier report). No double count; the 166 gap was the 16+150 outside the 1,009.
+- The 16: 7 now on the ORIGINAL item id (3 same-listing refreshes + 4 restored), 6 on a different guard-verified listing (kept), 3 `product_mismatch` made unavailable (16 total). Seller-level re-comparison of the 6 retained NOT re-run (eBay calls).
+- Shipping-to-Israel: code path audited. Defect found: an item with NO shippingOptions AND NO shipToLocations (or only a non-country world region other than ASIA/MIDDLE_EAST) was a hard `no_israel_shipping`. Fixed in `EbaySupplier.live_from_item` -> ambiguous (offer unchanged). Tests +3 (49 passed). Deployed 2026-11-20 07:37 IL (guarded restart, healthy, 0 tracebacks).
+- PENDING: the 563 stored `no_israel_shipping` verdicts (all with reason "listing no longer offers shipping to Israel") were produced partly under the old rule; eBay quota is at its 300 reserve until 10:00 IL, so a re-judge (`ebay_listing_repair.py --recheck-verdicts no_israel_shipping --apply --call-budget 700`) is queued to run after the reset. NOT VERIFIED until it reports.
+- `EBAY_REFRESH_ALLOW_RELISTING` is no longer read by code (relisting impossible by construction) - nothing to enable.
 
 ## 12-14. sync_prices / digest / heal task
 - sync_prices 2026-11-20 01:14 IL: COMPLETED 02:02 IL, no error; ebay checked=2769 updated=869 no_listing=1900 errors=0, refresh[exact_match=868, missing_listing=260, no_israel_shipping=154, ambiguous_identity=17, seller_mismatch=1]. Per-offer review of these verdicts NOT DONE.
