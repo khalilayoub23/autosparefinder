@@ -10581,4 +10581,4 @@ Consultant final verification (2026-11-17, read-only, `candidates/core-identity-
 - Root cause: scan limited to `in:inbox newer_than:14d`; reply of 2026-09-14 pre-dates arming (2026-10-10); manual inquiry had no outreach row.
 - Fix: `_history_pass`, `email_agent/supplier_intake.py`, routing of known-supplier replies, placeholder/malformed recipient gate in `plan()`+`send_outreach()`, `pickup_address` template purpose. Tests: tests/test_supplier_history_intake.py (364 passed in related suites).
 - Data: SNG contact/shipping stored + BOAZ task; pickup request sent; ALVADI candidate added (unverified; footer ≠ pickup address).
-- STATUS: code on disk and tested, NOT DEPLOYED (needs guarded restart after `sync_prices`). Other items of the closure mission: NOT DONE — see candidates/closure-2026-11-19/CLOSURE_REPORT.md.
+- STATUS: DEPLOYED 2026-11-20 (guarded restarts; 2nd fixed a `:https` bind-param collision in known_supplier_domains). Live history cycle processed 13, failed 0. Other mission items NOT DONE — see CLOSURE_REPORT.md.

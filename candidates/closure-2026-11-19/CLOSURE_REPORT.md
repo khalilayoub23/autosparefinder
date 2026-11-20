@@ -13,7 +13,7 @@ Legend: PASS / BLOCKED / FAILED / NOT VERIFIED / NOT DONE. Commits are LOCAL onl
   `suppliers.shipping_info.supplier_stated`, qualification CLAIM), routing of a reply from a known supplier to BOAZ
   (NIR for nir_sourcing candidates). Off switch `EMAIL_AGENT_SCAN_HISTORY=0`.
 - Tests: `tests/test_supplier_history_intake.py` (18) + existing email/supplier suites: 364 passed, 1 skipped.
-- DEPLOY: NOT DONE. `sync_prices` was mid-run (started 01:14 IL); a guarded restart (`pre_restart.sh` then
+- DEPLOY: DONE 2026-11-20 ~06:25-06:28 IL via guarded_restart (2 recreates: 1st exposed a bind-parameter bug ':https' in the domain query, fixed + regression test, 2nd verified). Live cycle: history queries=9 listed=22 processed=13 failed=0, healthy, OOM false, restarts 0, 0 tracebacks. Recovered older supplier mail: asapnetwork.org x8 (6 supplier->BOAZ, 2 newsletters), lkqcorp.com x4 (BOAZ), sngbarratt.com x2; no Gmail drafts created. (Content of the ASAP/LKQ mails NOT yet reviewed.) Original note: DEPLOY: NOT DONE. `sync_prices` was mid-run (started 01:14 IL); a guarded restart (`pre_restart.sh` then
   `guarded_restart.sh`) must follow its completion. Until then the running uvicorn still uses the old scan.
 - Evidence of the original miss: PII `email_agent_messages` had no row for 1a0a07c56c725637.
 
@@ -45,7 +45,7 @@ SNG: awaiting reply to pickup request. ALVADI: not verified. Car-Parts.ie, eBay 
 No work performed this session. They remain open exactly as in the 2026-11-19 report.
 
 ## 12-14. sync_prices / digest / heal task
-- sync_prices 2026-11-20 01:14 IL: RUNNING at time of writing (heartbeat 01:39 IL) -> NOT VERIFIED.
+- sync_prices 2026-11-20 01:14 IL: COMPLETED 02:02 IL, no error; ebay checked=2769 updated=869 no_listing=1900 errors=0, refresh[exact_match=868, missing_listing=260, no_israel_shipping=154, ambiguous_identity=17, seller_mismatch=1]. Per-offer review of these verdicts NOT DONE.
 - Digest content: NOT VERIFIED (text cannot be read back). `task_heal_importer_price` plan/timing: NOT VERIFIED.
 
 ## 15-17. Production / code / integrity
