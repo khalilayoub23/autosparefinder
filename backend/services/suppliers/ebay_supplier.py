@@ -438,7 +438,12 @@ class EbaySupplier(BaseSupplier):
             inc = {str(r.get("regionId")) for r in (loc.get("regionIncluded") or []) if isinstance(r, dict)}
             exc = {str(r.get("regionId")) for r in (loc.get("regionExcluded") or []) if isinstance(r, dict)}
             ships = ("IL" in inc or "WORLDWIDE" in inc) and "IL" not in exc
-            region_unclear = (not ships) and "IL" not in exc and bool(inc & {"ASIA", "MIDDLE_EAST"})
+            # Israel is NOT in the included list. That is a hard "does not ship" only when eBay says so explicitly (IL excluded,
+            # or an exhaustive list of COUNTRIES that omits it). No information at all, or a world REGION (ASIA, EUROPE, ...),
+            # does not establish Israel either way -> ambiguous, never a no-ship verdict (owner rule 2026-11-20).
+            region_ids = {r for r in inc if r != "WORLDWIDE" and not re.fullmatch(r"[A-Z]{2}", r)}
+            no_information = not inc and not exc
+            region_unclear = (not ships) and "IL" not in exc and (no_information or bool(region_ids))
         else:
             region_unclear = False
         has_ship_figure = ships and any((o or {}).get("freeShipping") or ((o or {}).get("shippingCost") or {}).get("value") is not None

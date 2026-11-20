@@ -43,6 +43,7 @@ POLICY_BOUND_ACTORS = (
     "maintenance/restore_merged_offers_133.py",
     "maintenance/remove_placeholder_offers_149.py",   # owner-authorised removal of provably fabricated sentinel offers (archived)
     "maintenance/unmerge_distinct_articles.py",       # moves an offer BACK to the part it was wrongly merged away from (no delete/price change)
+    "maintenance/asap_msrp_quarantine.py",            # ASAP MSRP-as-cost quarantine: offers made unavailable (kept), MSRP-derived cost/base cleared, reversible
     "maintenance/cpie_overwrite_repair.py",           # restores the owner brand's own price+url on 93 cross-brand-overwritten offers (CAS, no part_id change)
 )
 

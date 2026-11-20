@@ -23,8 +23,8 @@ PRICING (verified against the real Fox Factory sheet, 2026-07-28):
          Because ASAP gives us MSRP/MAP and NOT our cost, we must not invent a
          margin off it. `list_price` is a US MSRP/MAP, NOT an Israeli consumer price, so (#127) it never
          populates `max_price_ils` (the Israeli consumer reference incl. 18% VAT; foreign sources never write it):
-             cost  = list_price_ils / 1.18      (reference cost)
-             base  = NOT written here (base_price_rule.apply_to_parts)
+             MSRP-derived reference only (specifications.msrp_ils + the offer row, offer UNAVAILABLE). NEVER written to
+             importer_price_ils / base_price (2026-11-20, owner: MSRP is not acquisition cost).
          USD→ILS uses the live rate (currency_rate.get_usd_to_ils_rate).
 
 Process:
@@ -34,7 +34,7 @@ Process:
 
 Data Modified: parts_catalog, supplier_parts, part_vehicle_fitment, parts_images
 Data Sources:  asapnetwork.org data sheets (relayed by the owner's browser)
-Last Updated:  2026-07-28
+Last Updated:  2026-11-20
 """
 from __future__ import annotations
 
@@ -182,12 +182,16 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
         # Consumer reference price → cost → our price. Same shape as the IL
         # importer flow. ASAP gives MSRP/MAP, never our cost, so we derive the
         # ex-VAT reference cost rather than inventing a margin off MSRP.
+        # 2026-11-20 (owner rule: MSRP is not acquisition cost): the MSRP-derived figure is kept ONLY as a reference on
+        # the offer row (is_available forced FALSE below) and in specifications.msrp_ils. It is NEVER written to
+        # parts_catalog.importer_price_ils / base_price - that fed customer estimates from MSRP for ~2,900 parts.
         if consumer_usd > 0:
             max_ils = round(consumer_usd * usd_ils, 2)
             cost_ils = round(max_ils / (1 + VAT), 2)
             stats["priced"] += 1
         else:
             max_ils = cost_ils = 0.0
+        in_stock = False        # no verified cost (ASAP price_level=0) -> never an available/orderable offer
 
         category = categorize_on_ingest(name=title)
         manufacturer_id = await _ensure_brand(conn, brand, brand_cache)
@@ -209,8 +213,7 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                             barcode = COALESCE($6, barcode),
                             category = CASE WHEN category IN ('כללי','general','service-general','accessories')
                                             THEN $7 ELSE category END,
-                            importer_price_ils = CASE WHEN $8::numeric > 0
-                                                 THEN $8::numeric ELSE importer_price_ils END,
+                            specifications = COALESCE(specifications, '{}'::jsonb) || jsonb_build_object('msrp_ils', $8::numeric),
                             is_active = TRUE,
                             updated_at = NOW()
                         WHERE id = $1
@@ -230,13 +233,13 @@ async def import_products(conn: asyncpg.Connection, rows: List[Dict[str, str]],
                              base_price, importer_price_ils,
                              is_active, created_at, updated_at)
                         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5::uuid, $6, $7, $8,
-                                'new', 'aftermarket', FALSE, FALSE, FALSE, $10::jsonb,
-                                0.0, $9, TRUE, NOW(), NOW())
+                                'new', 'aftermarket', FALSE, FALSE, FALSE, $9::jsonb,
+                                0.0, 0, TRUE, NOW(), NOW())
                         RETURNING id
                         """,
                         sku, title[:500], desc, brand[:120], manufacturer_id,
-                        oem, upc, category, cost_ils,
-                        json.dumps({"source": "asap_network", "brand": brand,
+                        oem, upc, category,
+                        json.dumps({"source": "asap_network", "brand": brand, "msrp_ils": cost_ils,
                                     "sheet_brand": brand_name,
                                     "discontinued": discontinued}),
                     )

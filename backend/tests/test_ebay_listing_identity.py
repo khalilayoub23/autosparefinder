@@ -203,3 +203,27 @@ def test_worldwide_with_israel_excluded_is_a_real_no_ship():
     live = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "WORLDWIDE"}], "regionExcluded": [{"regionId": "IL"}]}))
     assert live.ships_to_israel is False and live.ship_region_unclear is False
     assert check_refresh(Stored("123456789012", "X"), live).code == g.NO_ISRAEL_SHIPPING
+
+
+def test_no_shipping_information_at_all_is_ambiguous_never_a_no_ship_verdict():
+    """Absence of shippingOptions AND shipToLocations proves nothing (2026-11-20 rule)."""
+    from services.suppliers.ebay_supplier import EbaySupplier
+    live = EbaySupplier.live_from_item(_item())
+    assert live.ships_to_israel is False and live.ship_region_unclear is True
+    v = check_refresh(Stored("123456789012", "X"), live)
+    assert v.code == g.AMBIGUOUS_IDENTITY and not v.makes_unavailable
+
+
+def test_any_world_region_without_israel_exclusion_is_ambiguous():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    for rid in ("EUROPE", "ASIA", "MIDDLE_EAST", "AFRICA"):
+        live = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": rid}]}))
+        assert live.ship_region_unclear is True and not check_refresh(Stored("123456789012", "X"), live).makes_unavailable
+
+
+def test_country_list_without_israel_and_explicit_exclusion_remain_real_no_ship():
+    from services.suppliers.ebay_supplier import EbaySupplier
+    us = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "US"}, {"regionId": "CA"}]}))
+    assert us.ship_region_unclear is False and check_refresh(Stored("123456789012", "X"), us).code == g.NO_ISRAEL_SHIPPING
+    ex = EbaySupplier.live_from_item(_item(shipToLocations={"regionIncluded": [{"regionId": "EUROPE"}], "regionExcluded": [{"regionId": "IL"}]}))
+    assert ex.ship_region_unclear is False and check_refresh(Stored("123456789012", "X"), ex).code == g.NO_ISRAEL_SHIPPING
