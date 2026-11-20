@@ -215,3 +215,18 @@ async def test_plan_and_send_refuse_a_placeholder_recipient():
     finally:
         os.environ.pop("NIR_OUTREACH_ENABLED", None)
     assert res["sent"] is False and "valid business address" in res["reason"]
+
+
+async def test_known_supplier_domains_query_has_no_bind_collision():
+    """Regression: a `(?:https?://` regex inside text() was parsed as bind parameter ':https' and the live history pass
+    never ran. The method must issue a colon-free statement and parse hosts in Python."""
+    from email_agent.context import DbContextSource
+    seen = []
+
+    class Src(DbContextSource):
+        async def _rows(self, db, sql, params):
+            seen.append(sql)
+            return [{"website": "https://www.SNGBarratt.com/x"}, {"website": "alvadi.co.il/en"}, {"website": "nodot"}]
+
+    assert await Src().known_supplier_domains() == ["alvadi.co.il", "sngbarratt.com"]
+    assert ":" not in seen[0]

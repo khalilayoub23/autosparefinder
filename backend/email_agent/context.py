@@ -280,10 +280,18 @@ class DbContextSource:
                                        "WHERE website ILIKE :p LIMIT 20", {"p": f"%{domain}%"})
 
     async def known_supplier_domains(self) -> List[str]:
-        """Registered domains of every supplier website (catalog DB) - the set whose mail the history pass reads."""
-        rows = await self._rows("cat", "SELECT DISTINCT lower(substring(website from '^(?:https?://)?(?:www\\.)?([^/:?#]+)')) "
-                                       "AS d FROM suppliers WHERE website IS NOT NULL AND website <> ''", {})
-        return sorted({r["d"] for r in rows if r.get("d") and "." in r["d"]})
+        """Registered domains of every supplier website (catalog DB) - the set whose mail the history pass reads.
+        Parsed in Python: a regex with `:` inside text() is read by SQLAlchemy as a bind parameter."""
+        from urllib.parse import urlparse
+        rows = await self._rows("cat", "SELECT DISTINCT website FROM suppliers WHERE website IS NOT NULL AND website <> ''", {})
+        out = set()
+        for r in rows:
+            w = str(r.get("website") or "").strip()
+            host = (urlparse(w if "//" in w else "//" + w).hostname or "").lower()
+            host = host[4:] if host.startswith("www.") else host
+            if "." in host:
+                out.add(host)
+        return sorted(out)
 
     async def get_user(self, user_id: str) -> Optional[dict]:
         r = await self._rows("pii", "SELECT id::text AS id FROM users WHERE id = CAST(:i AS uuid)", {"i": user_id})
