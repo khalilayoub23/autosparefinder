@@ -23,10 +23,12 @@ Last Updated: 2026-10-27
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict
 
 import supplier_outreach as _out
 from email_agent import supplier_intake as _intake
+from email_agent.senders import FREE_MAIL
 
 SUPPLIER_CATEGORIES = ("supplier", "aliexpress", "ebay", "shipping_eurosender")
 
@@ -34,6 +36,24 @@ SUPPLIER_CATEGORIES = ("supplier", "aliexpress", "ebay", "shipping_eurosender")
 def _domain(addr: str) -> str:
     a = (addr or "").strip().lower()
     return a.rsplit("@", 1)[-1] if "@" in a else ""
+
+
+def _same_party(sender: str, recipient: str) -> bool:
+    """The sender is the party we wrote to. A business domain identifies the company; a FREE-MAIL domain (gmail.com, ...)
+    identifies nobody, so only the exact address counts. 2026-11-23: our own mailbox (gmail.com) matched an inquiry sent
+    to a gmail.com supplier and was recorded as that supplier's REPLY."""
+    s_, r_ = (sender or "").strip().lower(), (recipient or "").strip().lower()
+    if not s_ or not r_:
+        return False
+    if s_ == r_:
+        return True
+    return _domain(s_) == _domain(r_) and _domain(s_) not in FREE_MAIL
+
+
+def _is_own_mailbox(addr: str) -> bool:
+    from email_agent.config import DEFAULT_MAILBOX
+    own = {DEFAULT_MAILBOX.lower(), (os.getenv("EMAIL_AGENT_MAILBOX") or "").strip().lower()} - {""}
+    return (addr or "").strip().lower() in own
 
 
 def _ref(row: Dict[str, Any]) -> str:
@@ -104,12 +124,16 @@ async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
     out = {"to_nir": 0, "to_boaz": 0, "exceptions": 0, "other": 0}
     for row in await store.supplier_route_pending(limit):
         dom = _domain(row.get("sender_email") or "")
+        if _is_own_mailbox(row.get("sender_email") or ""):      # our own notifications are never a supplier's reply
+            await store.set_supplier_route(row["id"], {"owner": None, "reason": "own mailbox"})
+            out["other"] += 1
+            continue
         # a reply to one of OUR purchase-order emails (supplier_ordering.EmailPurchaseOrderConnector) -> BOAZ
         procs = await procurement_store.by_thread(row.get("gmail_thread_id") or "") if (
             procurement_store is not None and row.get("gmail_thread_id")) else []
         if procs:
             p = procs[-1]
-            if dom and dom == _domain((p.get("submission_evidence") or {}).get("recipient") or ""):
+            if _same_party(row.get("sender_email") or "", (p.get("submission_evidence") or {}).get("recipient") or ""):
                 await _to_boaz_procurement(store, todos, row, p)
                 out["to_boaz"] += 1
             else:
@@ -121,7 +145,7 @@ async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
                   if o["state"] in ("SENT", "AWAITING_REPLY", "REPLY_RECEIVED")] if row.get("gmail_thread_id") else []
         if thread:
             o = thread[-1]
-            if dom and dom == _domain(o["recipient"]):
+            if _same_party(row.get("sender_email") or "", o["recipient"]):
                 await _to_nir(store, outreach_store, todos, row, o, "thread")
                 out["to_nir"] += 1
             else:
@@ -129,7 +153,10 @@ async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
                     "reason": "reply in an outreach thread from a different sender domain"}, requires_human=True)
                 out["exceptions"] += 1
             continue
-        awaiting = await outreach_store.awaiting_by_recipient_domain(dom) if dom else []
+        awaiting = await outreach_store.awaiting_by_recipient_domain(dom) if dom and dom not in FREE_MAIL else []
+        if dom in FREE_MAIL:                       # a free-mail sender matches only an inquiry sent to that exact address
+            awaiting = [o for o in await outreach_store.awaiting_by_recipient_domain(dom)
+                        if _same_party(row.get("sender_email") or "", o["recipient"])]
         if len(awaiting) == 1:
             await _to_nir(store, outreach_store, todos, row, awaiting[0], "sender_domain")
             out["to_nir"] += 1

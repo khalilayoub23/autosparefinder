@@ -14,7 +14,8 @@ Metrics (source):
 Data Imported/Modified: none (read-only).
 Last Updated: 2026-11-18
 """
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
@@ -54,6 +55,12 @@ async def collect(db, digest: bool = False) -> Dict[str, Any]:
     return m
 
 
+def _il(ts: datetime) -> str:
+    """price_history.created_at is a naive UTC timestamp; the owner reads Israel time (2026-11-23: the digest printed UTC)."""
+    t = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    return t.astimezone(ZoneInfo("Asia/Jerusalem")).strftime('%d/%m %H:%M')
+
+
 def format_lines(m: Dict[str, Any], now: Optional[datetime] = None) -> List[str]:
     now = now or datetime.utcnow()
     out: List[str] = []
@@ -71,12 +78,12 @@ def format_lines(m: Dict[str, Any], now: Optional[datetime] = None) -> List[str]
     if ps is not None:
         for src in SOURCES:
             n24, last = ps.get(src, (0, None))
-            out.append(f"  {src}: {n24} שינויי מחיר ב-24 שע' · כתיבה אחרונה: {last.strftime('%d/%m %H:%M') if last else 'אין ב-7 ימים'}")
+            out.append(f"  {src}: {n24} שינויי מחיר ב-24 שע' · כתיבה אחרונה: {_il(last) if last else 'אין ב-7 ימים'}")
     sj = m.get("sync_job")
     if sj is not None and sj.status not in ("completed", "running"):
         out.append(f"  ❌ sync_prices: {sj.status}")
     if m.get("offers_estimate") is not None:
         out.append(f"*הצעות ספקים (הערכה):* ~{m['offers_estimate']:,}")
     if m.get("parts_with_price") is not None:
-        out.append(f"*חלקים פעילים עם מחיר ללקוח:* {m['parts_with_price']:,}")
+        out.append(f"*חלקים פעילים עם מחיר בסיס (לא בהכרח הצעת ספק זמינה):* {m['parts_with_price']:,}")
     return out

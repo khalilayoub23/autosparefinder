@@ -28,23 +28,23 @@ BACKEND = Path(__file__).resolve().parent.parent
 
 
 # ═══ helpers ════════════════════════════════════════════════════════════════════════════════════════
-def verified_record(sid="s1", contact="sales@parts.example.com", now=NOW):
+def verified_record(sid="s1", contact="sales@partsupplier-trade.co.uk", now=NOW):
     rec = q.new_record(sid, now)
     for k in q.REQUIREMENTS:
         q.set_requirement(rec, k, q.VERIFIED, evidence_kind="official_documentation",
-                          source=f"https://parts.example.com/{k}", note=f"{k} documented", now=now,
+                          source=f"https://partsupplier-trade.co.uk/{k}", note=f"{k} documented", now=now,
                           details={"data_timestamp": now.isoformat()} if k == "availability" else {})
     rec["requirements"]["contacts"]["details"] = {"contacts": [
-        {"address": contact, "kind": "sales", "status": q.VERIFIED, "source": "https://parts.example.com/contact"}]}
+        {"address": contact, "kind": "sales", "status": q.VERIFIED, "source": "https://partsupplier-trade.co.uk/contact"}]}
     return rec
 
 
-def gap_record(sid="s1", contact="sales@parts.example.com"):
+def gap_record(sid="s1", contact="sales@partsupplier-trade.co.uk"):
     rec = q.new_record(sid, NOW)
     q.set_requirement(rec, "contacts", q.VERIFIED, evidence_kind="official_policy_page",
-                      source="https://parts.example.com/contact", note="contact page lists sales address", now=NOW,
+                      source="https://partsupplier-trade.co.uk/contact", note="contact page lists sales address", now=NOW,
                       details={"contacts": [{"address": contact, "status": q.VERIFIED,
-                                             "source": "https://parts.example.com/contact"}]})
+                                             "source": "https://partsupplier-trade.co.uk/contact"}]})
     return rec
 
 
@@ -285,7 +285,7 @@ def test_stale_inventory_is_not_current():
 
 
 def test_claims_and_keywords_never_verify_and_contradictions_surface():
-    rec = q.from_sourcing_signals("s1", {"ships_il": True, "has_api": True, "http_ok": True}, "parts.example.com")
+    rec = q.from_sourcing_signals("s1", {"ships_il": True, "has_api": True, "http_ok": True}, "partsupplier-trade.co.uk")
     assert all(r["status"] == q.UNVERIFIED for r in rec["requirements"].values())
     with pytest.raises(ValueError):
         q.set_requirement(rec, "api", q.VERIFIED, evidence_kind="supplier_claim", source="email", note="says so")
@@ -364,7 +364,7 @@ async def test_followups_are_capped(outreach_on):
     st = so.InMemoryOutreachStore()
     for i in range(so.MAX_ATTEMPTS):
         st.rows.append({"id": str(uuid.uuid4()), "supplier_id": "s1", "state": "AWAITING_REPLY", "purposes": ["api_info"],
-                        "recipient": "sales@parts.example.com", "idempotency_key": f"k{i}", "created_at": NOW,
+                        "recipient": "sales@partsupplier-trade.co.uk", "idempotency_key": f"k{i}", "created_at": NOW,
                         "sent_at": NOW - timedelta(days=30)})
     assert "maximum" in (await so.plan(st, "s1", gap_record(), now=NOW))["reason"]
 
@@ -430,7 +430,7 @@ class _Todos:
         return f"task-{len(self.todos)}"
 
 
-async def _sent_inquiry(ost, thread="thr-1", recipient="sales@parts.example.com", sid="s1"):
+async def _sent_inquiry(ost, thread="thr-1", recipient="sales@partsupplier-trade.co.uk", sid="s1"):
     row = {"id": str(uuid.uuid4()), "supplier_id": sid, "recipient": recipient, "purposes": ["api_info"],
            "state": "AWAITING_REPLY", "idempotency_key": str(uuid.uuid4()), "created_at": NOW,
            "gmail_thread_id": thread, "authorization_id": "a1", "sent_at": NOW}
@@ -441,7 +441,7 @@ async def _sent_inquiry(ost, thread="thr-1", recipient="sales@parts.example.com"
 async def test_reply_in_outreach_thread_reaches_nir_with_references():
     store, ost, todos = InMemoryStore(), so.InMemoryOutreachStore(), _Todos()
     o = await _sent_inquiry(ost)
-    e = _email_row(store, thread="thr-1", sender="sales@parts.example.com", folder="spam")
+    e = _email_row(store, thread="thr-1", sender="sales@partsupplier-trade.co.uk", folder="spam")
     out = await sr.route_supplier_replies(store, ost, todos)
     assert out["to_nir"] == 1 and todos.todos[0]["agent"] == "NIR"
     art = todos.todos[0]["artifacts"]
@@ -503,12 +503,12 @@ async def test_spam_pass_reads_only_relevant_messages(monkeypatch):
 
         def get_message_metadata(self, mid):
             self.metadata.append(mid)
-            frm = "sales@parts.example.com" if mid == "sp1" else "prize@lottery.example"
+            frm = "sales@partsupplier-trade.co.uk" if mid == "sp1" else "prize@lottery.example"
             return {"id": mid, "payload": {"headers": [{"name": "From", "value": frm}]}}
 
     class _Source:
         async def find_suppliers_by_domain(self, dom):
-            return [{"id": "s1"}] if dom == "parts.example.com" else []
+            return [{"id": "s1"}] if dom == "partsupplier-trade.co.uk" else []
 
     processed = []
 
@@ -765,12 +765,12 @@ async def test_end_to_end_supplier_lifecycle(monkeypatch, outreach_on):
     auth, ost, store, todos = au.InMemoryAuthStore(), so.InMemoryOutreachStore(), InMemoryStore(), _Todos()
     gm = FakeGmail()
     # 1. NIR discovers a supplier with missing information (homepage keywords only -> all UNVERIFIED)
-    rec = q.from_sourcing_signals("sup-e2e1", {"ships_il": True, "has_api": True, "http_ok": True}, "parts.example.com")
+    rec = q.from_sourcing_signals("sup-e2e1", {"ships_il": True, "has_api": True, "http_ok": True}, "partsupplier-trade.co.uk")
     assert q.classify(rec, NOW)["classification"] == q.NEEDS_INVESTIGATION
     q.set_requirement(rec, "contacts", q.VERIFIED, evidence_kind="official_policy_page",
-                      source="https://parts.example.com/contact", note="official contact page", now=NOW,
-                      details={"contacts": [{"address": "sales@parts.example.com", "status": q.VERIFIED,
-                                             "source": "https://parts.example.com/contact"}]})
+                      source="https://partsupplier-trade.co.uk/contact", note="official contact page", now=NOW,
+                      details={"contacts": [{"address": "sales@partsupplier-trade.co.uk", "status": q.VERIFIED,
+                                             "source": "https://partsupplier-trade.co.uk/contact"}]})
     # 2. authorized, non-binding inquiry through the permitted path
     await standing_grant(auth)
     p = await so.plan(ost, "sup-e2e1", rec, now=NOW)
@@ -778,7 +778,7 @@ async def test_end_to_end_supplier_lifecycle(monkeypatch, outreach_on):
     assert sent["sent"] and len(gm.sent) == 1
     o = ost.rows[0]
     # 3-4. a simulated supplier reply lands (in Spam) in the inquiry's thread -> routed to NIR with references
-    e = _email_row(store, thread=o["gmail_thread_id"], sender="sales@parts.example.com", folder="spam")
+    e = _email_row(store, thread=o["gmail_thread_id"], sender="sales@partsupplier-trade.co.uk", folder="spam")
     assert (await sr.route_supplier_replies(store, ost, todos))["to_nir"] == 1
     assert todos.todos[0]["agent"] == "NIR" and o["state"] == "REPLY_RECEIVED"
     # 5. NIR records the supplier's claims (still UNVERIFIED), then verifies each with evidence
@@ -788,7 +788,7 @@ async def test_end_to_end_supplier_lifecycle(monkeypatch, outreach_on):
     assert q.classify(rec, NOW)["classification"] == q.NEEDS_INVESTIGATION         # claims are not evidence
     for k in ("api", "israel_shipping", "availability", "catalog", "business"):
         q.set_requirement(rec, k, q.VERIFIED, evidence_kind="api_test" if k == "api" else "official_documentation",
-                          source=f"https://parts.example.com/docs/{k}", note=f"{k} checked", now=NOW,
+                          source=f"https://partsupplier-trade.co.uk/docs/{k}", note=f"{k} checked", now=NOW,
                           details={"data_timestamp": NOW.isoformat()} if k == "availability" else {})
     assert q.classify(rec, NOW)["classification"] == q.INTEGRATION_READY
     await so.record_review(ost, o["id"], "QUALIFIED")
