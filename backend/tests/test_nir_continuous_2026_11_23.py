@@ -53,3 +53,13 @@ def test_ebay_relisting_has_no_env_switch_and_guard_is_code_level():
 def test_software_vendor_names_are_skipped():
     assert ncd._NON_SUPPLIER_NAME.search("inventory source | #1 dropshipping automation & supplier integration software")
     assert not ncd._NON_SUPPLIER_NAME.search("Mann Filter")
+
+
+def test_robot_or_older_mail_is_not_a_reply():
+    from datetime import timedelta
+    from email_agent.supplier_routing import _plausible_reply
+    sent = datetime(2026, 11, 19, 23, 45, tzinfo=timezone.utc)
+    o = {"sent_at": sent}
+    assert not _plausible_reply({"sender_email": "donotreply@sngbarratt.com", "received_at": sent + timedelta(days=1)}, o)
+    assert not _plausible_reply({"sender_email": "simon@sngbarratt.com", "received_at": sent - timedelta(days=60)}, o)
+    assert _plausible_reply({"sender_email": "simon@sngbarratt.com", "received_at": sent + timedelta(hours=3)}, o)

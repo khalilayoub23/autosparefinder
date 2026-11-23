@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from datetime import timezone
 from typing import Any, Dict
 
 import supplier_outreach as _out
@@ -119,6 +121,26 @@ async def _to_known_supplier(store, todos, row, sup, res) -> Dict[str, Any]:
     return route
 
 
+_AUTOMATED_LOCAL = re.compile(r"^(do[-_.]?not[-_.]?reply|no[-_.]?reply|mailer-daemon|postmaster|notifications?|bounce)", re.I)
+
+
+def _plausible_reply(row: Dict[str, Any], o: Dict[str, Any]) -> bool:
+    """A sender-domain match is only a REPLY if the message arrived AFTER our inquiry was sent and does not come from an
+    automated no-reply mailbox (2026-11-23: SNG's 21 Sep "Welcome" robot mail closed our 19 Nov pickup inquiry)."""
+    local = (row.get("sender_email") or "").split("@", 1)[0]
+    if _AUTOMATED_LOCAL.match(local):
+        return False
+    sent, got = o.get("sent_at"), row.get("received_at")
+    if sent is not None and got is not None:
+        if sent.tzinfo is None:
+            sent = sent.replace(tzinfo=timezone.utc)
+        if got.tzinfo is None:
+            got = got.replace(tzinfo=timezone.utc)
+        if got < sent:
+            return False
+    return True
+
+
 async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
                                  procurement_store=None, intake=None) -> Dict[str, int]:
     out = {"to_nir": 0, "to_boaz": 0, "exceptions": 0, "other": 0}
@@ -157,6 +179,7 @@ async def route_supplier_replies(store, outreach_store, todos, limit: int = 50,
         if dom in FREE_MAIL:                       # a free-mail sender matches only an inquiry sent to that exact address
             awaiting = [o for o in await outreach_store.awaiting_by_recipient_domain(dom)
                         if _same_party(row.get("sender_email") or "", o["recipient"])]
+        awaiting = [o for o in awaiting if _plausible_reply(row, o)]
         if len(awaiting) == 1:
             await _to_nir(store, outreach_store, todos, row, awaiting[0], "sender_domain")
             out["to_nir"] += 1
