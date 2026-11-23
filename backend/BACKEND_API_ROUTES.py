@@ -3131,6 +3131,7 @@ async def startup():
     from email_agent.loop import email_agent_loop as _email_agent_loop
     _supervised_task("email_agent_loop",            _email_agent_loop(notify=notify_owner))
     _supervised_task("supplier_sourcing_loop",      _supplier_sourcing_loop(), restart=_supplier_sourcing_loop)
+    _supervised_task("nir_contact_enrichment_loop", _nir_contact_enrichment_loop(), restart=_nir_contact_enrichment_loop)
     _supervised_task("boaz_task_loop",              _boaz_task_loop())
     _supervised_task("social_feedback_loop",        _social_feedback_loop(), restart=_social_feedback_loop)
     _supervised_task("group_scan_loop",             _group_scan_loop())
@@ -4723,6 +4724,26 @@ async def _supplier_sourcing_loop():
         except Exception as exc:
             logger.error("[supplier_sourcing] cycle failed: %s", exc)
         await asyncio.sleep(interval)
+
+
+async def _nir_contact_enrichment_loop():
+    """NIR continuous contact enrichment (2026-11-23): a few candidates per cycle, own-website plain HTTP only, checkpointed
+    in suppliers.credentials.contact_search so it resumes after restarts. Sends nothing; the outreach loop does that."""
+    from services import nir_contact_discovery as _ncd
+    await asyncio.sleep(180)
+    while True:
+        if os.getenv("NIR_CONTACT_ENRICHMENT_ENABLED", "1") != "1":
+            await asyncio.sleep(3600)
+            continue
+        try:
+            summary = await _ncd.run_contact_cycle(batch=int(os.getenv("NIR_CONTACT_BATCH", "3")))
+            if summary["checked"]:
+                logger.info("[nir_contact_enrichment] %s", summary)
+            idle = summary["checked"] == 0
+        except Exception as exc:
+            logger.error("[nir_contact_enrichment] cycle failed: %s", exc)
+            idle = True
+        await asyncio.sleep(3600 if idle else int(os.getenv("NIR_CONTACT_INTERVAL_S", "600")))
 
 
 async def _noa_marketing_loop():

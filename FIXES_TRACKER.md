@@ -10601,3 +10601,9 @@ Consultant final verification (2026-11-17, read-only, `candidates/core-identity-
 - NIR: +2 VERIFIED contacts (megazip, mightyautoparts) sent via the existing outreach loop 20:36 UTC; ~38 candidates publish no email. `nir_record_contacts.py` note no longer hard-codes a date/method.
 - Eurosender: supplier 974c5292 is a sandbox fixture (never activate); GB quote €64.89 OK; Car-Parts.ie/eBay unverified → allowlist empty.
 - ASAP: no live session available; guards verified; new `test_asap_cost_guard_2026_11_23.py`.
+
+## 2026-11-23 (night) — NIR continuous contact enrichment, SNG registered office, ASAP account inspected
+- **NIR:** no send-time window exists on the supplier e-mail path (sends already at 01/07/21/22/23 IL); regression tests added. New `services/nir_contact_discovery.py` + supervised `nir_contact_enrichment_loop` (own-site plain HTTP, generic mailboxes only, checkpointed in `credentials.contact_search`, software vendors skipped). Backlog pass: 38 checked → 1 found (a dropship SaaS; reverted, 0 outreach rows) / 27 no email published / 10 unreachable. Guarded restart, SAFE.
+- **Eurosender:** Heritage Building recorded as SNG Barratt `registered_office` (not pickup; `shipping_info.address` untouched; allowlist empty). Second owner address not present in any available history — not invented.
+- **ASAP:** live signed-in inspection; per ASAP's own help, cost tier appears only for direct dealers (Tier column); our account has none → all 5 brands remain MSRP/MAP only; AGM jobber unverified → quarantine stays.
+- Files: services/nir_contact_discovery.py, BACKEND_API_ROUTES.py (loop), maintenance/record_sng_registered_office.py, tests/test_nir_continuous_2026_11_23.py, closure report.
