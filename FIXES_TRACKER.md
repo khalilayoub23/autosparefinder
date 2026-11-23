@@ -10598,6 +10598,6 @@ Consultant final verification (2026-11-17, read-only, `candidates/core-identity-
 
 ## 2026-11-23 (evening) — completion pass
 - Digest: full path dry-run (stubs, nothing sent) + Redis round trip + SQL cross-check PASS; real-run check of key `autospare:report_text:daily_status:2026-11-24` pending.
-- NIR: +2 VERIFIED contacts (megazip, mightyautoparts) sent via the existing outreach loop; ~38 candidates publish no email. `nir_record_contacts.py` note no longer hard-codes a date/method.
+- NIR: +2 VERIFIED contacts (megazip, mightyautoparts) sent via the existing outreach loop 20:36 UTC; ~38 candidates publish no email. `nir_record_contacts.py` note no longer hard-codes a date/method.
 - Eurosender: supplier 974c5292 is a sandbox fixture (never activate); GB quote €64.89 OK; Car-Parts.ie/eBay unverified → allowlist empty.
 - ASAP: no live session available; guards verified; new `test_asap_cost_guard_2026_11_23.py`.
