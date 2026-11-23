@@ -54,7 +54,7 @@ class HistSource(FakeSource):
 def test_history_queries_cover_every_folder_and_chunk_domains():
     qs = agent_mod.history_queries([f"s{i}.com" for i in range(40)], "400d")
     assert len(qs) == 3 and all(q.startswith("in:anywhere newer_than:400d") for q in qs)
-    assert all("-category:promotions" in q and "-from:me" in q for q in qs)
+    assert all("-category:social" in q and "-from:me" in q and "promotions" not in q for q in qs)
     assert agent_mod.history_queries(["", "nodot"], "30d") == []
 
 

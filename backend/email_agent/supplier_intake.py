@@ -43,15 +43,48 @@ def registered_domain(addr_or_host: str) -> str:
     return h
 
 
+_EMAIL_IN_TEXT = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
+
+def mail_domains(website: str, credentials: Any = None) -> List[str]:
+    """Every domain a supplier writes from: its website AND the business domains of the contacts we hold for it
+    (qualification contacts, `contacts`, `shipping_info`). 2026-11-23 root cause of the "missing ALVADI messages": the
+    supplier's website is alvadi.co.il but its mail comes from alvadi.ee, so neither the history query nor the sender
+    match ever looked at that domain. Free-mail domains identify nobody and are never returned."""
+    from email_agent.senders import FREE_MAIL
+    out: List[str] = []
+    w = registered_domain(website or "")
+    if w and "." in w:
+        out.append(w)
+    cred = credentials
+    if isinstance(cred, str):
+        try:
+            cred = json.loads(cred)
+        except Exception:
+            cred = None
+    if isinstance(cred, dict):
+        blob = json.dumps({k: cred.get(k) for k in ("qualification", "contacts", "shipping_info", "mail_domains")
+                           if k in cred}, default=str)
+        for d in _EMAIL_IN_TEXT.findall(blob):
+            d = registered_domain(d)
+            if d and d not in FREE_MAIL and d not in out and "." in d:
+                out.append(d)
+        for d in (cred.get("mail_domains") or []):
+            d = registered_domain(str(d))
+            if d and d not in FREE_MAIL and d not in out and "." in d:
+                out.append(d)
+    return out
+
+
 def match_supplier(sender_domain: str, suppliers: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """The one supplier whose website domain equals (or is a parent/sub-domain of) the sender domain."""
+    """The one supplier whose website or known mail domain equals (or is a parent/sub-domain of) the sender domain."""
     d = registered_domain(sender_domain)
     if not d:
         return None
     hits = []
     for s in suppliers:
-        sd = registered_domain(s.get("website") or "")
-        if sd and (sd == d or d.endswith("." + sd) or sd.endswith("." + d)):
+        doms = list(s.get("mail_domains") or []) or [registered_domain(s.get("website") or "")]
+        if any(sd and (sd == d or d.endswith("." + sd) or sd.endswith("." + d)) for sd in doms):
             hits.append(s)
     return hits[0] if len(hits) == 1 else None
 
@@ -192,8 +225,14 @@ class PgIntake:
         conn = await self._conn()
         try:
             rows = await conn.fetch("SELECT id::text AS id, name, website, is_active, "
-                                    "credentials->>'source' AS source FROM suppliers WHERE website IS NOT NULL")
-            return [dict(r) for r in rows]
+                                    "credentials->>'source' AS source, credentials FROM suppliers "
+                                    "WHERE website IS NOT NULL")
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["mail_domains"] = mail_domains(d.get("website"), d.pop("credentials", None))
+                out.append(d)
+            return out
         finally:
             await conn.close()
 

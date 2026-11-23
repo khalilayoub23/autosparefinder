@@ -4730,6 +4730,7 @@ async def _nir_contact_enrichment_loop():
     """NIR continuous contact enrichment (2026-11-23): a few candidates per cycle, own-website plain HTTP only, checkpointed
     in suppliers.credentials.contact_search so it resumes after restarts. Sends nothing; the outreach loop does that."""
     from services import nir_contact_discovery as _ncd
+    _agent_budget = None
     await asyncio.sleep(180)
     while True:
         if os.getenv("NIR_CONTACT_ENRICHMENT_ENABLED", "1") != "1":
@@ -4743,7 +4744,21 @@ async def _nir_contact_enrichment_loop():
         except Exception as exc:
             logger.error("[nir_contact_enrichment] cycle failed: %s", exc)
             idle = True
-        await asyncio.sleep(3600 if idle else int(os.getenv("NIR_CONTACT_INTERVAL_S", "600")))
+        # NIR agent (services/nir_agent.py): an LLM-driven step loop over NIR's open tasks. Same loop, no second scheduler.
+        # Default OFF; bounded by batch, minimum interval and a daily LLM-call ceiling. No time-of-day window: supplier
+        # e-mail work (replies, follow-ups) is not a customer/owner WhatsApp message and must run at any hour.
+        if os.getenv("NIR_AGENT_ENABLED", "0") == "1":
+            try:
+                from services import nir_agent as _na
+                _agent_budget = _agent_budget or _na.CallBudget()
+                ares = await _na.run_agent_cycle(_na.build_prod_deps(allow_send=True, budget=_agent_budget),
+                                                 batch=int(os.getenv("NIR_AGENT_BATCH", "1")))
+                logger.info("[nir_agent] %s", {k: v for k, v in ares.items() if k != "tasks"} | {"tasks": [(t["task_id"][:8], t["status"]) for t in ares["tasks"]]})
+                _na.write_status(ares)
+                idle = idle and not ares["tasks"]
+            except Exception as exc:
+                logger.error("[nir_agent] cycle failed: %s", exc)
+        await asyncio.sleep(3600 if idle else max(int(os.getenv("NIR_CONTACT_INTERVAL_S", "600")), int(os.getenv("NIR_AGENT_MIN_INTERVAL_S", "300"))))
 
 
 async def _noa_marketing_loop():

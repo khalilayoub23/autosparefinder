@@ -136,3 +136,12 @@ columns on `email_agent_messages`, historic rows marked routed). On first passes
 **Rollback:** with the NEW code still in place, `docker exec autospare_backend alembic -c alembic_pii.ini downgrade
 0041_email_agent_owner_flow`, then restore the files (`git checkout -- <modified>` + remove the new files listed in the
 tracker entry) and recreate the backend.
+
+
+## NIR agent (2026-11-23)
+`services/nir_agent.py` is the executor for NIR's tasks (replies, HUMAN-gate research, contact routes): an LLM picks one allow-listed
+tool per step, code enforces the safety rules (quote-verified evidence only, template-bound outreach, no order/payment/application
+tool, HUMAN gates end `awaiting_owner`). State: `agent_todos.artifacts.nir_agent`. Operate: `python3 /app/maintenance/nir_agent_run.py
+--status | --task <id> | --cycle`. Loop: inside `_nir_contact_enrichment_loop`, `NIR_AGENT_ENABLED=1` (default 0), `NIR_AGENT_BATCH`,
+`NIR_AGENT_MIN_INTERVAL_S`, `NIR_AGENT_DAILY_MAX_CALLS`. Status file `/app/state/nir_agent_status.json`. Supplier mail domains =
+website + stored contact domains (`supplier_intake.mail_domains`).

@@ -305,6 +305,16 @@ services:
       SUPPLIER_ROUTING_ENABLED: ${SUPPLIER_ROUTING_ENABLED:-0}
       BOAZ_TASKS_ENABLED: ${BOAZ_TASKS_ENABLED:-0}
       NIR_OUTREACH_ENABLED: ${NIR_OUTREACH_ENABLED:-0}
+      # NIR agent (services/nir_agent.py): LLM step loop inside the NIR contact loop. OFF by default; every background
+      # LLM use needs a toggle, small batch, minimum interval and a daily ceiling (CLAUDE.md Background Jobs).
+      NIR_AGENT_ENABLED: ${NIR_AGENT_ENABLED:-0}
+      NIR_AGENT_BATCH: ${NIR_AGENT_BATCH:-1}
+      NIR_AGENT_MIN_INTERVAL_S: ${NIR_AGENT_MIN_INTERVAL_S:-300}
+      NIR_AGENT_DAILY_MAX_CALLS: ${NIR_AGENT_DAILY_MAX_CALLS:-150}
+      # Supplier history pass (already in effect with the code defaults; passed through so config and compose agree)
+      EMAIL_AGENT_SCAN_HISTORY: ${EMAIL_AGENT_SCAN_HISTORY:-1}
+      EMAIL_AGENT_HISTORY_WINDOW: ${EMAIL_AGENT_HISTORY_WINDOW:-}
+      EMAIL_AGENT_HISTORY_MAX_PER_CYCLE: ${EMAIL_AGENT_HISTORY_MAX_PER_CYCLE:-}
       GMAIL_OAUTH_CLIENT_ID: ${GMAIL_OAUTH_CLIENT_ID:-}
       GMAIL_OAUTH_CLIENT_SECRET: ${GMAIL_OAUTH_CLIENT_SECRET:-}
       GMAIL_OAUTH_REFRESH_TOKEN: ${GMAIL_OAUTH_REFRESH_TOKEN:-}

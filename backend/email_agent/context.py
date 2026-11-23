@@ -276,21 +276,21 @@ class DbContextSource:
         return await self._rows("pii", sql, {"t": list(tokens)})
 
     async def find_suppliers_by_domain(self, domain: str) -> List[dict]:
+        from email_agent.senders import FREE_MAIL
+        # a stored contact address (alvadi.ee) identifies a supplier whose website differs; a FREE-MAIL domain never does
+        where = "website ILIKE :p" if (domain or "").lower() in FREE_MAIL else "(website ILIKE :p OR credentials::text ILIKE :p)"
         return await self._rows("cat", "SELECT id::text AS id, name, website, is_active FROM suppliers "
-                                       "WHERE website ILIKE :p LIMIT 20", {"p": f"%{domain}%"})
+                                       f"WHERE {where} LIMIT 20", {"p": f"%{domain}%"})
 
     async def known_supplier_domains(self) -> List[str]:
-        """Registered domains of every supplier website (catalog DB) - the set whose mail the history pass reads.
-        Parsed in Python: a regex with `:` inside text() is read by SQLAlchemy as a bind parameter."""
-        from urllib.parse import urlparse
-        rows = await self._rows("cat", "SELECT DISTINCT website FROM suppliers WHERE website IS NOT NULL AND website <> ''", {})
+        """Registered domains of every supplier website AND of its stored contact addresses (catalog DB) - the set whose
+        mail the history pass reads (alvadi.co.il site, alvadi.ee mail). Parsed in Python: a regex with `:` inside
+        text() is read by SQLAlchemy as a bind parameter."""
+        from email_agent.supplier_intake import mail_domains
+        rows = await self._rows("cat", "SELECT website, credentials FROM suppliers WHERE website IS NOT NULL AND website <> ''", {})
         out = set()
         for r in rows:
-            w = str(r.get("website") or "").strip()
-            host = (urlparse(w if "//" in w else "//" + w).hostname or "").lower()
-            host = host[4:] if host.startswith("www.") else host
-            if "." in host:
-                out.add(host)
+            out.update(mail_domains(str(r.get("website") or ""), r.get("credentials")))
         return sorted(out)
 
     async def get_user(self, user_id: str) -> Optional[dict]:

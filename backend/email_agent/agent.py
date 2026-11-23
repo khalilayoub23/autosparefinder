@@ -335,7 +335,7 @@ def history_queries(domains, window: str) -> list:
     out = []
     for i in range(0, len(doms), HISTORY_DOMAINS_PER_QUERY):
         chunk = " OR ".join(f"from:{d}" for d in doms[i:i + HISTORY_DOMAINS_PER_QUERY])
-        out.append(f"in:anywhere newer_than:{window} -from:me -category:promotions -category:social ({chunk})")
+        out.append(f"in:anywhere newer_than:{window} -from:me -category:social ({chunk})")
     return out
 
 
