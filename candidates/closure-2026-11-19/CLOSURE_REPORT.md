@@ -42,3 +42,41 @@ Untracked `archive/data/NOA_test_15s.mp4` untouched. Times are Israel time unles
 - PostgreSQL = MeiliSearch: 4,325,231 = 4,325,231.
 - Tests: 457 passed / 37 skipped across the touched suites (+ vitest 38). Baseline: `test_supplier_lifecycle` had 7 failures caused by my own stricter `valid_email` vs `parts.example.com` fixtures (fixed); no other failure seen. Full suite not run in production (OOM rule).
 - Nothing pushed.
+
+---
+# Completion pass — 2026-11-23 evening (Israel time)
+
+## WS1 Digest — PASS (code/query/Redis); real-run observation tracked
+- Full `_status_update_loop` body run in a container harness with `_wa_send_update`/`_store_report_text`/`_mark_digest_sent` replaced by capture stubs (nothing sent, nothing written): complete Hebrew report produced (jobs, night runs, catalogue 4,325,231, price section, harvest 6,695/6,695). Harness artefact only: "0 background tasks" (no supervised tasks in that process).
+- Price section vs PostgreSQL: ebay_sync 1,047 (price_history 24 h) = last sync parts_updated 1,047; aliexpress_sync 0 (last write 20/11 02:01 IL); `base_price>0` active parts 2,119,463 = report; offers ~4,191,281 (planner estimate, labelled); last write times are UTC→Israel (00:11 UTC → 02:11). No UTC regression, no conflation of catalogue size with price changes.
+- Redis round trip (throwaway key `report_text:dryrun_test`, TTL 300, deleted): stored JSON == read-back, unicode intact. `autospare:report_text:daily_status:2026-11-23` does not exist (the writer was deployed after 09:00); expected first real key `...:2026-11-24`. Scheduling: `_digest_due(09h)` + Redis `digest_sent` marker + `_store_report_text` all in the same loop path.
+- Remaining observation (not blocked): read `autospare:report_text:daily_status:2026-11-24` after 09:00 IL and compare with `price_history`.
+
+## WS2 NIR — PASS for everything discoverable; 38 candidates have no published email
+- Before: 76 candidates: 24 awaiting reply, 5 replied, 47 no verified contact. 30 distinct recipients sent, 0 duplicate recipients (8 sent today 21:47–21:57 IL to the contacts recorded earlier).
+- Re-search of the 40 non-rejected no-contact candidates (plain HTTP first, FlareSolverr fallback only on 403/timeouts, home + contact/privacy/terms/about/wholesale/dealer pages, same-domain addresses only). New VERIFIED business contacts recorded: **parts@megazip.net** (megazip.net/info/terms), **info@mightyautoparts.com** (privacy-policy page). Not used: reisen@machs.com (named person), privacy@cari.com / legal@autods.com (privacy/legal channels), doba/inventorysource (dropship-automation SaaS, not parts suppliers), alvadi/asapnetwork/ak24parts/autopartsway (unreachable).
+- The two new contacts are recorded (status now `verified_contact_not_yet_contacted: 2`); the existing authorized outreach loop (10-min cycle, fixed template, 3-follow-up max) skipped them at 22:30 IL — consistent with the 09:00–21:00 IL send window — so they will go out after 09:00 IL on 24/11. NOT YET SENT. Replies: 5 REPLY_RECEIVED rows already routed (BOAZ/NIR todos) in the previous pass; no new replies since.
+- Code: `nir_record_contacts.py` no longer writes a hard-coded "read in a browser 2026-11-19" note.
+- Counts after: 24 awaiting, 5 replied, 2 verified-not-yet-contacted, 45 no verified contact (incl. 7 rejected + non-suppliers). Remaining: ~38 candidates (big retailers AutoZone/NAPA/CARiD/RockAuto/CarParts.com/1A Auto, manufacturers Aisin/Mann/Exedy, etc.) publish only forms/phones; no form-submission workflow exists in the system (not built: forms need CAPTCHA/personal data entry).
+
+## WS3 Eurosender — Heritage verified; Car-Parts.ie and eBay BLOCKED (allowlist empty)
+- **Correction to the brief:** supplier `974c5292…` is "Eurosender Sandbox E2E Test Supplier (UK)", `is_active=FALSE`, credentials `purpose: sandbox_only_never_activate`, test contact on example.com — a sandbox fixture, not a real supplier. Order `853604-26` was a cancelled sandbox order (FIXES_TRACKER 2026-09-25). The address stays only on that row (only row matching Bridgnorth/WV15). It is NOT allowlisted.
+- Non-booking quote today (POST /v1/quotes, GB WV15 6AP → IL, 1.5 kg parcel): `regular_plus` door-to-door, €64.89, ETA 7–9 days, pickup from 2026-11-24 → the UK address parses and is serviceable. Note: the quote ran against the PRODUCTION endpoint (`EUROSENDER_SANDBOX=0`, ENABLED=1, only a production key is configured); quotes are stateless, no order/charge.
+- Car-Parts.ie (`88f6ce24…`): `shipping_info` NULL; 0 procurement orders for it in the PII DB, so there is NO historical shipment evidence of a German origin; only Trustpilot hearsay of an Autodoc link. Site pages unreachable (Cloudflare; FlareSolverr could not mint clearance). Operator/dispatch location UNVERIFIED → not allowlisted.
+- eBay Motors: seller-level `itemLocation` is read by the integration (`ebay_supplier.py`, `ebay_price_sync.py`) but only as a country/postcode string; eBay exposes no seller street address, so no Eurosender pickup address can be built; no universal address used.
+- `EUROSENDER_SUPPLIER_ALLOWLIST` = empty (verified in the running container).
+
+## WS4 ASAP — BLOCKED (acquisition tier not exposed); safety verified
+- This session has no browser/authenticated ASAP session and no ASAP credentials in `.env`; account state therefore cannot be re-inspected (not claimed). Stored evidence unchanged: `price_level=0`; BDS/Fox/Adams/Banks sheets = list/MAP only; AGM adds `jobber_pricing` (~85% of list) with no proof it is our purchase price → unpriced.
+- Live verification: ASAP available offers 0; ASAP-sourced parts with base_price>0: 0; quarantined 4,236 untouched. New test `tests/test_asap_cost_guard_2026_11_23.py` (3 pass).
+- Dependency: ASAP/brand reps must confirm a dealer cost tier (owner-held account); no outbound mail to ASAP was sent by me (not within the fixed NIR template).
+
+## WS5 Regression — PASS
+- 83 passed / 19 skipped (targeted suites: asap, digest, ebay identity/refresh, estimate, heal query, price report, reply matching, nir contacts) + 3 new.
+- Live: PG active 4,325,231 = Meili 4,325,231; 00968f4e offer `is_available=false`; `supplier_offer_checks`: no_israel_shipping 743, ambiguous_identity 161 (all non-purchasable per previous proof); `EBAY_REFRESH_ALLOW_RELISTING` is not read by any code (relisting impossible by construction). Heal-query plan was verified earlier today (81 ms, index-only scan); not re-run.
+
+## WS6 Ops
+No restart this pass (none needed), alembic head 0064 unchanged, backend healthy; untracked `archive/data/NOA_test_15s.mp4` untouched; nothing pushed. Note: a first discovery run drove FlareSolverr to ~580% CPU; it was killed and rerun with plain-HTTP-first.
+
+## FlareSolverr note (owner observation 2026-11-23)
+Logs (6 h): 65 Cloudflare challenges detected, 4 solved, ~60 timeouts (30–45 s), 22 ERR_CONNECTION_RESET, 85 HTTP 500 - challenge-solver failures, not evidence of an attack; my first discovery run added load (584% CPU) and was killed. Idle afterwards (0 Chrome procs). Not changed.

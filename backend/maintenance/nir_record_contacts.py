@@ -50,7 +50,7 @@ async def main(path: str, apply: bool) -> None:
         now = datetime.now(timezone.utc)
         rec = Q.ensure_schema(cr.get("qualification") or Q.new_record(row["id"], now), now)
         Q.set_requirement(rec, "contacts", Q.VERIFIED, evidence_kind="official_policy_page", source=item["source"],
-                          note="contact channel(s) published on the official contact page (read in a browser 2026-11-19)",
+                          note=item.get("note") or "contact channel(s) published on the official site page named in source (observed %s)" % now.date(),
                           details={"contacts": [{"address": x, "status": Q.VERIFIED, "source": item["source"]} for x in ok]}, now=now)
         cr["qualification"] = rec
         await c.execute("UPDATE suppliers SET credentials=$2::jsonb, updated_at=NOW() WHERE id=$1::uuid", row["id"], json.dumps(cr))

@@ -10595,3 +10595,9 @@ Consultant final verification (2026-11-17, read-only, `candidates/core-identity-
 - eBay: 563 verdicts reconciled 530 + 33; six alternates re-compared, 00968f4e withdrawn.
 - Digest: Israel-time + stored text for readback; content verification pending the 2026-11-24 09:00 digest. Heal query 81 ms, index used.
 - Open: Eurosender Car-Parts.ie / eBay Motors (BLOCKED), ASAP dealer tier, ~46 candidates without contact.
+
+## 2026-11-23 (evening) — completion pass
+- Digest: full path dry-run (stubs, nothing sent) + Redis round trip + SQL cross-check PASS; real-run check of key `autospare:report_text:daily_status:2026-11-24` pending.
+- NIR: +2 VERIFIED contacts (megazip, mightyautoparts) sent via the existing outreach loop; ~38 candidates publish no email. `nir_record_contacts.py` note no longer hard-codes a date/method.
+- Eurosender: supplier 974c5292 is a sandbox fixture (never activate); GB quote €64.89 OK; Car-Parts.ie/eBay unverified → allowlist empty.
+- ASAP: no live session available; guards verified; new `test_asap_cost_guard_2026_11_23.py`.
