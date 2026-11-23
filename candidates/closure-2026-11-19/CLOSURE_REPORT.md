@@ -1,69 +1,44 @@
-# Closure report — session of 2026-11-20 (partial; status per item)
+# Closure report — 2026-11-23 (supersedes the 2026-11-20 partial report)
 
-Legend: PASS / BLOCKED / FAILED / NOT VERIFIED / NOT DONE. Commits are LOCAL only; nothing pushed.
+Legend: PASS / BLOCKED / FAILED / NOT VERIFIED. Commits are LOCAL ONLY (nothing pushed). Final local commit: `2cd54fb` (on top of `060a746`, `e9406ac`, `b9e045d`).
+Untracked `archive/data/NOA_test_15s.mp4` untouched. Times are Israel time unless noted.
 
-## 1/2. Gmail supplier-email audit — ROOT CAUSE FOUND, FIX WRITTEN + TESTED, NOT YET DEPLOYED (APPLIED to disk only)
-- Mailbox searched read-only through the agent's own GmailClient, `includeSpamTrash`, paged, all folders.
-- Root cause: the agent scans only `in:inbox newer_than:14d` (+ spam 14d) and was first armed 2026-10-10. SNG's reply
-  (2026-09-14) pre-dates arming and is outside the window, so it was never ingested/classified/routed. Also the original
-  inquiry (2026-09-02) was sent manually, so no `supplier_outreach` row existed to route a reply to.
-- Fix (code, `backend/email_agent/`): `_history_pass` (known supplier domains from `suppliers.website`, `in:anywhere`,
-  400d, paginated up to 12 pages/query, rests 6h when nothing new, local drafts only), `supplier_intake.py`
-  (domain match to exactly one supplier, deterministic fact extraction, persist to `suppliers.credentials.contacts`,
-  `suppliers.shipping_info.supplier_stated`, qualification CLAIM), routing of a reply from a known supplier to BOAZ
-  (NIR for nir_sourcing candidates). Off switch `EMAIL_AGENT_SCAN_HISTORY=0`.
-- Tests: `tests/test_supplier_history_intake.py` (18) + existing email/supplier suites: 364 passed, 1 skipped.
-- DEPLOY: DONE 2026-11-20 ~06:25-06:28 IL via guarded_restart (2 recreates: 1st exposed a bind-parameter bug ':https' in the domain query, fixed + regression test, 2nd verified). Live cycle: history queries=9 listed=22 processed=13 failed=0, healthy, OOM false, restarts 0, 0 tracebacks. Recovered older supplier mail: asapnetwork.org x8 (6 supplier->BOAZ, 2 newsletters), lkqcorp.com x4 (BOAZ), sngbarratt.com x2; no Gmail drafts created. (Content of the ASAP/LKQ mails NOT yet reviewed.) Original note: DEPLOY: NOT DONE. `sync_prices` was mid-run (started 01:14 IL); a guarded restart (`pre_restart.sh` then
-  `guarded_restart.sh`) must follow its completion. Until then the running uvicorn still uses the old scan.
-- Evidence of the original miss: PII `email_agent_messages` had no row for 1a0a07c56c725637.
+## 1. Customer-facing `is_estimate` — PASS
+- Inspected: API (`routes/parts.py` exposes `is_estimate` + `customer_estimate_ils`, never as an offer, `orderable:false`; cart add requires an available offer, server price), frontend `Parts.jsx` (3 render paths: `PartCard`, `TypeSection` = the live search card, `AllOffersModal`), `Cart.jsx`.
+- Defects found/fixed: client `fallback-<id>` supplier ids let an estimate reach the cart; `TypeSection` rendered null-price offers as an empty "₪" row and no estimate label (found by driving the deployed UI, not by unit tests). New `frontend/src/utils/offerPrice.js` (`isPurchasableOffer`, `partEstimate`) is the single rule: real supplier_part_id + not estimate + positive customer price.
+- Tests: vitest 38 passed (run in a throwaway node:20 container; 18 new), backend contract tests (6, incl. both card paths).
+- Production proof (Playwright against https://autosparefinder.co.il/parts?search=…): verified offer → ₪43.12 shown with cart button; estimate (RE873703584R) → "מחיר משוער ~₪2844.63 … אי אפשר להזמין", no cart; invalid-price offer (000000000013971100, offer with NULL customer price) → "אין הצעות ספק זמינות", no row; no-price part → "מחיר על פניה"; unavailable-only part (9ac07d4f) not listed.
+- Deployed: frontend image rebuilt/recreated twice via guarded_restart; backend recreated. MSRP cleanup NOT reversed.
 
-## 3. SNG Barratt — PASS (data) / BLOCKED (pickup address awaits supplier)
-- Thread 1a063430bf19b1f1; reply 1a0a07c56c725637, Simon.Cottrill@sngbarratt.com, 2026-09-14 15:14 UTC, DKIM+DMARC pass.
-- Ingested through the real pipeline (class `supplier`, route BOAZ, task f3f0cc86). Stored: contact name/role/phone,
-  carrier DHL, transit 3-5 days, rates `variable_live_quote_required` (no price invented), claim on `israel_shipping`
-  (UNVERIFIED). Backup before: `backups/suppliers_sng_before.txt`.
-- Pickup-address request sent 2026-11-20 via the authorized outreach path (outreach 4ef942de, Gmail msg 1a1f633a1772d4b1,
-  new fixed template purpose `pickup_address`). Reply NOT received; allowlist NOT changed.
+## 2. ASAP changes in MeiliSearch — PASS
+- PostgreSQL quarantined parts: 2,876 at start → **4,236** after item 6 (see there). Meili documents found 4,236/4,236, reconciled (importer_price_ils=0, base_price=0, has_il_price=false, equal to PG) 4,236, mismatches 0, missing 0; ASAP available offers on those parts = 0; random sample of 300 legit parts in sync 300/300; active catalog 4,325,231 = Meili 4,325,231. Indexed fields are price fields only (no `is_estimate`/availability field exists in the index).
+- Search (public API): BDS1613FS / "BDS Suspension lift" / "Fox 360" → parts still found, `cheapest_price=None`, `is_estimate=false`, 0 offers. Repair path: the existing incremental `meili_sync` (10,254 docs), no rebuild.
 
-## 4. ALVADI — thread verified; supplier data UNVERIFIED
-- The two "ALVADI" items are NEWSLETTERS (news@alvadimail.com) that the owner forwarded from Hotmail (10 forwards, last
-  1a1f274c8202e864). Not a supplier reply; the footer is not a pickup address. Agent classified it automated_notification.
-- Recorded as candidate `ALVADI OÜ` (id 5380cc9c…, is_active FALSE, pending_review) with the footer as an UNVERIFIED claim.
-  Official pages returned HTTP 403 to automated fetch -> identity/contact/pickup NOT VERIFIED. No email sent.
+## 3. eBay — PASS (with one offer withdrawn)
+- A. 563 `no_israel_shipping`: the recheck ALREADY ran 2026-11-20 09:15 (log `/app/state/logs/ebay_recheck563_20261120.log`, 613 calls incl. 50 naturally due; backups `recheck563_before/after`). Exact result for the 563 unique offers: **530 no_israel_shipping** (shippingOptions present, Israel absent), **33 ambiguous** (only world regions / country lists without a decision), 0 restored, all 563 non-purchasable. Independent live re-check today (eBay quota 4,990): all 33 ambiguous re-fetched → none ships to Israel (2 clear no-ship, 31 region-unclear); 25 random of the 530 re-fetched → 25/25 still no Israel shipping. Nothing changed in these.
+- B. Six alternates re-compared live (original vs current item/seller/title/MPN/condition/price/shipping): 0039b75c, 0054bea5, 0083d3c2, 009126e7 = same OEM proven by the seller's MPN item specific, New, ILS, ships to IL → kept (different seller than the ended/non-shipping original; original ended or excluded Israel). 00d7bb50 already unavailable (title = a different part). **00968f4e made non-purchasable** (original was an NRF aftermarket listing; replacement is a different seller with no MPN specific, brand unproven); backup `/app/state/ebay_repair_backup/offer_00968f4e_before_*.json`; verdict `ambiguous_identity`, price kept as evidence.
+- Guard active in production: `check_refresh` in `services/ebay_price_sync.py`; verdict rows written nightly (1,300/night on 21 and 22 Nov). `EBAY_REFRESH_ALLOW_RELISTING` is not read by any code (relisting impossible).
 
-## 5. NIR placeholder incident — PARTIAL
-- Message: outreach 8bd5318e to `info@yourwebsite.com`, supplier b32a938b (ukarauto), sent 2026-11-18 21:48:38 UTC,
-  Gmail thread 1a1f0a20e3dc7a58 (delivery to a placeholder domain: bounce/delivery NOT checked). Placeholder domains were
-  already blocked at contact recording (commit 3423f14); this session adds validation at `plan()` AND `send_outreach()`.
-- Also found: 24+ FAILED retry rows to `management@autoworks.co.i` (typo domain) on 2026-11-13 — blocked by valid_email now.
-- NOT DONE: review of all 21 recipients/duplicates/follow-up counters, discovery for the 54 candidates without contacts.
+## 4. Supplier email audit — PASS (external replies pending)
+- A. 23 recipients that were actually sent (the "21" of the earlier report grew by 2): exactly ONE Gmail message each (attempts 1-4 of the Nov-13 batch were CANCELLED unsent), no duplicates, 0 duplicate recipients across suppliers, 1 bounce (`info@yourwebsite.com`, DSN failure 21 Nov 17:07 IL, thread 1a1f0a20e3dc7a58). Replies: motorstate (human reply), 4 auto-acknowledgements (Roush, Euro Car Parts, Performance Online, AutohausAZ - NIR tasks exist), SNG (welcome mail; real reply recovered by history pass, facts persisted in `suppliers.credentials.contacts` + `shipping_info.supplier_stated`).
+- **Defect found + fixed:** frenobrake's REPLY_RECEIVED was OUR OWN notification mail ("WhatsApp חזר לפעול") matched by the gmail.com domain. Fix `email_agent/supplier_routing.py`: free-mail senders match by exact address only, own mailbox never a supplier, same rule on thread/PO branches. Data repaired (outreach back to AWAITING_REPLY, NIR task dismissed, email row route cleared; backup `/app/state/ebay_repair_backup/misrouted_own_mail_before_20261123.json`). Tests `test_reply_party_matching_2026_11_23.py`.
+- B. 54 candidates without contact: 48 non-rejected searched (official contact/home pages through FlareSolverr + Gmail history, paginated). Found 8 same-domain business addresses on official pages and recorded them VERIFIED with source URL (vividracing, partsauthority, sophio, phoenixfriction, shifteck, turn14, turn5, greengearsauto; `nir_record_contacts.py`); the existing authorized outreach loop (max 3 follow-ups, templates unchanged) will contact them - not sent by me. One address skipped (machs.com `reisen@`, a named person on the homepage, not a business channel). Gmail history gave real contacts only for ASAP (amanda@asapnetwork.org) and LKQ (newaccountkao@/brossi@lkqcorp.com) - existing conversations, not queued. 5 sites unreachable (ak24parts, alvadi.co.il, asapnetwork.org page, doba, meyerdistributing: no response through FlareSolverr); the rest published no email on contact/home pages (form/phone only). No address was invented. Remaining: ~46 candidates have no verified contact; needs a human form submission / address (responsible: owner/NIR).
+- C. Placeholder incident: `info@yourwebsite.com` row CANCELLED, `management@autoworks.co.i` 39+ rows CANCELLED (never sent; sends were unauthorized/blocked), both addresses stored as REJECTED_INVALID; 0 non-terminal outreach rows with an invalid recipient; 0 open todos mention them; validation at `plan()` and `send_outreach()`; `valid_email` also rejects subdomains of example/placeholder domains and file-extension "TLDs". 7 lifecycle tests used `parts.example.com` and broke under the stricter rule; fixtures updated (test-only). No apology/external message sent.
+- D. Workflow proof: SNG thread → sender match → class `supplier` → structured facts in supplier record → BOAZ/NIR todo; last 4 days: 27 email rows classified, 27 routed, 11 BOAZ + 5 NIR email todos.
 
-## 6. Eurosender — BLOCKED per supplier (allowlist stays empty)
-SNG: awaiting reply to pickup request. ALVADI: not verified. Car-Parts.ie, eBay Motors: NOT DONE this session.
+## 5. Eurosender — BLOCKED (allowlist stays empty)
+- Pickup data is read per SUPPLIER row (`Supplier.shipping_info`, `eurosender_fulfillment._extract_pickup_from_shipping_info`). **eBay Motors: BLOCKED (structural)** - one supplier row, offers belong to thousands of different sellers; no seller dispatch address is available from the eBay integration; needs seller-specific pickup support (code) or an eBay-seller-by-seller verification; a platform HQ address must not be used. **Car-Parts.ie: UNVERIFIED/BLOCKED** - `shipping_info` empty; operator/warehouse not verifiable: car-parts.ie contact/terms pages return a Cloudflare challenge FlareSolverr could not solve today (500 after 45 s), web search shows no imprint (reviews only hint at an Autodoc relationship - unverified). Needs: authoritative operator + dispatch address + Eurosender collection acceptance (responsible: owner via supplier contact). SNG Barratt: unchanged (pickup reply pending). `EUROSENDER_SUPPLIER_ALLOWLIST` empty; no fee changed.
 
-## Mail agent check (owner request) — PASS
-12 recovered ASAP/LKQ/SNG messages (Jul-Sep): all classified (10 `supplier`, 2 newsletter), 10 escalated requires_human with ONE BOAZ task each (SNG welcome -> NIR), owner_notified set, 0 Gmail drafts. Mail content not read by me.
+## 6. ASAP dealer terms — PASS (data) / BLOCKED (cost tier)
+- The owner's logged-in browser session is not reachable from this session (no browser tool; server 403'd), so account state is taken from stored evidence: earlier verified session (autosparefinder, 5 approved brands, price_level=0) and the 6 stored load sheets. Per brand: BDS (2,349), Fox 360 (1,298), Adams (93), Banks (423): sheets carry only `list_price`/`map_price` = MSRP/MAP, no dealer tier. **AGM (73): sheet also carries `jobber_pricing` = ~85% of list (median 0.85)** - a trade tier exists but is NOT proven to be our account's acquisition cost → stays unpriced. Dependency: manufacturers must grant/confirm a dealer tier (responsible: owner with ASAP/brand reps).
+- **Defect found + fixed:** the first quarantine (2026-11-20) missed 1,360 MSRP-derived parts (Fox 938, Banks 422): `NOT (specifications ? 'k')` is NULL for parts with NULL specifications, the old `max_price_ils = 0` condition excluded rows whose max was derived from the same MSRP, and the importer rounding made cost differ from the offer by < 1 ILS. `maintenance/asap_msrp_quarantine.py` fixed (COALESCE, ≤1 ILS tolerance, also clears the MSRP-derived `max_price_ils`, `prev_max` stored for exact `--restore`); applied to 1,360 parts (backup `candidates/closure-2026-11-19/backups/asap_msrp_before_20261123.json`); ASAP offers made unavailable (560 were customer-visible); meili synced and reconciled (item 2). Legit non-ASAP prices untouched (target requires ASAP as the only source).
 
-## 7. BDS (2,349) / ASAP MSRP — PASS (data) with a deliberate owner-visible change
-- Finding (live): all 2,349 BDS parts had `importer_price_ils` = MSRP/1.18 (a LOCAL COST) and `base_price` derived from it; their only offer is ASAP's (supplier inactive, price_level=0). Customers saw e.g. BDS1613FS at a 12,792 ILS "estimate" (`is_estimate` true, but Parts.jsx ignores the flag, so it looks like a price).
-- Outcome per offer (all 2,349 reconciled, identical class): genuine catalog part, no valid supplier offer -> part KEPT and searchable; ASAP offer set `is_available=false` (row, prices, history kept - nothing deleted); MSRP-derived `importer_price_ils`/`base_price` cleared to 0; previous values stored in `specifications.msrp_quarantine` (exact undo: `maintenance/asap_msrp_quarantine.py --restore`). Same proven defect (importer_price_ils == offer price, no other supplier) also fixed for Fox Factory 360, Adams Driveshaft 93, AGM Products 73, Banks Power 1 = 2,876 parts total. Backup: `backups/asap_msrp_before.json` (2,876 rows). Policy gate used; script registered in POLICY_BOUND_ACTORS.
-- Live verification: BDS1613FS search -> cheapest_price None, customer_estimate None, is_estimate False; 2,876 offers avail=0.
-- Importer `importers/asap_import.py` fixed so a re-run cannot restore it (no importer_price_ils/base write, offers never available; MSRP kept in specifications.msrp_ils). Tests `tests/test_asap_msrp_not_cost.py` (3).
-- NOT DONE: Meilisearch pickup (updated_at bumped; next incremental sync) NOT VERIFIED; frontend still ignores `is_estimate` for the remaining (IL importer) estimates; per-brand dealer-terms/permissions inspection of ASAP (5 brands) not done (account price_level=0 per stored evidence). Activation path: only when a manufacturer grants a cost tier.
+## 7. Digest + heal query — PARTIAL
+- A. **Digest content: NOT VERIFIED.** The 09:00 text of previous days cannot be recovered (bridge logs only length; no stored text). Observability repaired and deployed today: the exact text is stored in Redis `autospare:report_text:daily_status:<date>` (14 d) so tomorrow's 09:00 digest can be read back with no test message. Meanwhile the price section was rendered read-only from the same code and cross-checked with PostgreSQL: ebay_sync 1,047 changes/24 h = `price_history` 1,047 = last sync `updated=1047`; aliexpress 0 (last write 20/11, report says "work found but nothing changed"); 4,191,281 offers; active catalog 4,325,231 not conflated with price changes. Defects fixed: last-write times printed UTC (now Israel time) and "parts with customer price" mislabelled (now "base price, not necessarily an available offer"). Close this item after the 2026-11-24 09:00 digest is read from Redis.
+- B. `task_heal_importer_price`: PASS. Partial index `idx_parts_catalog_importer_gap` valid, Index Only Scan, EXPLAIN ANALYZE 81 ms (planning 8 ms), 207 gap rows all unhealable (0 healable now), live call fixed=0 in 0.19 s, 0 backing-off warnings in 20 h, no data change.
 
-## 8. eBay reconciliation — PASS (counts), shipping rule FIXED, recheck PENDING
-- Populations by unique offer id (backup `/app/state/ebay_repair_backup/supplier_parts_before_repair_1795075554.json`): 1,025 offers = 16 pre-guard + 210 no_listing + 799 other_listing, disjoint (1,025 unique ids). The 1,009 of the earlier report = 210 + 799 and EXCLUDES the 16 and 150 more offers judged by the same guarded refresh on 2026-11-19. Verdict table `supplier_offer_checks` (latest per offer): 1,025 in-population + 150 outside = **1,175**, each with exactly ONE verdict: exact_match 328+64=392, missing_listing 288+30=318, no_israel_shipping 362+47=409, ambiguous 40+8=48, seller_mismatch 4+1=5, product_mismatch 3+0=3 (sums match the earlier report). No double count; the 166 gap was the 16+150 outside the 1,009.
-- The 16: 7 now on the ORIGINAL item id (3 same-listing refreshes + 4 restored), 6 on a different guard-verified listing (kept), 3 `product_mismatch` made unavailable (16 total). Seller-level re-comparison of the 6 retained NOT re-run (eBay calls).
-- Shipping-to-Israel: code path audited. Defect found: an item with NO shippingOptions AND NO shipToLocations (or only a non-country world region other than ASIA/MIDDLE_EAST) was a hard `no_israel_shipping`. Fixed in `EbaySupplier.live_from_item` -> ambiguous (offer unchanged). Tests +3 (49 passed). Deployed 2026-11-20 07:37 IL (guarded restart, healthy, 0 tracebacks).
-- PENDING: the 563 stored `no_israel_shipping` verdicts (all with reason "listing no longer offers shipping to Israel") were produced partly under the old rule; eBay quota is at its 300 reserve until 10:00 IL, so a re-judge (`ebay_listing_repair.py --recheck-verdicts no_israel_shipping --apply --call-budget 700`) is queued to run after the reset. NOT VERIFIED until it reports.
-- `EBAY_REFRESH_ALLOW_RELISTING` is no longer read by code (relisting impossible by construction) - nothing to enable.
-
-## 12-14. sync_prices / digest / heal task
-- sync_prices 2026-11-20 01:14 IL: COMPLETED 02:02 IL, no error; ebay checked=2769 updated=869 no_listing=1900 errors=0, refresh[exact_match=868, missing_listing=260, no_israel_shipping=154, ambiguous_identity=17, seller_mismatch=1]. Per-offer review of these verdicts NOT DONE.
-- Digest content: NOT VERIFIED (text cannot be read back). `task_heal_importer_price` plan/timing: NOT VERIFIED.
-
-## 15-17. Production / code / integrity
-- No restart, migration or production-service change this session. Data writes: SNG supplier row, 1 PII email row +
-  1 BOAZ todo, 1 outreach row + 1 email sent, ALVADI candidate row. Untracked `archive/data/NOA_test_15s.mp4` untouched.
-- Files: email_agent/{agent,config,context,loop,supplier_routing,supplier_intake}.py, supplier_outreach.py,
-  maintenance/send_pickup_request.py, tests/test_supplier_history_intake.py.
+## Deployment / state
+- Guarded restarts today (preflight SAFE every time, no override): backend `ws1_estimate_digest_recipient_deploy` 19:55, frontend ×2, backend `closure_final_routing_digest_deploy` (after the last commit). Health healthy, OOMKilled=false, RestartCount=0, 0 tracebacks, alembic head 0064_supplier_offer_checks (unchanged). Running code verified (`_same_party` present in the fresh process); disk HEAD `2cd54fb`.
+- PostgreSQL = MeiliSearch: 4,325,231 = 4,325,231.
+- Tests: 457 passed / 37 skipped across the touched suites (+ vitest 38). Baseline: `test_supplier_lifecycle` had 7 failures caused by my own stricter `valid_email` vs `parts.example.com` fixtures (fixed); no other failure seen. Full suite not run in production (OOM rule).
+- Nothing pushed.

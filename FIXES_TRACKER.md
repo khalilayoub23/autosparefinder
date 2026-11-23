@@ -10587,3 +10587,11 @@ Consultant final verification (2026-11-17, read-only, `candidates/core-identity-
 - Root cause 1: `asap_import.py` stored MSRP/1.18 as `importer_price_ils` (local cost) + base_price; ~2,900 parts showed MSRP-derived "estimates" (UI ignores `is_estimate`). Fix: `maintenance/asap_msrp_quarantine.py` (applied to 2,876 parts, reversible, backup `candidates/closure-2026-11-19/backups/asap_msrp_before.json`), importer no longer writes cost/base and never makes an offer available. Test `tests/test_asap_msrp_not_cost.py`.
 - Root cause 2: `live_from_item` turned absent shipping info into a hard no-ship verdict. Fix: ambiguous unless IL is explicitly excluded or an exhaustive country list omits it. Tests +3 in `test_ebay_listing_identity.py`. Recheck of 563 stored no_israel_shipping verdicts queued for after the 10:00 IL quota reset.
 - eBay 1,175 reconciled to unique offer ids (1,025 + 150); the 16 dispositions confirmed (7/6/3). OPEN: frontend `is_estimate` label; Meili pickup of the ASAP changes; seller re-comparison for the 6 retained.
+
+## 2026-11-23 — Closure of the 7 remaining items (see candidates/closure-2026-11-19/CLOSURE_REPORT.md)
+- Frontend estimates: single rule `frontend/src/utils/offerPrice.js`; `TypeSection` (live search card) and `PartCard` drop non-purchasable offers, label estimates, no `fallback-` cart ids. VERIFIED on the live UI (5 cases).
+- ASAP MSRP quarantine was incomplete (NULL specifications made `NOT (specs ? 'k')` NULL; max_price_ils/rounding conditions): +1,360 parts (Fox 938, Banks 422), total 4,236, Meili reconciled 4,236/4,236.
+- Email routing: free-mail domain / own mailbox matched as a supplier reply (frenobrake false REPLY_RECEIVED) — fixed + data repaired. 8 NIR contacts recorded from official pages.
+- eBay: 563 verdicts reconciled 530 + 33; six alternates re-compared, 00968f4e withdrawn.
+- Digest: Israel-time + stored text for readback; content verification pending the 2026-11-24 09:00 digest. Heal query 81 ms, index used.
+- Open: Eurosender Car-Parts.ie / eBay Motors (BLOCKED), ASAP dealer tier, ~46 candidates without contact.
