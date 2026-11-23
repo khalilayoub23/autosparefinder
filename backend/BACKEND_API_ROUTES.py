@@ -842,6 +842,20 @@ async def _mark_digest_sent(kind: str, local_date: str) -> None:
         pass
 
 
+async def _store_report_text(kind: str, local_date: str, text_: str, delivered: bool) -> None:
+    """Keep the EXACT text of a scheduled owner report (digest / problem alert) so it can be read back later
+    without sending a test message (2026-11-20: the bridge logs only the text length). Redis, 14 days, read-only
+    inspection: `GET autospare:report_text:<kind>:<date>`. Never raises."""
+    try:
+        _r = await get_redis()
+        if _r:
+            await _r.set(f"autospare:report_text:{kind}:{local_date}",
+                         json.dumps({"delivered": bool(delivered), "len": len(text_), "text": text_}, ensure_ascii=False),
+                         ex=14 * 86400)
+    except Exception:
+        pass
+
+
 _NIGHT_STATE_HE = {"COMPLETED": "✅", "FAILED": "🔴 נכשל", "BLOCKED": "⛔ נחסם", "RUNNING": "🟢 רץ עדיין",
                    "QUEUED": "⏳ לא התחיל"}
 
@@ -1072,6 +1086,7 @@ async def _status_update_loop() -> None:
             if is_digest_time:
                 lines[0] = f"📅 *AutoSpareFinder — דוח יומי* ({_il_time} ישראל)"
                 _dres = await _wa_send_update("\n".join(lines))
+                await _store_report_text("daily_status", _today, "\n".join(lines), bool((_dres or {}).get("ok")))
                 _last_digest_date = _today
                 if (_dres or {}).get("ok"):
                     await _mark_digest_sent("daily_status", _today)

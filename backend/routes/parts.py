@@ -1823,7 +1823,7 @@ async def search_parts(
         if "aftermarket" in _part_type_lower:
             try:
                 _xref = await query_db.execute(
-                    text("SELECT ref_number FROM part_cross_reference WHERE part_id = :pid::uuid AND ref_type ILIKE 'aftermarket' LIMIT 1"),
+                    text("SELECT ref_number FROM part_cross_reference WHERE part_id = CAST(:pid AS uuid) AND ref_type ILIKE 'aftermarket' LIMIT 1"),
                     {"pid": part_id_str}
                 )
                 _xref_row = _xref.fetchone()

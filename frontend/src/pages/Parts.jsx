@@ -1,4 +1,5 @@
 import { offerClassInfo, realSupplierPartId } from '../utils/offerClass'
+import { isPurchasableOffer, partEstimate } from '../utils/offerPrice'
 import { useState, useEffect, useRef, useCallback, useDeferredValue } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { partsApi } from '../api/parts'
@@ -836,6 +837,7 @@ function AllOffersModal({ part, onAddToCart, onClose }) {
         const raw = res.data?.suppliers || []
         const normalized = raw
           .map((sp) => _supplierForCard(sp))
+          .filter(isPurchasableOffer)
           .sort((a, b) => (a.total ?? Infinity) - (b.total ?? Infinity))
         setOffers(normalized)
       })
@@ -953,9 +955,10 @@ function AllOffersModal({ part, onAddToCart, onClose }) {
                       </div>
                       <button
                         onClick={() => {
+                          if (!isPurchasableOffer(s)) return
                           onAddToCart({
                             partId: part.id,
-                            supplierPartId: s.supplier_part_id || `fallback-${part.id}-${i}`,
+                            supplierPartId: s.supplier_part_id,
                             offerPartType: s.part_type || null,
                             name: part.name_he || part.name,
                             manufacturer: part.manufacturer,
@@ -1140,9 +1143,10 @@ function TypeSection({ typeKey, data, onAddToCart }) {
                 {/* Row 3: cart button */}
                 <button
                   onClick={() => {
+                    if (!isPurchasableOffer(s)) return
                     onAddToCart({
                       partId: part.id,
-                      supplierPartId: sp.supplier_part_id || `fallback-${part.id}-${i}`,
+                      supplierPartId: sp.supplier_part_id,
                       offerPartType: sp.part_type || null,
                       name: part.name_he || part.name,
                       manufacturer: part.manufacturer,
@@ -1181,23 +1185,28 @@ function TypeSection({ typeKey, data, onAddToCart }) {
 function PartCard({ part, onAddToCart, brandLogos = {} }) {
   const [showAllOffers, setShowAllOffers] = useState(false)
   const suppliers = part.suppliers || (part.pricing ? [part.pricing] : [])
-  const normalizedSuppliers = suppliers.map((sp) => _supplierForCard(sp))
+  // Only server-identified offers with a positive customer price are shown/orderable; anything else
+  // (estimate rows, zero/NULL/invalid price, missing supplier_part_id) is dropped here (2026-11-20).
+  const normalizedSuppliers = suppliers.map((sp) => _supplierForCard(sp)).filter(isPurchasableOffer)
+  const estimate = partEstimate(part, normalizedSuppliers)
   const warrantyInfo = _partWarranty(part, normalizedSuppliers)
   const technicalSpecs = _partTechnicalSpecs(part, 5)
 
   const handleAddToCart = (supplierPartId, priceData) => {
-    // For estimated-price parts there is no supplier row yet — use a
-    // deterministic fallback key so the cart can still deduplicate correctly.
-    const cartKey = supplierPartId || `fallback-${part.id}`
+    // An estimate (no supplier row) can never be ordered: no verified offer => no cart line.
+    if (!isPurchasableOffer(priceData)) {
+      toast.error('אין הצעת מחיר מאומתת לחלק זה')
+      return
+    }
     onAddToCart({
       partId: part.id,
-      supplierPartId: cartKey,
+      supplierPartId: supplierPartId,
       name: part.name,
       manufacturer: part.manufacturer,
       price: priceData.subtotal ?? priceData.price_no_vat,
       vat: priceData.vat,
       deliveryDays: priceData.estimated_delivery_days ?? null,
-      isEstimated: priceData.is_base_price_fallback ?? false,
+      isEstimated: false,
     })
     toast.success(`${part.name} נוסף לסל 🛒`)
   }
@@ -1320,8 +1329,18 @@ function PartCard({ part, onAddToCart, brandLogos = {} }) {
           {normalizedSuppliers.length === 0 ? (
             <div className={`flex flex-1 flex-col items-center justify-center gap-2 rounded-[24px] border border-dashed border-slate-200 ${accent.bg} px-4 py-6 text-center`}>
               <Tag className={`h-5 w-5 ${accent.text} opacity-70`} />
-              <span className={`text-sm font-semibold ${accent.text}`}>מחיר על פניה</span>
-              <span className="max-w-[16rem] text-xs leading-5 text-slate-500">צור קשר כדי לקבל התאמה והצעת מחיר לחלק הזה.</span>
+              {estimate ? (
+                <>
+                  <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">מחיר משוער</span>
+                  <span className={`text-2xl font-black leading-none ${accent.text}`} data-testid="catalog-estimate">~₪{estimate.total.toFixed(2)}</span>
+                  <span className="max-w-[16rem] text-xs leading-5 text-slate-500">הערכה בלבד, אינה הצעה מחייבת ואי אפשר להזמין. צור קשר כדי לקבל הצעת מחיר מאומתת.</span>
+                </>
+              ) : (
+                <>
+                  <span className={`text-sm font-semibold ${accent.text}`}>מחיר על פניה</span>
+                  <span className="max-w-[16rem] text-xs leading-5 text-slate-500">צור קשר כדי לקבל התאמה והצעת מחיר לחלק הזה.</span>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-3">

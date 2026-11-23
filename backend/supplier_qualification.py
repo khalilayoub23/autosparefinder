@@ -222,6 +222,10 @@ PLACEHOLDER_DOMAINS = frozenset({"yourwebsite.com", "yourdomain.com", "yourcompa
                                  "website.com", "company.com", "test.com", "sentry.io", "wixpress.com", "godaddy.com"})
 
 
+# file extensions that scrapers read as a TLD (``logo@2x.png``): never a mailbox
+_NOT_A_TLD = frozenset({"png", "jpg", "jpeg", "gif", "svg", "webp", "css", "js", "ico", "woff", "woff2", "pdf"})
+
+
 def valid_email(address: Any) -> bool:
     """Syntax check incl. a TLD of >=2 letters. A site-published typo (``@autoworks.co.i``) or a template placeholder
     (``info@yourwebsite.com``, ``name@example.com``) is not a contact."""
@@ -229,7 +233,11 @@ def valid_email(address: Any) -> bool:
     if not _EMAIL_RE.match(a):
         return False
     dom = a.rsplit("@", 1)[1].lower()
-    return dom not in PLACEHOLDER_DOMAINS and not re.match(r"example\.[a-z.]+$", dom)
+    if dom in PLACEHOLDER_DOMAINS or any(dom.endswith("." + d) for d in PLACEHOLDER_DOMAINS):
+        return False
+    if re.match(r"(?:.+\.)?example\.[a-z.]+$", dom):
+        return False
+    return dom.rsplit(".", 1)[1] not in _NOT_A_TLD
 
 
 def verified_contacts(rec: Dict[str, Any]) -> List[Dict[str, Any]]:
