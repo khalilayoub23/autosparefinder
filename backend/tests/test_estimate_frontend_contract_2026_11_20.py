@@ -43,3 +43,19 @@ def test_estimate_policy_has_no_base_price_input():
     import inspect
     params = inspect.signature(pp.catalog_estimate).parameters
     assert "base_price" not in params
+
+
+def test_every_parts_card_path_filters_offers_and_labels_estimate():
+    """Both card components (PartCard, TypeSection) must drop non-purchasable offers and label an estimate;
+    found live 2026-11-23: TypeSection rendered a null-price offer as an empty '₪' row."""
+    import pathlib
+    f = pathlib.Path(__file__).resolve().parents[2] / "frontend/src/pages/Parts.jsx"
+    if not f.exists():          # the backend container mounts only backend/; this runs on the host / CI
+        import pytest
+        pytest.skip("frontend source not mounted")
+    jsx = f.read_text()
+    body = jsx.split("function TypeSection", 1)[1].split("function PartCard", 1)[0]
+    assert "isPurchasableOffer(_supplierForCard(sp))" in body
+    assert "partEstimate(part, suppliers)" in body
+    assert 'data-testid="catalog-estimate"' in body and "מחיר משוער" in body
+    assert "fallback-" not in jsx.replace("startsWith('fallback-')", "")

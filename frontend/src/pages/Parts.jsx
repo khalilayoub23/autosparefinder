@@ -1017,7 +1017,10 @@ function TypeSection({ typeKey, data, onAddToCart }) {
     )
   }
 
-  const { part, suppliers = [] } = data
+  const { part } = data
+  // Same rule as PartCard: only server-identified offers with a positive customer price are shown/orderable.
+  const suppliers = (data.suppliers || []).filter((sp) => isPurchasableOffer(_supplierForCard(sp)))
+  const estimate = partEstimate(part, suppliers)
   const warrantyInfo = _partWarranty(part, suppliers)
   const technicalSpecs = _partTechnicalSpecs(part, 4)
   const accent = CATEGORY_ACCENT[part.category] || CATEGORY_ACCENT['כללי']
@@ -1092,8 +1095,16 @@ function TypeSection({ typeKey, data, onAddToCart }) {
       {/* Supplier offers */}
       <div className="px-4 pb-4 pt-2 space-y-2">
         {suppliers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-4 text-center gap-1 opacity-60">
-            <span className="text-xs text-gray-400">אין הצעות ספק זמינות</span>
+          <div className={`flex flex-col items-center justify-center py-4 text-center gap-1 ${estimate ? "" : "opacity-60"}`}>
+            {estimate ? (
+              <>
+                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-700">מחיר משוער</span>
+                <span className={`text-2xl font-black leading-none ${accent.text}`} data-testid="catalog-estimate">~₪{estimate.total.toFixed(2)}</span>
+                <span className="max-w-[16rem] text-xs leading-5 text-gray-500">הערכה בלבד, אינה הצעה מחייבת ואי אפשר להזמין. צור קשר כדי לקבל הצעת מחיר מאומתת.</span>
+              </>
+            ) : (
+              <span className="text-xs text-gray-400">אין הצעות ספק זמינות</span>
+            )}
           </div>
         ) : (
           suppliers.map((sp, i) => {
