@@ -240,13 +240,30 @@ async def run_once(repo, deps: Dict[str, Any], notify=None, limit: int = BATCH) 
     return out
 
 
+def _he_boaz_reason(text_: str) -> str:
+    """BOAZ escalation reasons are engineering strings; the owner gets the business meaning in Hebrew."""
+    t = str(text_ or "")
+    if t.startswith("no automated BOAZ handler for task type"):
+        kind = t.split("'")[1] if "'" in t else "?"
+        return f"אין טיפול אוטומטי במשימה מסוג '{kind}' — נדרש טיפול ידני שלך."
+    if "Any reply, offer or commitment is the owner's decision" in t:
+        m = t.split("'מייל ")[-1].rstrip("'. ") if "'מייל " in t else ""
+        return "ספק פנה אלינו. תשובה, הצעה או התחייבות הן החלטה שלך" + (f" — קרא: *מייל {m}*." if m else ".")
+    if t.startswith("onboarding prerequisites:"):
+        return "כדי להפעיל את הספק חסר: " + t.split(":", 1)[1].strip()
+    return t
+
+
 async def _alert(notify, task: Dict[str, Any], text_: str) -> None:
     if not notify:
         return
     try:
+        art = _json(task.get("artifacts"), {})
+        # a task the Email Agent filed for a mail it ALREADY reported to the owner is the same event: merge, do not repeat
+        keys = [f"mail:{art['email_ref']}"] if art.get("source") == "email_agent" and art.get("email_ref") else None
         await notify("supplier", f"BOAZ צריך החלטה שלך — {str(task.get('title') or '')[:60]}",
-                     f"{text_}\nמשימה {task['id'][:8]} · כתוב *משימות בועז* לרשימה.",
-                     severity="info", alert_key=f"boaz_task_{task['id']}", cooldown_s=30 * 86400)
+                     f"{_he_boaz_reason(text_)}\nמשימה {task['id'][:8]} · כתוב *משימות בועז* לרשימה.",
+                     severity="info", alert_key=f"boaz_task_{task['id']}", cooldown_s=30 * 86400, event_keys=keys)
     except Exception:
         pass
 

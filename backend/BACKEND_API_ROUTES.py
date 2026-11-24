@@ -23,6 +23,7 @@ import os
 import owner_poll as _owner_poll
 import io
 import time
+import hashlib
 import subprocess
 import asyncio
 import httpx
@@ -2686,20 +2687,42 @@ async def _car_parts_ie_harvester_healthcheck_loop() -> None:
                     with open(_fs_health_path) as _fh:
                         _fhs = _hcj.load(_fh)
                     _consec = _fhs.get("consecutive_fails", 0)
+                    _fs_key = "harvester_fs_consecutive_fails"
+                    _rr = await get_redis()
                     if _consec >= _FS_ALERT_THRESHOLD:
+                        # Incident lifecycle (audit 2026-11-24: the same text 20x, hourly, 15 at night, counter in the
+                        # title): ONE report when it starts (warning), ONE escalation to critical if it is still open
+                        # after HARVESTER_FS_CRITICAL_AFTER_H (default 6 h), a reminder every 6 h, ONE resolution. The
+                        # fingerprint is the incident phase, never the counter. The cause is stated as observed
+                        # (cookie requests failing), not guessed.
+                        _since_raw = await _rr.get("autospare:fs_fail_since")
+                        if _since_raw:
+                            _since = float(_since_raw)
+                        else:
+                            _since = _time.time()
+                            await _rr.set("autospare:fs_fail_since", str(_since), ex=30 * 86400)
+                        _open_h = (_time.time() - _since) / 3600
+                        _long = _open_h >= float(os.getenv("HARVESTER_FS_CRITICAL_AFTER_H", "6"))
+                        _since_txt = datetime.fromtimestamp(_since, APP_LOCAL_TZ).strftime("%d/%m %H:%M")
                         await notify_owner(
                             "harvest",
-                            f"שאיבה: FlareSolverr נכשל {_consec} פעמים ברציפות",
-                            f"כל ניסיונות קבלת cf_clearance נכשלו — Chrome קורס (OOM?) או FlareSolverr בעייתי.\n"
-                            f"הקטלוג לא מתקדם.\n"
-                            f"פעולה — הוסף swap לשרת:\n"
-                            f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
-                            f"mkswap /swapfile && swapon /swapfile",
-                            severity="critical",
-                            alert_key="harvester_fs_consecutive_fails",
-                            cooldown_s=3600,
+                            "שאיבת car-parts.ie תקועה" if not _long else f"שאיבת car-parts.ie תקועה כבר {int(_open_h)} שעות",
+                            f"אישור הכניסה מ-Cloudflare (דרך FlareSolverr) נכשל ברציפות מאז {_since_txt}, "
+                            f"ולכן לא נקלטים חלקים חדשים מהאתר. שאר המערכת, החיפוש וההזמנות לא מושפעים.\n"
+                            f"הסוכן ממשיך לנסות אוטומטית ויודיע כשזה חוזר. הסיבה המדויקת לא אומתה — "
+                            f"הבדיקה: *סטטוס* או לוגים של flaresolverr.",
+                            severity="critical" if _long else "warning",
+                            alert_key=_fs_key, cooldown_s=60, state="new",
+                            fingerprint="long" if _long else "open", remind_s=6 * 3600,
                         )
-                        print(f"[car_parts_ie_healthcheck] FlareSolverr: {_consec} consecutive failures — alerted", flush=True)
+                        print(f"[car_parts_ie_healthcheck] FlareSolverr: {_consec} consecutive failures, open {_open_h:.1f}h", flush=True)
+                    elif await _rr.exists("autospare:fs_fail_since"):
+                        _since = float(await _rr.get("autospare:fs_fail_since") or _time.time())
+                        await _rr.delete("autospare:fs_fail_since")
+                        await resolve_owner_alert(
+                            "harvest", "שאיבת car-parts.ie חזרה לפעול",
+                            f"אישור Cloudflare התקבל שוב אחרי {int((_time.time() - _since) // 3600)} שעות; השאיבה ממשיכה.",
+                            alert_key=_fs_key)
             except Exception as _fex:
                 print(f"[car_parts_ie_healthcheck] fs_health check skipped: {_fex}", flush=True)
 
@@ -2780,7 +2803,7 @@ async def _meili_verify_parity() -> None:
                 "זוהה פער סנכרון ב-Meilisearch",
                 f"אינדקס: {meili_docs:,} מסמכים\nקטלוג: {db_count:,} חלקים פעילים\n"
                 f"פער: {gap:,} מסמכים — הסנכרון מפגר או מדלג על שורות.\n"
-                f"פעולה: docker exec autospare_backend python3 /app/meili_sync.py",
+                f"הסנכרון המתוזמן הבא אמור לסגור את הפער. אם הוא נשאר גם מחר — צריך בדיקה ידנית של הסנכרון.",
                 severity="warning",
                 alert_key="meili_parity_drift",
                 cooldown_s=10800,
@@ -3801,8 +3824,10 @@ _WA_RETRY_MAX_AGE_S = int(os.getenv("WA_RETRY_MAX_AGE_S", str(6 * 3600)))
 def _wa_not_sent_error(error) -> bool:
     """True only for provider errors that guarantee the message did not leave the bridge."""
     from social.whatsapp_provider import _TRANSIENT_BRIDGE_ERRORS
+    import wa_queue_plan as _wqp
     e = str(error or "")
-    return e.startswith("bridge unreachable") or e in _TRANSIENT_BRIDGE_ERRORS
+    # a logged-out / awaiting-QR session provably sent nothing: a critical alert must wait for the channel, not vanish
+    return e.startswith("bridge unreachable") or e in _TRANSIENT_BRIDGE_ERRORS or _wqp.channel_error_kind(e) == "down"
 
 
 def _late_footer(text: str, queued_at: str) -> str:
@@ -3839,7 +3864,7 @@ async def _wa_send_now(to: str, text: str, critical: bool, alert_key: str) -> di
         return result
 
 
-async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: str = "") -> dict:
+async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: str = "", meta: "dict | None" = None) -> dict:
     """Quiet-hours-aware WhatsApp send. Inside the window (or critical=True) → send now.
     Outside → queue to Redis; the health monitor flushes the queue at window open, so
     nothing is lost and nobody gets a 03:00 message. Owner notifications are addressed to
@@ -3878,6 +3903,9 @@ async def _wa_send_quiet(to: str, text: str, critical: bool = False, alert_key: 
         }
         if alert_key:
             payload["alert_key"] = alert_key
+        payload["queued_ts"] = int(time.time())
+        if meta:
+            payload["meta"] = meta   # {group,state,sev,title}: lets the flush merge/supersede/collapse (wa_queue_plan)
         _dropped = await _r.eval(
             _WA_QUIET_ENQUEUE_LUA, 2, _WA_QUIET_QUEUE_KEY, _WA_QUIET_DEAD_KEY,
             alert_key, json.dumps(payload, ensure_ascii=False), -50, -1,
@@ -3911,7 +3939,7 @@ async def _updates_group_jid() -> str:
     return os.getenv("OWNER_UPDATES_GROUP_JID", "").strip()
 
 
-async def _wa_send_update(text: str, critical: bool = False, alert_key: str = "") -> dict:
+async def _wa_send_update(text: str, critical: bool = False, alert_key: str = "", meta: "dict | None" = None) -> dict:
     """Send a SYSTEM/AGENT update. Goes to the dedicated updates group if one is
     configured, otherwise to the owner's 1:1 number — both through the quiet-hours gate
     so nothing lands at 03:00. This keeps alerts/digests/approvals out of the
@@ -3922,10 +3950,10 @@ async def _wa_send_update(text: str, critical: bool = False, alert_key: str = ""
     semantically-identified alert, so existing behavior for those is unchanged."""
     jid = await _updates_group_jid()
     if jid:
-        return await _wa_send_quiet(to=jid, text=text, critical=critical, alert_key=alert_key)
+        return await _wa_send_quiet(to=jid, text=text, critical=critical, alert_key=alert_key, meta=meta)
     owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
     if owner:
-        return await _wa_send_quiet(to=owner, text=text, critical=critical, alert_key=alert_key)
+        return await _wa_send_quiet(to=owner, text=text, critical=critical, alert_key=alert_key, meta=meta)
     return {"ok": False, "error": "no updates destination"}
 
 
@@ -3963,6 +3991,115 @@ return 0
 
 async def _wa_queue_remove(_r, raw) -> int:
     return int(await _r.eval(_WA_QUIET_REMOVE_LUA, 1, _WA_QUIET_QUEUE_KEY, raw) or 0)
+
+
+# ── Queue consolidation, channel-outage lifecycle, audit trail (audit 2026-11-24, #152) ──────────────
+# Quiet hours are unchanged. When the window opens the queued items are PLANNED (wa_queue_plan.plan_flush): a condition
+# opened and resolved overnight is not delivered, an older state superseded by a newer one is dropped, routine info
+# updates collapse into one morning summary, critical items and decisions go out individually. Every decision is
+# recorded in `autospare:wa_queue_audit` (bounded) and logged - nothing disappears without a reason.
+_WA_FLUSH_PACE_S = float(os.getenv("WA_FLUSH_PACE_S", "3"))
+_WA_QUEUE_MAX_AGE_S = int(os.getenv("WA_QUEUE_MAX_AGE_S", str(72 * 3600)))
+
+
+def _wa_audit_key() -> str:
+    return f"{_WA_QUIET_QUEUE_KEY}:audit"      # derived from the queue key: one namespace, tests stay isolated
+
+
+def _wa_channel_key() -> str:
+    return f"{_WA_QUIET_QUEUE_KEY}:channel"
+
+
+async def _wa_audit(_r, decision: str, item: dict, reason: str) -> None:
+    try:
+        m = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        rec = {"ts": int(time.time()), "decision": decision, "reason": reason,
+               "alert_key": item.get("alert_key"), "group": m.get("group"), "queued_at": item.get("queued_at")}
+        await _r.lpush(_wa_audit_key(), json.dumps(rec, ensure_ascii=False))
+        await _r.ltrim(_wa_audit_key(), 0, 499)
+        await _r.expire(_wa_audit_key(), 14 * 86400)
+        print(f"[QuietHours] queue {decision}: {item.get('alert_key') or m.get('group') or '-'} ({reason})")
+    except Exception as exc:
+        print(f"[QuietHours] queue audit failed: {exc}")
+
+
+async def _wa_consolidate_queue(_r) -> None:
+    """Rewrite the night queue per wa_queue_plan.plan_flush. Removal is keyed on the exact payload read, so a
+    concurrent enqueue is never disturbed; a failure here leaves the queue as it was (plain FIFO flush follows)."""
+    import wa_queue_plan as _plan
+    try:
+        raws = await _r.lrange(_WA_QUIET_QUEUE_KEY, 0, -1)
+        items, valid = [], []
+        for raw in raws:
+            try:
+                it = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(it, dict):
+                items.append(it)
+                valid.append(raw)
+        if len(items) < 2:
+            return
+        digest_items, digest_raws = [], []
+        for d in _plan.plan_flush(items):
+            i = d["index"]
+            if d["decision"] in ("merged", "superseded"):
+                await _wa_queue_remove(_r, valid[i])
+                await _wa_audit(_r, d["decision"], items[i], d["reason"])
+            elif d["decision"] == "digest":
+                digest_items.append(items[i])
+                digest_raws.append(valid[i])
+        if digest_items:
+            first = digest_items[0]
+            window = f"מ-{digest_items[0].get('queued_at', '')}"
+            dig = {"to": first.get("to"), "text": _plan.build_digest(digest_items, window),
+                   "queued_at": first.get("queued_at", ""), "alert_key": f"night_digest_{datetime.now(APP_LOCAL_TZ):%Y-%m-%d}",
+                   "meta": {"group": "night_digest", "state": "", "sev": "info", "title": "עדכוני הלילה"}}
+            await _r.rpush(_WA_QUIET_QUEUE_KEY, json.dumps(dig, ensure_ascii=False))
+            for it, raw in zip(digest_items, digest_raws):
+                await _wa_queue_remove(_r, raw)
+                await _wa_audit(_r, "digested", it, f"collapsed into the morning summary of {len(digest_items)} updates")
+    except Exception as exc:
+        print(f"[QuietHours] consolidation skipped: {exc}")
+
+
+async def _wa_channel_down(_r, error: str) -> None:
+    """Record that the CHANNEL (bridge / WhatsApp session) is down: since when and why. Written once per outage."""
+    try:
+        if not await _r.exists(_wa_channel_key()):
+            await _r.set(_wa_channel_key(), json.dumps({"down_since": int(time.time()), "reason": str(error)[:160]}), ex=14 * 86400)
+            print(f"[WhatsAppChannel] DOWN: {str(error)[:160]} - queued alerts are kept, not retried against the dead channel")
+    except Exception:
+        pass
+
+
+async def _wa_channel_up(_r, delivered_now: int) -> None:
+    """First confirmed send after an outage: clear the state and tell the owner ONCE, through the recovered channel,
+    what happened to the alerts that waited. 'Accepted by WhatsApp' is all the bridge can prove - never 'read'."""
+    try:
+        raw = await _r.get(_wa_channel_key())
+        if not raw:
+            return
+        st = json.loads(raw)
+        await _r.delete(_wa_channel_key())
+        hours = max(1, int((time.time() - float(st.get("down_since", time.time()))) // 3600))
+        dead = _wa_dead_letter_summary(await _r.lrange(_WA_QUIET_DEAD_KEY, 0, 199), time.time(), window_s=hours * 3600 + 3600) or {}
+        lost = sum(dead.values())
+        body = (f"החיבור ל-WhatsApp היה מנותק כ-{hours} שעות ({'ללא התחברות' if 'logged' in st.get('reason', '') or 'authenticated' in st.get('reason', '') else 'הבריידג׳ לא זמין'}). "
+                "ההתראות שהמתינו נשמרו ונשלחות עכשיו (לפי סדר חשיבות).")
+        if lost:
+            body += f"\n{_he_lost(lost)} לא נשמרו וסומנו בתור ההתראות שלא נמסרו; הפרטים בלי תוכן ב-Redis."
+        await notify_owner("health", "WhatsApp חזר לפעול", body, severity="success",
+                           alert_key=f"wa_channel_recovered_{datetime.now(APP_LOCAL_TZ):%Y-%m-%d-%H}", cooldown_s=3600,
+                           group="wa_channel")
+    except Exception as exc:
+        print(f"[WhatsAppChannel] recovery report failed: {exc}")
+
+
+def _he_lost(n: int) -> str:
+    import owner_message_format as _omf
+    return _omf.he_count(n, "alert")
+
 
 
 async def _flush_wa_quiet_queue() -> int:
@@ -4012,8 +4149,10 @@ async def _flush_wa_quiet_queue() -> int:
     perform outside I/O, so this gap is structural, not a shortcut taken here.
     """
     sent = 0
+    channel_down = False
     try:
         _r = await get_redis()
+        await _wa_consolidate_queue(_r)
         while sent < 50:
             raw = await _r.lindex(_WA_QUIET_QUEUE_KEY, 0)
             if not raw:
@@ -4032,6 +4171,18 @@ async def _flush_wa_quiet_queue() -> int:
                 await _wa_dead_letter(_r, item if isinstance(item, dict) else {}, "invalid_payload")
                 await _wa_queue_remove(_r, raw)
                 continue
+            if item.get("queued_ts") and time.time() - float(item["queued_ts"]) > _WA_QUEUE_MAX_AGE_S:
+                await _wa_dead_letter(_r, item, "expired", "older than WA_QUEUE_MAX_AGE_S")
+                await _wa_queue_remove(_r, raw)
+                await _wa_audit(_r, "expired", item, "too old to be useful after a long channel outage")
+                continue
+            # at-least-once, but never twice for a message the bridge already accepted (crash between send and remove,
+            # or a recovery pass racing the old one): a content hash marks accepted sends for 24 h.
+            _sig = f"{_WA_QUIET_QUEUE_KEY}:sent:" + hashlib.sha1((str(item.get("to")) + str(item.get("text"))).encode()).hexdigest()
+            if await _r.exists(_sig):
+                await _wa_queue_remove(_r, raw)
+                await _wa_audit(_r, "duplicate_skipped", item, "already accepted by WhatsApp before a restart; removing the leftover")
+                continue
             try:
                 result = await _wa_send(
                     to=item["to"],
@@ -4040,9 +4191,24 @@ async def _flush_wa_quiet_queue() -> int:
             except Exception as exc:
                 result = {"ok": False, "error": str(exc)}
             if result.get("ok"):
+                await _r.set(_sig, "1", ex=86400)       # survives a crash between send and remove ...
                 await _wa_queue_remove(_r, raw)
+                await _r.delete(_sig)                   # ... and is cleared once the item is really gone
+                await _wa_audit(_r, "delivered", item, "accepted by WhatsApp (delivery/read not observable)")
                 sent += 1
+                if channel_down or sent == 1:
+                    await _wa_channel_up(_r, sent)
+                    channel_down = False
+                await asyncio.sleep(_WA_FLUSH_PACE_S)   # no burst: one message every few seconds
                 continue
+            import wa_queue_plan as _wqp
+            if _wqp.channel_error_kind(result.get("error")) == "down":
+                # The CHANNEL is broken (logged out / awaiting QR / bridge unreachable): spending this item's own
+                # attempts on it dead-lettered nine alerts in the 16-17 Nov outage. Keep everything queued, record
+                # the outage once, stop the pass; the first successful send after it reports the recovery.
+                await _wa_channel_down(_r, str(result.get("error")))
+                channel_down = True
+                break
             # Failure — exception or explicit ok=False. The item is NOT removed.
             if _wa_permanent_error(result.get("error")):
                 # No retry can fix a refused payload (#70): it used to sit at the head for
@@ -4066,7 +4232,8 @@ async def _flush_wa_quiet_queue() -> int:
             break  # stop this pass — preserves FIFO order, avoids a tight retry loop
         if sent:
             print(f"[QuietHours] flushed {sent} queued message(s)")
-        await _report_wa_dead_letters(_r)
+        if not channel_down and not await _r.exists(_wa_channel_key()):
+            await _report_wa_dead_letters(_r)      # never report a broken channel THROUGH the broken channel
     except Exception as exc:
         print(f"[QuietHours] flush error: {exc}")
     return sent
@@ -4100,7 +4267,7 @@ async def _flush_wa_retry_queue() -> int:
                 await _wa_dead_letter(_r, item if isinstance(item, dict) else {}, "invalid_payload")
                 await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
                 continue
-            if time.time() - float(item.get("queued_ts") or 0) > _WA_RETRY_MAX_AGE_S:
+            if time.time() - float(item.get("queued_ts") or 0) > (_WA_QUEUE_MAX_AGE_S if item.get("critical") else _WA_RETRY_MAX_AGE_S):
                 await _wa_dead_letter(_r, item, "expired")
                 await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
                 continue
@@ -4113,7 +4280,12 @@ async def _flush_wa_retry_queue() -> int:
             if result.get("ok"):
                 await _r.lrem(_WA_RETRY_QUEUE_KEY, 1, raw)
                 sent += 1
+                await _wa_channel_up(_r, sent)
                 continue
+            import wa_queue_plan as _wqp2
+            if _wqp2.channel_error_kind(result.get("error")) == "down":
+                await _wa_channel_down(_r, str(result.get("error")))   # keep it; the channel, not the item, is broken
+                break
             attempts = int(item.get("attempts", 0)) + 1
             if _wa_permanent_error(result.get("error")) or attempts >= _WA_QUIET_MAX_ATTEMPTS:
                 reason = "permanent_error" if _wa_permanent_error(result.get("error")) else "retry_exhausted"
@@ -4209,6 +4381,7 @@ _NOTIFY_STATE_LABEL = {
     "resolved": "✅ נפתר",
 }
 _ALERT_STATE_TTL_S = 30 * 86400
+_EVENT_SEEN_TTL_S = int(os.getenv("OWNER_EVENT_SEEN_TTL_S", str(3 * 86400)))
 
 
 def _alert_state_key(alert_key: str) -> str:
@@ -4260,6 +4433,8 @@ async def notify_owner(
     remind_s: int = 0,
     ref: str = "",
     choices: "list | None" = None,
+    event_keys: "list | None" = None,
+    group: str = "",
 ) -> dict:
     """The one function every proactive owner alert must call — health, harvest,
     orders, social, supplier. Gives every message a consistent
@@ -4298,6 +4473,28 @@ async def notify_owner(
         state = _notify_decide_state(_prev, fingerprint, state, remind_s, time.time())
         if state is None:
             return {"ok": False, "suppressed": True, "error": "unchanged"}
+    # One underlying event = one owner message, whichever agent noticed it (audit 2026-11-24: the Email Agent and
+    # BOAZ both alerted on the same supplier mail, 19 messages for one newsletter sender). `event_keys` are semantic
+    # identities of the event (e.g. "mail:<ref>", "thread:<hash>"); if any was already reported to the owner within
+    # its window, this report is merged (suppressed) and ALL its keys are recorded as seen so later aliases merge too.
+    _ev_keys = [str(k) for k in (event_keys or []) if k]
+    if _ev_keys and state != "resolved":
+        try:
+            _r = await get_redis()
+            for _k in _ev_keys:
+                if await _r.exists(f"autospare:event_seen:{_k}"):
+                    for _k2 in _ev_keys:
+                        await _r.set(f"autospare:event_seen:{_k2}", "1", ex=_EVENT_SEEN_TTL_S)
+                    print(f"[notify_owner] merged duplicate event ({_k}) category={category} title={title[:60]!r}")
+                    return {"ok": False, "suppressed": True, "error": "same_event"}
+        except Exception:
+            pass  # Redis unavailable: send rather than lose the alert
+    # Owner messages never carry internal diagnostics (tracebacks, SQL, shell commands, docs URLs): the full raw text
+    # goes to the log under a stable reference, the message carries a short Hebrew classification + that reference.
+    import owner_message_format as _omf
+    body, _raw_diag = _omf.sanitize_body(body)
+    for _ref, _raw in _raw_diag:
+        print(f"[owner_error ref={_ref}] {category}/{alert_key or title[:40]}: {_raw[:1500]!r}")
     cat_label = _NOTIFY_CATEGORIES.get(category, category)
     sev_icon = _NOTIFY_SEVERITY_ICON.get(severity, "ℹ️")
     _state_label = _NOTIFY_STATE_LABEL.get(state, "")
@@ -4320,7 +4517,18 @@ async def notify_owner(
         # alert_key threads through to the quiet-hours queue's dedup (root-fix
         # 2026-09-09) so a persistent condition that re-queues every sampling
         # cycle all night collapses to one delivery instead of bursting at 09:00.
-        result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key)
+        text = _omf.cap_message(text, int(os.getenv("OWNER_MSG_MAX_CHARS", "1200")), "(המשך בקונסולה)")
+        result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key,
+                                       meta={"group": group or alert_key, "state": state or "", "sev": severity,
+                                             "title": f"{_state_label + ' · ' if _state_label else ''}{title}"[:120]}
+                                       if (group or alert_key) else None)
+        if (result.get("ok") or result.get("queued")) and _ev_keys:
+            try:
+                _r = await get_redis()
+                for _k in _ev_keys:
+                    await _r.set(f"autospare:event_seen:{_k}", "1", ex=_EVENT_SEEN_TTL_S)
+            except Exception:
+                pass
         if result.get("ok") and alert_key:
             # Set cooldown ONLY after a confirmed successful send — a failed send must
             # not burn the cooldown window (root-fix 2026-08-26: bridge-down failures
@@ -5558,7 +5766,8 @@ async def _noa_eod_report_loop():
                         COUNT(*) FILTER (WHERE created_at >= :ws) AS identified,
                         COUNT(*) FILTER (WHERE created_at >= :ws AND status IN ('approved','posted')) AS approved,
                         COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'posted') AS published,
-                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'pending_approval') AS pending
+                        COUNT(*) FILTER (WHERE created_at >= :ws AND status = 'pending_approval') AS pending,
+                        COUNT(*) FILTER (WHERE status = 'pending_approval') AS pending_all
                     FROM group_comment_drafts
                 """), {"ws": window_start})).fetchone()
 
@@ -5585,17 +5794,6 @@ async def _noa_eod_report_loop():
                     FROM social_posts WHERE created_at >= :ws
                 """), {"ws": window_start})).fetchone()
 
-            ops_block = ""
-            try:  # month-long observability: scan volume, approvals, failures, latency, readiness
-                from social import noa_ops as _noa_ops_eod
-                async with async_session_factory() as _ops_db:
-                    ops_block = "\n\n" + _noa_ops_eod.format_metrics(
-                        await _noa_ops_eod.daily_metrics(_ops_db, window_start),
-                        await _noa_ops_eod.readiness_report(_ops_db))
-            except Exception as exc:
-                logger.warning("noa_eod_report_loop: ops metrics unavailable: %s", exc)
-                ops_block = "\n\nOPERATIONS: metrics unavailable this cycle"
-
             notable: list[str] = []
             # Zero groups is ambiguous: "scanned, found nothing" or "never scanned". On 2026-10-17
             # and 10-18 the 10:00 IL scan was cut by backend restarts (no catch-up) and the report
@@ -5606,47 +5804,30 @@ async def _noa_eod_report_loop():
                 _ws_epoch = window_start.replace(tzinfo=timezone.utc).timestamp()
                 _fmt = lambda e: datetime.fromtimestamp(e, APP_LOCAL_TZ).strftime("%d/%m %H:%M")  # noqa: E731
                 if _gs["running"]:
-                    notable.append(f"Group scan still running (started {_fmt(_gs['started_at'])}) — group numbers are partial")
+                    notable.append(f"סריקת הקבוצות עדיין רצה (התחילה {_fmt(_gs['started_at'])}) — נתוני הקבוצות חלקיים")
                 elif not _gs["known"]:
-                    notable.append("Group scan: no run recorded — group numbers do not reflect a scan")
+                    notable.append("לא נרשמה סריקת קבוצות — נתוני הקבוצות לא משקפים סריקה")
                 elif (_gs.get("finished_at") or 0) >= _ws_epoch and (_gs.get("finished_at") or 0) >= _gs["started_at"]:
                     pass                                    # completed inside the window: numbers are real
                 elif _gs["started_at"] >= _ws_epoch:
-                    notable.append(f"Group scan INTERRUPTED (started {_fmt(_gs['started_at'])}, never finished) — "
-                                   "group numbers are incomplete")
+                    notable.append(f"סריקת הקבוצות הופסקה (התחילה {_fmt(_gs['started_at'])} ולא הסתיימה) — הנתונים חלקיים")
                 else:
-                    notable.append("Group scan did NOT run in the last 24 h — 0 means nothing was scanned, "
-                                   "not that nothing was found")
+                    notable.append("סריקת הקבוצות לא רצה ב-24 השעות האחרונות — אפס אומר שלא נסרק דבר, לא שלא נמצא דבר")
             except Exception as exc:
-                notable.append(f"Group scan status unknown ({type(exc).__name__})")
+                notable.append("מצב סריקת הקבוצות לא ידוע")
             try:
                 if not engagement.fb_configured():
-                    notable.append("Facebook Page not configured (FACEBOOK_PAGE_ID/FACEBOOK_PAGE_TOKEN unset)")
+                    notable.append("עמוד הפייסבוק לא מוגדר (חסר מזהה או טוקן)")
             except Exception:
                 pass
 
-            report = (
-                "GROUPS\n"
-                f"- Relevant posts identified: {g.identified}\n"
-                f"- Draft replies created: {g.identified}\n"
-                f"- Replies approved: {g.approved}\n"
-                f"- Replies actually published: {g.published}\n"
-                f"- Failed/pending: {g.pending}\n\n"
-                "PAGE\n"
-                f"- Relevant feed items identified: {p.identified}\n"
-                f"- Draft responses created: {p.drafted}\n"
-                f"- Responses approved: {p.published}\n"
-                f"- Responses actually published: {p.published}\n"
-                f"- Original Page posts published: {page_posts}\n"
-                f"- Failed/pending: {p.pending}\n\n"
-                "PLATFORM RESULT (all platforms)\n"
-                f"- Published successfully: {overall.published}\n"
-                f"- Pending approval: {overall.pending}\n"
-                f"- Approved but not fully published: {overall.approved_not_published}\n\n"
-                "NOTABLE\n"
-                + ("\n".join(f"- {n}" for n in notable) if notable else "- (none)")
-                + ops_block
-            )
+            import owner_message_format as _omf_noa
+            report = _omf_noa.format_noa_daily(
+                groups_identified=g.identified, groups_approved=g.approved, groups_published=g.published,
+                groups_pending_24h=g.pending, groups_pending_total=g.pending_all,
+                page_identified=p.identified, page_published=p.published, page_posts=page_posts,
+                published_all=overall.published, pending_posts=overall.pending,
+                approved_unpublished=overall.approved_not_published, notable=notable)
 
             today_key = datetime.now(APP_LOCAL_TZ).date().isoformat()
             # A day on which nothing was identified, drafted, approved or published is not a
@@ -5659,14 +5840,14 @@ async def _noa_eod_report_loop():
                                           "יש שוב פעילות לדווח; הדוח היומי המלא מצורף בהודעה הבאה.",
                                           alert_key="noa_eod_no_activity")
                 await notify_owner(
-                    "social", "NOA — Daily Facebook Activity", report,
+                    "social", "NOA — סיכום פעילות הפייסבוק היומי", report,
                     severity="info",
                     alert_key=f"noa_eod_report_{today_key}",
                     cooldown_s=23 * 3600,  # at most once per day
                 )
             else:
                 import hashlib as _eod_hl
-                _eod_why = "\n".join(f"- {n}" for n in notable) if notable else "- (no reason recorded)"
+                _eod_why = "\n".join(f"- {n}" for n in notable) if notable else "- לא נרשמה סיבה"
                 await notify_owner(
                     "social", "NOA — אין פעילות פייסבוק ב-24 השעות האחרונות",
                     f"לא זוהו פוסטים, לא נוסחו ולא פורסמו תגובות.\n{_eod_why}\n"
@@ -6064,9 +6245,8 @@ async def _oom_watchdog_loop() -> None:
             f"🔴 {new_kills} OOM kill(s) זוהו בהפעלה (Backend container)",
             f"{new_kills} תהליך(ים) נהרגו ע\"י ה-OOM killer בהפעלה האחרונה.\n"
             f"RAM פנוי: {_free:.0f} MB\n"
-            f"פעולה מומלצת — הוסף swap:\n"
-            f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
-            f"mkswap /swapfile && swapon /swapfile",
+            f"המערכת ממשיכה לפעול והשירותים שנהרגו הופעלו מחדש. הסיבה המדויקת (איזה תהליך צרך את הזיכרון) "
+            f"לא אומתה — נדרשת בדיקה של צריכת הזיכרון לפני כל שינוי בשרת.",
             severity="critical",
             alert_key="oom_watchdog_startup",
             cooldown_s=3600,
@@ -6104,9 +6284,7 @@ async def _oom_watchdog_loop() -> None:
                     f"{new_kills} תהליך(ים) נהרגו ע\"י ה-OOM killer בדקות האחרונות.\n"
                     f"RAM פנוי: {_free:.0f} MB\n"
                     f"סה\"כ במריצה זו: {current} OOM kill(s).\n"
-                    f"פעולה מומלצת — הוסף swap:\n"
-                    f"fallocate -l 4G /swapfile && chmod 600 /swapfile && "
-                    f"mkswap /swapfile && swapon /swapfile",
+                    f"המערכת ממשיכה לפעול. הסיבה המדויקת לא אומתה — נדרשת בדיקה של צריכת הזיכרון לפני כל שינוי בשרת.",
                     severity="critical",
                     alert_key="oom_watchdog_new_kills",
                     cooldown_s=1800,
@@ -6781,15 +6959,20 @@ async def _health_monitor_loop():
                     try:
                         import disk_alert as _da
                         _r = await get_redis()
-                        _seen_dev = set()
+                        _seen_samples: list = []
+                        import owner_message_format as _omf_d
                         for _dp in ("/", "/app/state"):
-                            try:  # one alert stream per distinct filesystem (state volume shares / today)
-                                _dev = os.stat(_dp).st_dev
+                            # one alert stream per distinct STORAGE. st_dev is not enough: inside the container "/"
+                            # (overlay) and "/app/state" (volume) differ in st_dev but report the same host disk
+                            # (audit 2026-11-24: two alerts, identical numbers) - compare what they report.
+                            try:
+                                _probe = _da.sample(_dp)
                             except OSError:
-                                _dev = None
-                            if _dev is not None and _dev in _seen_dev:
+                                _probe = None
+                            if _probe is not None and any(_omf_d.disk_same_storage(_probe, _k) for _k in _seen_samples):
                                 continue
-                            _seen_dev.add(_dev)
+                            if _probe is not None:
+                                _seen_samples.append(_probe)
                             _sk = f"autospare:disk_alert:{_dp}"
                             try:
                                 _s = _da.sample(_dp)
@@ -6808,7 +6991,9 @@ async def _health_monitor_loop():
                                 _t, _b = _da.format_message(_s, _lvl, _act, _cons)
                                 _res = await notify_owner("health", _t, _b,
                                                           severity=_da.SEVERITY.get(_lvl, "info"),
-                                                          alert_key=f"disk_{_lvl}:{_dp}:{_act}", cooldown_s=60)
+                                                          alert_key=f"disk_{_lvl}:{_dp}:{_act}", cooldown_s=60,
+                                                          group=f"disk:{_dp}",
+                                                          state="resolved" if _act == "recovered" else "")
                                 if _res.get("ok") or _res.get("queued"):
                                     await _r.set(_sk + ":level", _lvl)
                                     await _r.set(_sk + ":sent_at", str(time.time()))

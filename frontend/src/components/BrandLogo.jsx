@@ -12,7 +12,10 @@ const LOGO_SOURCES = [
 
 const LOGO_SIZE_PRESETS = {
   default: 'h-20 sm:h-24 lg:h-32 w-auto max-w-[400px] lg:max-w-[460px]',
-  appHeader: 'h-20 sm:h-24 lg:h-32 xl:h-36 w-auto max-w-[460px] lg:max-w-[520px] xl:max-w-[560px]',
+  // ONE header logo size for the landing and the app header; it must fit INSIDE the 96px header bar (the old
+  // appHeader preset reached 144px and hung below it).
+  header: 'h-14 sm:h-16 lg:h-[72px] w-auto max-w-[220px] lg:max-w-[260px]',
+  appHeader: 'h-14 sm:h-16 lg:h-[72px] w-auto max-w-[220px] lg:max-w-[260px]',
   dashboard: 'h-16 sm:h-20 lg:h-28 w-auto max-w-[260px] lg:max-w-[300px]',
   auth: 'h-24 sm:h-28 lg:h-36 w-auto max-w-[460px] lg:max-w-[520px]',
   legal: 'h-20 sm:h-24 lg:h-32 w-auto max-w-[380px] lg:max-w-[440px]',

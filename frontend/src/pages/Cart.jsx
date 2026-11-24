@@ -279,9 +279,9 @@ export default function Cart() {
     return (
       <div className="max-w-lg mx-auto mt-16 card p-10 text-center">
         <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-brand-navy mb-2">הזמנה בוצעה!</h2>
-        <p className="text-gray-500 mb-1">מספר הזמנה: <strong>{orderNumber}</strong></p>
-        <p className="text-sm text-gray-400 mb-6">קבלה נשלחה לאימייל {user?.email}</p>
+        <h2 className="text-2xl font-bold text-white mb-2">הזמנה בוצעה!</h2>
+        <p className="text-[#94A3B8] mb-1">מספר הזמנה: <strong>{orderNumber}</strong></p>
+        <p className="text-sm text-[#94A3B8] mb-6">קבלה נשלחה לאימייל {user?.email}</p>
         <div className="flex gap-3 justify-center">
           <Link to="/orders" className="btn-primary">הזמנות שלי</Link>
           <Link to="/parts" className="btn-secondary">המשך קניות</Link>
@@ -294,8 +294,8 @@ export default function Cart() {
     return (
       <div className="max-w-lg mx-auto mt-16 card p-12 text-center">
         <ShoppingCart className="w-14 h-14 text-gray-300 mx-auto mb-4" />
-        <h2 className="text-xl font-bold text-gray-700 mb-2">הסל ריק</h2>
-        <p className="text-sm text-gray-400 mb-6">הוסף חלקים מעמוד החיפוש</p>
+        <h2 className="text-xl font-bold text-[#E2E8F0] mb-2">הסל ריק</h2>
+        <p className="text-sm text-[#94A3B8] mb-6">הוסף חלקים מעמוד החיפוש</p>
         <Link to="/parts" className="btn-primary">חפש חלקים</Link>
       </div>
     )
@@ -304,7 +304,7 @@ export default function Cart() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="section-title">סל קניות <span className="text-base font-normal text-gray-400">({t.count} פריטים)</span></h1>
+        <h1 className="section-title">סל קניות <span className="text-base font-normal text-[#94A3B8]">({t.count} פריטים)</span></h1>
         <div className="flex gap-2">
           {['cart', 'address', 'payment'].map((s, i) => (
             <div key={s} className={`w-3 h-3 rounded-full ${step === s ? 'bg-brand-600' : i < ['cart','address','payment'].indexOf(step) ? 'bg-brand-300' : 'bg-gray-200'}`} />
@@ -315,7 +315,7 @@ export default function Cart() {
       {step === 'cart' && (
         <>
           <div className="card p-4 flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2 text-gray-700 cursor-pointer">
+            <label className="flex items-center gap-2 text-[#E2E8F0] cursor-pointer">
               <input
                 type="checkbox"
                 checked={allSelected}
@@ -324,7 +324,7 @@ export default function Cart() {
               />
               בחר הכל
             </label>
-            <span className="text-gray-500">נבחרו {selectedItems.length} מתוך {items.length}</span>
+            <span className="text-[#94A3B8]">נבחרו {selectedItems.length} מתוך {items.length}</span>
           </div>
 
           <div className="space-y-3">
@@ -338,31 +338,31 @@ export default function Cart() {
                   aria-label={`select-${item.supplierPartId}`}
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-brand-navy truncate">{item.name}</p>
-                  <p className="text-xs text-gray-500">{item.manufacturer}</p>
+                  <p className="font-medium text-white truncate">{item.name}</p>
+                  <p className="text-xs text-[#94A3B8]">{item.manufacturer}</p>
                   {offerClassInfo(item.offerPartType) && (
                     <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium mt-0.5 ${offerClassInfo(item.offerPartType).cls}`}>{offerClassInfo(item.offerPartType).label}</span>
                   )}
-                  <p className="text-brand-600 font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
+                  <p className="text-[#38BDF8] font-semibold mt-1">₪{(item.price * item.quantity).toFixed(2)}</p>
                   {item.isEstimated && (
-                    <span className="inline-block text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 mt-0.5">~ מחיר משוער</span>
+                    <span className="inline-block text-xs text-[#FBBF24] bg-[rgba(245,158,11,0.12)] border border-[rgba(245,158,11,0.35)] rounded-full px-2 py-0.5 mt-0.5">~ מחיר משוער</span>
                   )}
                   {item.deliveryDays && (
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <p className="text-xs text-[#94A3B8] mt-0.5">
                       🚚 אספקה: {item.deliveryDays} ימים
                     </p>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => handleUpdateQty(item, item.quantity - 1)} className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100">
+                  <button onClick={() => handleUpdateQty(item, item.quantity - 1)} className="w-7 h-7 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
                     <Minus className="w-3 h-3" />
                   </button>
-                  <span className="w-6 text-center font-medium text-brand-navy">{item.quantity}</span>
-                  <button onClick={() => handleUpdateQty(item, item.quantity + 1)} className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-100">
+                  <span className="w-6 text-center font-medium text-white">{item.quantity}</span>
+                  <button onClick={() => handleUpdateQty(item, item.quantity + 1)} className="w-7 h-7 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
-                <button onClick={() => handleRemoveItem(item.serverCartItemId)} className="p-2 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600">
+                <button onClick={() => handleRemoveItem(item.serverCartItemId)} className="p-2 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400 hover:text-[#F87171]">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -370,14 +370,14 @@ export default function Cart() {
           </div>
 
           <div className="card p-5 space-y-2 text-sm">
-            <div className="flex justify-between text-gray-600"><span>מחיר החלקים כולל מע״מ (נבחר)</span><span>₪{selectedSubtotal.toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>מתוכו מע״מ (נבחר)</span><span>₪{selectedVat.toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>משלוח — מחיר ידוע לכל ספק (נבחר)</span><span>₪{selectedShipping.toFixed(2)}</span></div>
-            <div className="flex justify-between text-base font-bold text-brand-navy border-t border-gray-200 pt-2">
-              <span>סה״כ לתשלום</span><span className="text-brand-600">₪{selectedTotal.toFixed(2)}</span>
+            <div className="flex justify-between text-[#94A3B8]"><span>מחיר החלקים כולל מע״מ (נבחר)</span><span>₪{selectedSubtotal.toFixed(2)}</span></div>
+            <div className="flex justify-between text-[#94A3B8]"><span>מתוכו מע״מ (נבחר)</span><span>₪{selectedVat.toFixed(2)}</span></div>
+            <div className="flex justify-between text-[#94A3B8]"><span>משלוח — מחיר ידוע לכל ספק (נבחר)</span><span>₪{selectedShipping.toFixed(2)}</span></div>
+            <div className="flex justify-between text-base font-bold text-white border-t border-[rgba(148,163,184,0.18)] pt-2">
+              <span>סה״כ לתשלום</span><span className="text-[#38BDF8]">₪{selectedTotal.toFixed(2)}</span>
             </div>
             {selectedItems.length !== items.length && (
-              <div className="flex justify-between text-xs text-gray-400 pt-1 border-t border-gray-100">
+              <div className="flex justify-between text-xs text-[#94A3B8] pt-1 border-t border-[rgba(148,163,184,0.18)]">
                 <span>סה״כ כל הסל</span><span>₪{t.total.toFixed(2)}</span>
               </div>
             )}
@@ -388,7 +388,7 @@ export default function Cart() {
             const maxDays = Math.max(...items.map((i) => i.deliveryDays ?? 14))
             const hasLongDelivery = items.some((i) => (i.deliveryDays ?? 0) > 18)
             return (
-              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-brand-50 text-brand-700 border border-brand-200' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
+              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-[rgba(14,165,233,0.35)]' : 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-blue-100'}`}>
                 <span>🚚</span>
                 <span>
                   {hasLongDelivery
@@ -408,22 +408,22 @@ export default function Cart() {
 
       {step === 'address' && (
         <div className="card p-6 space-y-4">
-          <h3 className="font-bold text-brand-navy">כתובת משלוח</h3>
+          <h3 className="font-bold text-white">כתובת משלוח</h3>
 
           {/* Profile address card */}
           {profileAddress && !useOtherAddress && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="bg-[rgba(14,165,233,0.12)] border border-[rgba(14,165,233,0.35)] rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
                   <MapPin className="w-5 h-5 text-blue-500 mt-0.5 shrink-0" />
                   <div>
-                    <p className="font-medium text-brand-navy">{profileAddress.street}</p>
-                    <p className="text-sm text-gray-600">{profileAddress.city}{profileAddress.postal_code ? `, ${profileAddress.postal_code}` : ''}</p>
+                    <p className="font-medium text-white">{profileAddress.street}</p>
+                    <p className="text-sm text-[#94A3B8]">{profileAddress.city}{profileAddress.postal_code ? `, ${profileAddress.postal_code}` : ''}</p>
                   </div>
                 </div>
                 <button
                   onClick={() => { setUseOtherAddress(true); setAddress({ street: '', city: '', postal_code: '', country: 'Israel' }) }}
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 shrink-0 mt-0.5"
+                  className="text-xs text-[#38BDF8] hover:text-blue-800 flex items-center gap-1 shrink-0 mt-0.5"
                 >
                   <Edit3 className="w-3 h-3" /> שנה כתובת
                 </button>
@@ -437,22 +437,22 @@ export default function Cart() {
               {useOtherAddress && (
                 <button
                   onClick={() => { setUseOtherAddress(false); setAddress(profileAddress) }}
-                  className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                  className="text-xs text-[#38BDF8] hover:text-blue-800 flex items-center gap-1"
                 >
                   ← חזור לכתובת המשלוח הרגילה
                 </button>
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">רחוב ומספר</label>
+                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">רחוב ומספר</label>
                   <input className="input-field" placeholder="הרצל 55" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>
+                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
                   <input className="input-field" placeholder="עכו" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">מיקוד</label>
+                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
                   <input className="input-field" placeholder="24100" value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value })} />
                 </div>
               </div>
@@ -468,18 +468,18 @@ export default function Cart() {
 
       {step === 'payment' && (
         <div className="card p-6 space-y-4">
-          <h3 className="font-bold text-brand-navy">תשלום</h3>
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-700">
+          <h3 className="font-bold text-white">תשלום</h3>
+          <div className="bg-[rgba(14,165,233,0.12)] border border-[rgba(14,165,233,0.35)] rounded-xl p-4 text-sm text-[#38BDF8]">
             <CreditCard className="w-5 h-5 mb-2" />
             <p className="font-medium">תשלום מאובטח</p>
-            <p className="text-xs mt-1 text-blue-600">הזמנה תאושר לאחר אימות תשלום בלבד. לא יוזמן שום דבר מהספק לפני כן.</p>
+            <p className="text-xs mt-1 text-[#38BDF8]">הזמנה תאושר לאחר אימות תשלום בלבד. לא יוזמן שום דבר מהספק לפני כן.</p>
           </div>
-          <div className="text-sm text-gray-600 space-y-1">
+          <div className="text-sm text-[#94A3B8] space-y-1">
             <div className="flex justify-between"><span>פריטים שנבחרו</span><span>{selectedCount}</span></div>
             <div className="flex justify-between"><span>כתובת</span><span>{address.street}, {address.city}</span></div>
-            <div className="flex justify-between font-bold text-brand-navy"><span>סה״כ</span><span className="text-brand-600">₪{payableTotal.toFixed(2)}</span></div>
+            <div className="flex justify-between font-bold text-white"><span>סה״כ</span><span className="text-[#38BDF8]">₪{payableTotal.toFixed(2)}</span></div>
             {typeof pendingCheckoutTotal === 'number' && Math.abs(pendingCheckoutTotal - selectedTotal) > 0.01 && (
-              <p className="text-xs text-amber-700">הסכום עודכן לפי מחיר ספק עדכני.</p>
+              <p className="text-xs text-[#FBBF24]">הסכום עודכן לפי מחיר ספק עדכני.</p>
             )}
           </div>
           <div className="flex gap-3">

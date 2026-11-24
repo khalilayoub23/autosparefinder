@@ -1,0 +1,292 @@
+{
+ "before_desktop_home": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": 220,
+  "logoBottom": 30,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 27,
+  "targets": 41,
+  "buttonRadii": [
+   "6px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ },
+ "before_desktop_parts": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": 97,
+  "logoBottom": 120,
+  "logoOverflowsHeader": true,
+  "tinyTargets": 15,
+  "targets": 27,
+  "buttonRadii": [
+   "8px",
+   "24px",
+   "12px",
+   "9999px",
+   "16px",
+   "0px"
+  ],
+  "openSuggestionLists": 1,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 10,
+  "hamburger": false,
+  "contrast": {
+   "sampled": 80,
+   "min": 1,
+   "below45": 31,
+   "worst": "חיפוש חופשי"
+  }
+ },
+ "before_desktop_cart": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": null,
+  "logoBottom": null,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 4,
+  "targets": 9,
+  "buttonRadii": [
+   "0px",
+   "6px",
+   "8px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ },
+ "before_mobile_home": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": 238,
+  "logoBottom": 60,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 24,
+  "targets": 35,
+  "buttonRadii": [
+   "6px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ },
+ "before_mobile_parts": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": 97,
+  "logoBottom": 88,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 13,
+  "targets": 25,
+  "buttonRadii": [
+   "8px",
+   "24px",
+   "12px",
+   "9999px",
+   "16px",
+   "0px"
+  ],
+  "openSuggestionLists": 1,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 10,
+  "hamburger": false,
+  "contrast": {
+   "sampled": 79,
+   "min": 1,
+   "below45": 30,
+   "worst": "חיפוש חופשי"
+  }
+ },
+ "before_mobile_cart": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": null,
+  "logoBottom": null,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 4,
+  "targets": 9,
+  "buttonRadii": [
+   "0px",
+   "6px",
+   "8px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ },
+ "after_desktop_home": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": 198,
+  "logoBottom": 30,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 27,
+  "targets": 41,
+  "buttonRadii": [
+   "6px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": true
+ },
+ "after_desktop_parts": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": 97,
+  "logoBottom": 84,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 13,
+  "targets": 27,
+  "buttonRadii": [
+   "6px",
+   "12px",
+   "9999px",
+   "16px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgb(21, 27, 39)",
+   "rgb(21, 27, 39)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": false,
+  "contrast": {
+   "sampled": 12,
+   "min": 5.95,
+   "below45": 0,
+   "worst": "שווה ערך ל-OEM"
+  }
+ },
+ "after_desktop_cart": {
+  "w": 1440,
+  "scrollW": 1440,
+  "overflow": false,
+  "headerBottom": null,
+  "logoBottom": null,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 4,
+  "targets": 9,
+  "buttonRadii": [
+   "0px",
+   "6px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ },
+ "after_mobile_home": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": 208,
+  "logoBottom": 60,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 24,
+  "targets": 36,
+  "buttonRadii": [
+   "6px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)",
+   "rgba(0, 0, 0, 0)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": true
+ },
+ "after_mobile_parts": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": 97,
+  "logoBottom": 76,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 11,
+  "targets": 25,
+  "buttonRadii": [
+   "6px",
+   "12px",
+   "9999px",
+   "16px",
+   "0px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [
+   "rgb(21, 27, 39)",
+   "rgb(21, 27, 39)"
+  ],
+  "rawBrakesSlugText": 0,
+  "hamburger": false,
+  "contrast": {
+   "sampled": 12,
+   "min": 5.95,
+   "below45": 0,
+   "worst": "שווה ערך ל-OEM"
+  }
+ },
+ "after_mobile_cart": {
+  "w": 390,
+  "scrollW": 390,
+  "overflow": false,
+  "headerBottom": null,
+  "logoBottom": null,
+  "logoOverflowsHeader": false,
+  "tinyTargets": 4,
+  "targets": 9,
+  "buttonRadii": [
+   "0px",
+   "6px"
+  ],
+  "openSuggestionLists": 0,
+  "bodyBg": "rgb(15, 18, 24)",
+  "cardBg": [],
+  "rawBrakesSlugText": 0,
+  "hamburger": false
+ }
+}

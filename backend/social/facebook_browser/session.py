@@ -570,9 +570,8 @@ class FacebookSession:
                 "NOA — נדרש חידוש חיבור לפייסבוק",
                 f"החיבור לפייסבוק פג וההתחברות האוטומטית נכשלה ({reason}).\n"
                 "עד לחידוש: סריקת הקבוצות ופרסום התגובות אינם פועלים.\n"
-                "לחידוש: ```docker exec autospare_backend python3 "
-                "/app/social/facebook_browser/fb_browser_login.py```\n"
-                "או ייבוא עוגיות: `maintenance/fb_cookie_import.py`.",
+                "👉 נדרש חידוש ידני של ההתחברות לפייסבוק (פעולה של מפעיל המערכת; הסוכן לא יכול לבצע אותה לבד). "
+                "הפרטים הטכניים נמצאים בלוג.",
                 severity="warning",
                 alert_key="fb_session_expired",
                 cooldown_s=6 * 3600,

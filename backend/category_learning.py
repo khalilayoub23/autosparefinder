@@ -476,6 +476,17 @@ async def similar_tokens(db, token: str, limit: int = 5) -> list:
     return [r[0] for r in rows]
 
 
+def looks_reversed_hebrew(token: str) -> bool:
+    """Hebrew stored in visual (reversed) order: a final-form letter (ךםןףץ) can only END a word, so a word that STARTS
+    with one - or ENDS with the non-final form of כ/מ/נ/פ/צ - is reversed. Such tokens (live: `ינשמ`, `תונולח`) are
+    not shown to the owner for approval: he cannot judge them and approving one files parts under a nonsense word.
+    Partial by nature (a reversed word that happens to start/end with a legal letter passes) - display filter only."""
+    t = str(token or "")
+    if not any("\u0590" <= c <= "\u05ff" for c in t):
+        return False
+    return t[0] in "ךםןףץ" or t[-1] in "כמנפצ"
+
+
 async def pending_for_owner(db, limit: int = 15) -> list:
     """Tokens that reached consensus and await the owner's approve/reject."""
     await ensure_table(db)
@@ -495,7 +506,7 @@ async def pending_for_owner(db, limit: int = 15) -> list:
     """), {"lim": limit})).fetchall()
     out = []
     for tok, cat, obs, tot, since in rows:
-        if is_blocked(tok):
+        if is_blocked(tok) or looks_reversed_hebrew(tok):
             continue
         out.append({"token": tok, "category": cat, "since": since,   # first recorded (#71)
                     "observations": obs, "agreement": obs / max(tot, 1)})

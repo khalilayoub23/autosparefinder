@@ -2224,7 +2224,7 @@ export default function Admin() {
             <div className="relative mb-3">
                 <button
                   onClick={openRepresentativeCreateModal}
-                  className="mb-2 inline-flex items-center gap-2 rounded-xl border border-cyan-300 bg-gradient-to-r from-cyan-500 to-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-[0_10px_24px_rgba(8,145,178,0.28)] transition hover:from-cyan-600 hover:to-brand-700 hover:shadow-[0_14px_30px_rgba(8,145,178,0.34)] md:absolute md:right-0 md:top-0 md:mb-0"
+                  className="mb-2 inline-flex items-center gap-2 rounded-brand border border-cyan-300 bg-gradient-to-r from-cyan-500 to-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-[0_10px_24px_rgba(8,145,178,0.28)] transition hover:from-cyan-600 hover:to-brand-700 hover:shadow-[0_14px_30px_rgba(8,145,178,0.34)] md:absolute md:right-0 md:top-0 md:mb-0"
                 >
                   <PlusCircle className="w-4 h-4" />
                   צור נציג חדש
@@ -2611,7 +2611,7 @@ export default function Admin() {
                             <button
                               onClick={() => setShowChatEmojiPicker((v) => !v)}
                               disabled={!selectedChat.admin_takeover_active || sendingChatReply}
-                              className="btn-ghost rounded-lg border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              className="btn-ghost rounded-brand border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
                               title="אימוג׳ים"
                             >
                               <Smile className="w-5 h-5" />
@@ -2619,7 +2619,7 @@ export default function Admin() {
                             <button
                               onClick={() => chatReplyFileRef.current?.click()}
                               disabled={!selectedChat.admin_takeover_active || sendingChatReply}
-                              className="btn-ghost rounded-lg border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              className="btn-ghost rounded-brand border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
                               title="צרף תמונה"
                             >
                               <Image className="w-5 h-5" />
@@ -3284,7 +3284,7 @@ export default function Admin() {
               <button
                 onClick={() => runDbAgentTask('flag_fake_skus', 'Task 6 - סימון SKU חשודים')}
                 disabled={!!dbAgentTaskRunning}
-                className="btn-secondary border border-gray-300 rounded-xl px-4 py-2 flex items-center justify-center gap-2"
+                className="btn-secondary border border-gray-300 rounded-brand px-4 py-2 flex items-center justify-center gap-2"
               >
                 {dbAgentTaskRunning === 'flag_fake_skus'
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -3295,7 +3295,7 @@ export default function Admin() {
               <button
                 onClick={() => runDbAgentTask('fill_car_brands', 'Task 7 - השלמת מותגי רכב')}
                 disabled={!!dbAgentTaskRunning}
-                className="btn-secondary border border-gray-300 rounded-xl px-4 py-2 flex items-center justify-center gap-2"
+                className="btn-secondary border border-gray-300 rounded-brand px-4 py-2 flex items-center justify-center gap-2"
               >
                 {dbAgentTaskRunning === 'fill_car_brands'
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -3739,7 +3739,7 @@ export default function Admin() {
             <button
               onClick={handleRejectReturn}
               disabled={processingReturn === showRejectModal}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-brand bg-red-600 text-white font-semibold hover:bg-red-700 disabled:opacity-50 transition-colors"
             >
               {processingReturn === showRejectModal ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
               אשר דחייה

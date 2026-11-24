@@ -489,7 +489,7 @@ export default function Chat() {
               <p className="text-gray-500 text-sm mb-6">אני יכול לעזור לך למצוא חלקי רכב, לבדוק הזמנות ועוד.</p>
               <div className="flex flex-wrap gap-2 justify-center max-w-lg">
                 {QUICK_MSGS.map((q) => (
-                  <button key={q} onClick={() => handleSend(q)} className="btn-secondary text-sm px-4 py-2 rounded-xl">
+                  <button key={q} onClick={() => handleSend(q)} className="btn-secondary text-sm px-4 py-2 rounded-brand">
                     {q}
                   </button>
                 ))}

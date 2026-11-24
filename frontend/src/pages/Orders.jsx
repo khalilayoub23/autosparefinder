@@ -44,18 +44,18 @@ function buildTrackingUrl(trackingNumber, storedUrl) {
 
 const STATUS_MAP = {
   pending_payment:   { label: 'ממתין לתשלום', icon: Clock,       color: 'bg-yellow-100 text-yellow-700' },
-  paid:              { label: 'שולם',          icon: CheckCircle, color: 'bg-blue-100 text-blue-700'    },
-  confirmed:         { label: 'אושר',          icon: CheckCircle, color: 'bg-blue-100 text-blue-700'    },
+  paid:              { label: 'שולם',          icon: CheckCircle, color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'    },
+  confirmed:         { label: 'אושר',          icon: CheckCircle, color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'    },
   processing:        { label: 'בעיבוד',        icon: Clock,       color: 'bg-indigo-100 text-indigo-700'},
   supplier_ordered:  { label: 'הוזמן מספק',    icon: Truck,       color: 'bg-cyan-100 text-cyan-700'   },
-  shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-brand-100 text-brand-700'},
-  delivered:         { label: 'נמסר',          icon: CheckCircle, color: 'bg-green-100 text-green-700' },
-  cancelled:         { label: 'בוטל',          icon: XCircle,     color: 'bg-red-100 text-red-700'     },
-  refunded:          { label: 'הוחזר',         icon: XCircle,     color: 'bg-brand-100 text-brand-700'},
+  shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'},
+  delivered:         { label: 'נמסר',          icon: CheckCircle, color: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
+  cancelled:         { label: 'בוטל',          icon: XCircle,     color: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]'     },
+  refunded:          { label: 'הוחזר',         icon: XCircle,     color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'},
 }
 
 function StatusBadge({ status }) {
-  const s = STATUS_MAP[status] || { label: status, icon: Clock, color: 'bg-gray-100 text-gray-700' }
+  const s = STATUS_MAP[status] || { label: status, icon: Clock, color: 'bg-[#252D3D] text-[#E2E8F0]' }
   const Icon = s.icon
   return (
     <span className={`badge ${s.color} flex items-center gap-1`}>
@@ -76,7 +76,7 @@ const TIMELINE_STEPS = [
 function OrderTimeline({ status }) {
   if (['cancelled', 'refunded'].includes(status)) {
     return (
-      <div className="flex items-center gap-2 py-2 px-3 bg-red-50 rounded-xl text-sm text-red-600">
+      <div className="flex items-center gap-2 py-2 px-3 bg-[rgba(239,68,68,0.12)] rounded-xl text-sm text-[#F87171]">
         <XCircle className="w-4 h-4 shrink-0" />
         <span>{STATUS_MAP[status]?.label || status}</span>
       </div>
@@ -93,13 +93,13 @@ function OrderTimeline({ status }) {
             <div className="flex flex-col items-center gap-1">
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
                 done   ? 'bg-brand-500 border-brand-500 text-white' :
-                active ? 'bg-white border-brand-500 text-brand-600 ring-2 ring-brand-200' :
-                         'bg-white border-gray-200 text-gray-300'
+                active ? 'bg-[#1E2535] border-brand-500 text-[#38BDF8] ring-2 ring-brand-200' :
+                         'bg-[#1E2535] border-[rgba(148,163,184,0.18)] text-gray-300'
               }`}>
                 {done ? '✓' : i + 1}
               </div>
               <span className={`text-xs whitespace-nowrap ${
-                active ? 'text-brand-600 font-semibold' : done ? 'text-gray-500' : 'text-gray-300'
+                active ? 'text-[#38BDF8] font-semibold' : done ? 'text-[#94A3B8]' : 'text-gray-300'
               }`}>{step.label}</span>
             </div>
             {i < TIMELINE_STEPS.length - 1 && (
@@ -205,7 +205,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
 
   return (
     <div className="card overflow-hidden">
-      <div className="p-5 flex items-center justify-between cursor-pointer hover:bg-gray-50" onClick={load}>
+      <div className="p-5 flex items-center justify-between cursor-pointer hover:bg-[#1E2535]" onClick={load}>
         {/* Left: optional checkbox + icon + order info */}
         <div className="flex items-center gap-3">
           {order.status === 'pending_payment' && (
@@ -217,12 +217,12 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
               className="w-4 h-4 accent-brand-600 cursor-pointer flex-shrink-0"
             />
           )}
-          <div className="w-10 h-10 bg-brand-50 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Package className="w-5 h-5 text-brand-600" />
+          <div className="w-10 h-10 bg-[rgba(14,165,233,0.12)] rounded-xl flex items-center justify-center flex-shrink-0">
+            <Package className="w-5 h-5 text-[#38BDF8]" />
           </div>
           <div>
-            <p className="font-semibold text-brand-navy">{order.order_number}</p>
-            <p className="text-xs text-gray-400">
+            <p className="font-semibold text-white">{order.order_number}</p>
+            <p className="text-xs text-[#94A3B8]">
               {safeFormatDate(order.created_at)}
             </p>
           </div>
@@ -230,7 +230,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
         {/* Right: amount + pay shortcut + status + chevron */}
         <div className="flex items-center gap-2 sm:gap-3">
           <div className="text-left hidden sm:block">
-            <p className="font-bold text-brand-navy">₪{Number(order.total).toFixed(2)}</p>
+            <p className="font-bold text-white">₪{Number(order.total).toFixed(2)}</p>
           </div>
           {order.status === 'pending_payment' && (
             <button
@@ -243,7 +243,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
             </button>
           )}
           <StatusBadge status={order.status} />
-          {loading ? <Loader2 className="w-4 h-4 animate-spin text-gray-400" /> : <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />}
+          {loading ? <Loader2 className="w-4 h-4 animate-spin text-[#94A3B8]" /> : <ChevronRight className={`w-4 h-4 text-[#94A3B8] transition-transform ${expanded ? 'rotate-90' : ''}`} />}
         </div>
       </div>
       {/* Inline tracking pill — visible without expanding */}
@@ -267,7 +267,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
         </div>
       )}
       {expanded && detail && (
-        <div className="border-t border-gray-100 p-5 bg-gray-50 space-y-4">
+        <div className="border-t border-[rgba(148,163,184,0.18)] p-5 bg-[#1E2535] space-y-4">
           {/* Status timeline */}
           <OrderTimeline status={detail.status} />
 
@@ -275,23 +275,23 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
           <div className="space-y-2">
             {detail.items?.map((item, i) => (
               <div key={i} className="flex justify-between text-sm">
-                <span className="text-gray-700">{item.part_name} <span className="text-gray-400">×{item.quantity}</span></span>
-                <span className="font-medium text-brand-navy">₪{Number(item.total).toFixed(2)}</span>
+                <span className="text-[#E2E8F0]">{item.part_name} <span className="text-[#94A3B8]">×{item.quantity}</span></span>
+                <span className="font-medium text-white">₪{Number(item.total).toFixed(2)}</span>
               </div>
             ))}
           </div>
 
           {/* Totals */}
-          <div className="border-t border-gray-200 pt-3 space-y-1 text-sm">
-            <div className="flex justify-between text-gray-600"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>{Number(detail.vat) > 0 ? 'מע״מ' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
-            <div className="flex justify-between text-gray-600"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
-            <div className="flex justify-between font-bold text-brand-navy text-base pt-1 border-t border-gray-200"><span>סה״כ</span><span className="text-brand-600">₪{Number(detail.total).toFixed(2)}</span></div>
+          <div className="border-t border-[rgba(148,163,184,0.18)] pt-3 space-y-1 text-sm">
+            <div className="flex justify-between text-[#94A3B8]"><span>סכום ביניים</span><span>₪{Number(detail.subtotal).toFixed(2)}</span></div>
+            <div className="flex justify-between text-[#94A3B8]"><span>{Number(detail.vat) > 0 ? 'מע״מ' : 'מע״מ 0% (ספק מחו״ל)'}</span><span>₪{Number(detail.vat).toFixed(2)}</span></div>
+            <div className="flex justify-between text-[#94A3B8]"><span>משלוח</span><span>₪{Number(detail.shipping).toFixed(2)}</span></div>
+            <div className="flex justify-between font-bold text-white text-base pt-1 border-t border-[rgba(148,163,184,0.18)]"><span>סה״כ</span><span className="text-[#38BDF8]">₪{Number(detail.total).toFixed(2)}</span></div>
           </div>
 
           {/* Tracking */}
           {detail.tracking_number && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
+            <div className="flex items-center gap-2 text-sm text-[#94A3B8]">
               <Truck className="w-4 h-4" />
               <span>מעקב: {detail.tracking_number}</span>
               {(() => {
@@ -301,7 +301,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
                     href={url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-brand-600 hover:underline font-medium"
+                    className="inline-flex items-center gap-1 text-[#38BDF8] hover:underline font-medium"
                   >
                     <ExternalLink className="w-3.5 h-3.5" /> עקוב אחר המשלוח
                   </a>
@@ -342,18 +342,18 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
                   toast.success(`הוספו ${items.length} פריטים לסל`, { duration: 3000 })
                   navigate('/cart')
                 }}
-                className="btn-secondary text-sm flex items-center gap-1 text-brand-600 hover:bg-brand-50 border-brand-200"
+                className="btn-secondary text-sm flex items-center gap-1 text-[#38BDF8] hover:bg-[#252D3D] border-[rgba(14,165,233,0.35)]"
               >
                 <RefreshCw className="w-4 h-4" /> הזמן מחדש
               </button>
             )}
             {['pending_payment', 'paid', 'processing', 'supplier_ordered'].includes(detail.status) && (
-              <button onClick={handleCancel} disabled={cancelling} className="btn-secondary text-sm flex items-center gap-1 text-brand-600 hover:bg-brand-50 border-brand-200">
+              <button onClick={handleCancel} disabled={cancelling} className="btn-secondary text-sm flex items-center gap-1 text-[#38BDF8] hover:bg-[#252D3D] border-[rgba(14,165,233,0.35)]">
                 {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />} בטל הזמנה
               </button>
             )}
             {['pending_payment', 'cancelled'].includes(detail.status) && (
-              <button onClick={handleDelete} disabled={deleting} className="btn-secondary text-sm flex items-center gap-1 text-red-600 hover:bg-red-50 border-red-200">
+              <button onClick={handleDelete} disabled={deleting} className="btn-secondary text-sm flex items-center gap-1 text-[#F87171] hover:bg-[rgba(239,68,68,0.12)] border-[rgba(239,68,68,0.35)]">
                 {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} מחק
               </button>
             )}
@@ -375,18 +375,18 @@ const RETURN_REASONS = {
 
 const RETURN_STATUS_MAP = {
   pending:   { label: 'ממתין לאישור', color: 'bg-yellow-100 text-yellow-700' },
-  approved:  { label: 'אושר ✓',       color: 'bg-green-100  text-green-700'  },
-  rejected:  { label: 'נדחה',          color: 'bg-red-100    text-red-700'    },
-  completed: { label: 'הושלם',         color: 'bg-blue-100   text-blue-700'   },
-  cancelled: { label: 'בוטל',          color: 'bg-gray-100   text-gray-500'   },
+  approved:  { label: 'אושר ✓',       color: 'bg-[rgba(34,197,94,0.12)]  text-[#4ADE80]'  },
+  rejected:  { label: 'נדחה',          color: 'bg-[rgba(239,68,68,0.12)]    text-[#F87171]'    },
+  completed: { label: 'הושלם',         color: 'bg-[rgba(14,165,233,0.12)]   text-[#38BDF8]'   },
+  cancelled: { label: 'בוטל',          color: 'bg-[#252D3D]   text-[#94A3B8]'   },
 }
 
 const SUPPLIER_PAYMENT_STATUS_MAP = {
   pending:          { label: 'ממתין לתשלום ספק', color: 'bg-yellow-100 text-yellow-700' },
-  paid:             { label: 'שולם לספק', color: 'bg-blue-100 text-blue-700' },
-  failed:           { label: 'נכשל', color: 'bg-red-100 text-red-700' },
-  tracking_received:{ label: 'מעקב התקבל', color: 'bg-green-100 text-green-700' },
-  cancelled:        { label: 'הוחזר לספק', color: 'bg-gray-100 text-gray-700' },
+  paid:             { label: 'שולם לספק', color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
+  failed:           { label: 'נכשל', color: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
+  tracking_received:{ label: 'מעקב התקבל', color: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
+  cancelled:        { label: 'הוחזר לספק', color: 'bg-[#252D3D] text-[#E2E8F0]' },
 }
 
 // Policy §3 — reasons that qualify for 100% refund (seller pays return shipping)
@@ -419,11 +419,11 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="card p-6 max-w-md w-full">
-        <h3 className="font-bold text-brand-navy mb-1">בקשת החזרה</h3>
-        <p className="text-sm text-gray-500 mb-4">ניתן להחזיר תוך 14 יום מקבלת המשלוח · נחזור תוך 24 שעות</p>
+        <h3 className="font-bold text-white mb-1">בקשת החזרה</h3>
+        <p className="text-sm text-[#94A3B8] mb-4">ניתן להחזיר תוך 14 יום מקבלת המשלוח · נחזור תוך 24 שעות</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">סיבת ההחזרה</label>
+            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיבת ההחזרה</label>
             <select className="input-field" value={reason} onChange={(e) => setReason(e.target.value)} required>
               <option value="">בחר סיבה...</option>
               {Object.entries(RETURN_REASONS).map(([k, v]) => (
@@ -434,12 +434,12 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
 
           {/* Refund preview based on policy */}
           {reason && (
-            <div className={`rounded-xl p-3 text-sm border ${isFullRefund ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+            <div className={`rounded-xl p-3 text-sm border ${isFullRefund ? 'bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.35)]' : 'bg-yellow-50 border-yellow-200'}`}>
               {isFullRefund ? (
                 <div className="space-y-0.5">
-                  <p className="font-semibold text-green-800">✅ זכאי להחזר מלא 100%</p>
-                  {estimatedRefund && <p className="text-green-700">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
-                  <p className="text-green-600 text-xs">אנחנו מממנים את עלות השילוח החזרה</p>
+                  <p className="font-semibold text-[#4ADE80]">✅ זכאי להחזר מלא 100%</p>
+                  {estimatedRefund && <p className="text-[#4ADE80]">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
+                  <p className="text-[#4ADE80] text-xs">אנחנו מממנים את עלות השילוח החזרה</p>
                 </div>
               ) : (
                 <div className="space-y-0.5">
@@ -452,7 +452,7 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">פרטים נוספים (אופציונלי)</label>
+            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">פרטים נוספים (אופציונלי)</label>
             <textarea
               className="input-field resize-none"
               rows={3}
@@ -590,10 +590,10 @@ export default function Orders() {
     <div className="space-y-6">
       <div>
         <h1 className="section-title">ההזמנות שלי</h1>
-        <p className="text-gray-500 mt-1">מעקב אחר הזמנות והחזרות</p>
+        <p className="text-[#94A3B8] mt-1">מעקב אחר הזמנות והחזרות</p>
       </div>
 
-      <div className="flex gap-2 border-b border-gray-200">
+      <div className="flex gap-2 border-b border-[rgba(148,163,184,0.18)]">
         {[
           { id: 'all',     label: `כל ההזמנות (${orders.length})` },
           { id: 'unpaid',  label: `ממתינות לתשלום`, count: pendingOrders.length },
@@ -603,34 +603,34 @@ export default function Orders() {
         ].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`px-5 py-2 text-sm font-medium border-b-2 transition-colors -mb-px flex items-center gap-1.5 ${
-              tab === t.id ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+              tab === t.id ? 'border-brand-600 text-[#38BDF8]' : 'border-transparent text-[#94A3B8] hover:text-[#E2E8F0]'
             }`}>
             {t.label}
             {t.count > 0 && (
               <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${
-                tab === t.id ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-700'
+                tab === t.id ? 'bg-amber-500 text-white' : 'bg-[rgba(245,158,11,0.12)] text-[#FBBF24]'
               }`}>{t.count}</span>
             )}
           </button>
         ))}
       </div>
 
-      {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-brand-600" /></div>}
+      {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-[#38BDF8]" /></div>}
 
       {!isLoading && tab === 'all' && (
         <>
           {orders.length === 0 ? (
             <div className="card p-12 text-center">
               <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="font-semibold text-gray-700 mb-1">אין הזמנות עדיין</h3>
-              <p className="text-sm text-gray-400 mb-4">מצא חלקים ובצע הזמנה ראשונה</p>
+              <h3 className="font-semibold text-[#E2E8F0] mb-1">אין הזמנות עדיין</h3>
+              <p className="text-sm text-[#94A3B8] mb-4">מצא חלקים ובצע הזמנה ראשונה</p>
               <Link to="/parts" className="btn-primary">חפש חלקים</Link>
             </div>
           ) : (
             <div className="space-y-3">
               {/* Bulk-pay banner shown when there are pending orders */}
               {pendingOrders.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="bg-[rgba(245,158,11,0.12)] border border-[rgba(245,158,11,0.35)] rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3">
                     <input
                       type="checkbox"
@@ -639,7 +639,7 @@ export default function Orders() {
                       onChange={handleSelectAll}
                       className="w-4 h-4 accent-brand-600 cursor-pointer"
                     />
-                    <span className="text-sm font-medium text-amber-800">
+                    <span className="text-sm font-medium text-[#FBBF24]">
                       {selectedIds.size > 0
                         ? selectedIds.size === 1
                           ? 'נבחרה הזמנה אחת לתשלום'
@@ -681,14 +681,14 @@ export default function Orders() {
           {pendingOrders.length === 0 ? (
             <div className="card p-12 text-center">
               <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-3" />
-              <h3 className="font-semibold text-gray-700 mb-1">כל ההזמנות שולמו!</h3>
-              <p className="text-sm text-gray-400 mb-4">אין הזמנות הממתינות לתשלום</p>
+              <h3 className="font-semibold text-[#E2E8F0] mb-1">כל ההזמנות שולמו!</h3>
+              <p className="text-sm text-[#94A3B8] mb-4">אין הזמנות הממתינות לתשלום</p>
               <Link to="/parts" className="btn-primary">המשך קניות</Link>
             </div>
           ) : (
             <>
               {/* Prominent pay-all banner */}
-              <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-5">
+              <div className="bg-[rgba(245,158,11,0.12)] border-2 border-[rgba(245,158,11,0.35)] rounded-xl p-5">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div className="flex items-center gap-3">
                     <input
@@ -709,7 +709,7 @@ export default function Orders() {
                             : `${pendingOrders.length} הזמנות ממתינות לתשלום`}
                       </p>
                       {selectedIds.size === 0 && (
-                        <p className="text-xs text-amber-700 mt-0.5">סמן הזמנות ושלם הכל בתשלום אחד</p>
+                        <p className="text-xs text-[#FBBF24] mt-0.5">סמן הזמנות ושלם הכל בתשלום אחד</p>
                       )}
                     </div>
                   </div>
@@ -761,26 +761,26 @@ export default function Orders() {
           {supplierPayments.length === 0 ? (
             <div className="card p-12 text-center">
               <Truck className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="font-semibold text-gray-700 mb-1">אין עדיין תשלומי ספקים</h3>
-              <p className="text-sm text-gray-400">תשלומי ספקים יוצגו לאחר אישור תשלום לקוח</p>
+              <h3 className="font-semibold text-[#E2E8F0] mb-1">אין עדיין תשלומי ספקים</h3>
+              <p className="text-sm text-[#94A3B8]">תשלומי ספקים יוצגו לאחר אישור תשלום לקוח</p>
             </div>
           ) : supplierPayments.map((sp) => {
-            const st = SUPPLIER_PAYMENT_STATUS_MAP[sp.status] || { label: sp.status, color: 'bg-gray-100 text-gray-600' }
+            const st = SUPPLIER_PAYMENT_STATUS_MAP[sp.status] || { label: sp.status, color: 'bg-[#252D3D] text-[#94A3B8]' }
             const trackingUrl = buildTrackingUrl(sp.tracking_number, sp.tracking_url)
             return (
               <div key={sp.id} className="card p-4 space-y-2">
                 <div className="flex justify-between items-start gap-4">
                   <div>
-                    <p className="font-semibold text-brand-navy text-sm">{sp.order_number} · {sp.supplier_name}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
+                    <p className="font-semibold text-white text-sm">{sp.order_number} · {sp.supplier_name}</p>
+                    <p className="text-xs text-[#94A3B8] mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
+                    <p className="text-xs text-[#94A3B8] mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
                     {sp.customer_amount_ils != null && (
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      <p className="text-xs text-[#94A3B8] mt-0.5">
                         סכום שחויב מהלקוח: ₪{Number(sp.customer_amount_ils || 0).toFixed(2)}
                         {` · פער: ₪${Number(sp.supplier_customer_delta_ils || 0).toFixed(2)}`}
                       </p>
                     )}
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <p className="text-xs text-[#94A3B8] mt-0.5">
                       מסלול תשלום ספק: {
                         sp.spend_provider === 'issuing' || sp.provider === 'stripe_issuing'
                           ? 'Issuing Virtual Card'
@@ -790,13 +790,13 @@ export default function Orders() {
                       }
                     </p>
                     {sp.provider_payment_id && (
-                      <p className="text-xs text-gray-400 mt-0.5">Stripe ID: {sp.provider_payment_id}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">Stripe ID: {sp.provider_payment_id}</p>
                     )}
                     {sp.issuing_authorization_id && (
-                      <p className="text-xs text-gray-400 mt-0.5">Issuing auth: {sp.issuing_authorization_id}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">Issuing auth: {sp.issuing_authorization_id}</p>
                     )}
                     {sp.issuing_card_id && (
-                      <p className="text-xs text-gray-400 mt-0.5">Virtual card: {sp.issuing_card_id}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">Virtual card: {sp.issuing_card_id}</p>
                     )}
                     {sp.supplier_purchase_status && (
                       <p className="text-xs text-cyan-700 mt-0.5">
@@ -810,10 +810,10 @@ export default function Orders() {
                       </p>
                     )}
                     {sp.paid_at && (
-                      <p className="text-xs text-gray-400 mt-0.5">שולם בתאריך: {safeFormatDate(sp.paid_at)}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">שולם בתאריך: {safeFormatDate(sp.paid_at)}</p>
                     )}
                     {sp.supplier_refund_status && (
-                      <p className="text-xs text-amber-700 mt-1">
+                      <p className="text-xs text-[#FBBF24] mt-1">
                         החזר ספק: {
                           sp.supplier_refund_status === 'succeeded' ? 'בוצע' :
                           sp.supplier_refund_status === 'simulated' ? 'סימולציה' :
@@ -823,10 +823,10 @@ export default function Orders() {
                       </p>
                     )}
                     {sp.supplier_refund_id && (
-                      <p className="text-xs text-gray-400 mt-0.5">Supplier refund ID: {sp.supplier_refund_id}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">Supplier refund ID: {sp.supplier_refund_id}</p>
                     )}
                     {sp.supplier_refunded_at && (
-                      <p className="text-xs text-gray-400 mt-0.5">הוחזר לספק בתאריך: {safeFormatDate(sp.supplier_refunded_at)}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5">הוחזר לספק בתאריך: {safeFormatDate(sp.supplier_refunded_at)}</p>
                     )}
                     {sp.failure_reason && (
                       <p className="text-xs text-red-500 mt-1">שגיאה: {sp.failure_reason}</p>
@@ -836,7 +836,7 @@ export default function Orders() {
                 </div>
 
                 {sp.tracking_number && (
-                  <div className="flex items-center gap-2 text-xs text-cyan-700 pt-1 border-t border-gray-100">
+                  <div className="flex items-center gap-2 text-xs text-cyan-700 pt-1 border-t border-[rgba(148,163,184,0.18)]">
                     <Truck className="w-3.5 h-3.5" />
                     <span>מעקב: <strong>{sp.tracking_number}</strong></span>
                     {trackingUrl && (
@@ -862,22 +862,22 @@ export default function Orders() {
           {refunds.length === 0 ? (
             <div className="card p-12 text-center">
               <Banknote className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="font-semibold text-gray-700 mb-1">אין החזרות כספיות</h3>
-              <p className="text-sm text-gray-400">ביטול הזמנה ששולמה יוצר החזר אוטומטי לכרטיס האשראי</p>
+              <h3 className="font-semibold text-[#E2E8F0] mb-1">אין החזרות כספיות</h3>
+              <p className="text-sm text-[#94A3B8]">ביטול הזמנה ששולמה יוצר החזר אוטומטי לכרטיס האשראי</p>
             </div>
           ) : refunds.map((r) => (
             <div key={r.id} className="card p-4">
               <div className="flex justify-between items-start gap-4">
                 <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-green-50 flex items-center justify-center flex-shrink-0">
-                    <Banknote className="w-5 h-5 text-green-600" />
+                  <div className="w-9 h-9 rounded-xl bg-[rgba(34,197,94,0.12)] flex items-center justify-center flex-shrink-0">
+                    <Banknote className="w-5 h-5 text-[#4ADE80]" />
                   </div>
                   <div>
-                    <p className="font-semibold text-brand-navy text-sm">{r.return_number}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">הזמנה: {r.order_number}</p>
-                    {r.description && <p className="text-xs text-gray-400 mt-0.5">{r.description}</p>}
+                    <p className="font-semibold text-white text-sm">{r.return_number}</p>
+                    <p className="text-xs text-[#94A3B8] mt-0.5">הזמנה: {r.order_number}</p>
+                    {r.description && <p className="text-xs text-[#94A3B8] mt-0.5">{r.description}</p>}
                     {r.date && (
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className="text-xs text-[#94A3B8] mt-0.5">
                         {safeFormatDate(r.date)}
                       </p>
                     )}
@@ -885,17 +885,17 @@ export default function Orders() {
                 </div>
                 <div className="text-left flex-shrink-0">
                   <span className={`badge text-xs ${
-                    r.status === 'approved' ? 'bg-green-100 text-green-700' :
+                    r.status === 'approved' ? 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' :
                     r.status === 'pending'  ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-gray-100 text-gray-600'
+                    'bg-[#252D3D] text-[#94A3B8]'
                   }`}>
                     {r.status === 'approved' ? 'אושר ✓' : r.status === 'pending' ? 'בטיפול' : r.status}
                   </span>
                   {r.refund_amount && (
-                    <p className="font-bold text-green-600 mt-1 text-base">₪{Number(r.refund_amount).toFixed(2)}</p>
+                    <p className="font-bold text-[#4ADE80] mt-1 text-base">₪{Number(r.refund_amount).toFixed(2)}</p>
                   )}
                   {r.original_amount && r.refund_amount && Number(r.original_amount) !== Number(r.refund_amount) && (
-                    <p className="text-xs text-gray-400 line-through">₪{Number(r.original_amount).toFixed(2)}</p>
+                    <p className="text-xs text-[#94A3B8] line-through">₪{Number(r.original_amount).toFixed(2)}</p>
                   )}
                 </div>
               </div>
@@ -909,8 +909,8 @@ export default function Orders() {
           {returns.length === 0 ? (
             <div className="card p-12 text-center">
               <RotateCcw className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <h3 className="font-semibold text-gray-700 mb-1">אין בקשות החזרה</h3>
-              <p className="text-sm text-gray-400 mb-4">
+              <h3 className="font-semibold text-[#E2E8F0] mb-1">אין בקשות החזרה</h3>
+              <p className="text-sm text-[#94A3B8] mb-4">
                 ניתן לפתוח בקשת החזרה מתוך הזמנה שנמסרה או שנשלחה
               </p>
               <button onClick={() => setTab('all')} className="btn-secondary text-sm">
@@ -919,9 +919,9 @@ export default function Orders() {
             </div>
           ) : (
             <>
-              <p className="text-xs text-gray-400 px-1">{returns.length} בקשות החזרה</p>
+              <p className="text-xs text-[#94A3B8] px-1">{returns.length} בקשות החזרה</p>
               {returns.map((r) => {
-                const st = RETURN_STATUS_MAP[r.status] || { label: r.status, color: 'bg-gray-100 text-gray-600' }
+                const st = RETURN_STATUS_MAP[r.status] || { label: r.status, color: 'bg-[#252D3D] text-[#94A3B8]' }
                 const reasonLabel = RETURN_REASONS[r.reason] || r.reason
                 const isCancelling = cancellingReturn === r.id
                 return (
@@ -929,18 +929,18 @@ export default function Orders() {
                     {/* Header row */}
                     <div className="flex justify-between items-start gap-3">
                       <div className="flex items-start gap-3">
-                        <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center flex-shrink-0">
-                          <RotateCcw className="w-5 h-5 text-brand-500" />
+                        <div className="w-9 h-9 rounded-xl bg-[rgba(14,165,233,0.12)] flex items-center justify-center flex-shrink-0">
+                          <RotateCcw className="w-5 h-5 text-[#38BDF8]" />
                         </div>
                         <div>
-                          <p className="font-semibold text-brand-navy text-sm">{r.return_number}</p>
+                          <p className="font-semibold text-white text-sm">{r.return_number}</p>
                           {r.order_id && (
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              הזמנה: <span className="text-brand-600 font-medium">{r.order_number || r.order_id?.slice(0, 8)}</span>
+                            <p className="text-xs text-[#94A3B8] mt-0.5">
+                              הזמנה: <span className="text-[#38BDF8] font-medium">{r.order_number || r.order_id?.slice(0, 8)}</span>
                             </p>
                           )}
                           {r.requested_at && (
-                            <p className="text-xs text-gray-400 mt-0.5">
+                            <p className="text-xs text-[#94A3B8] mt-0.5">
                               {safeFormatDate(r.requested_at)}
                             </p>
                           )}
@@ -950,11 +950,11 @@ export default function Orders() {
                     </div>
 
                     {/* Reason + description */}
-                    <div className="bg-gray-50 rounded-lg px-3 py-2 text-sm">
-                      <span className="font-medium text-gray-700">סיבה: </span>
-                      <span className="text-gray-600">{reasonLabel}</span>
+                    <div className="bg-[#1E2535] rounded-lg px-3 py-2 text-sm">
+                      <span className="font-medium text-[#E2E8F0]">סיבה: </span>
+                      <span className="text-[#94A3B8]">{reasonLabel}</span>
                       {r.description && (
-                        <p className="text-xs text-gray-500 mt-1">{r.description}</p>
+                        <p className="text-xs text-[#94A3B8] mt-1">{r.description}</p>
                       )}
                     </div>
 
@@ -962,7 +962,7 @@ export default function Orders() {
                     {r.refund_amount && (
                       <div className="flex items-center gap-2">
                         <Banknote className="w-4 h-4 text-green-500" />
-                        <span className="text-sm font-semibold text-green-600">
+                        <span className="text-sm font-semibold text-[#4ADE80]">
                           זיכוי מאושר: ₪{Number(r.refund_amount).toFixed(2)}
                         </span>
                       </div>
@@ -977,7 +977,7 @@ export default function Orders() {
                         <button
                           onClick={() => handleCancelReturn(r.id)}
                           disabled={isCancelling}
-                          className="btn-secondary text-xs flex items-center gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
+                          className="btn-secondary text-xs flex items-center gap-1.5 text-[#F87171] border-[rgba(239,68,68,0.35)] hover:bg-[rgba(239,68,68,0.12)]"
                         >
                           {isCancelling
                             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />

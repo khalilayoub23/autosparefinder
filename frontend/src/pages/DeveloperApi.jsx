@@ -11,7 +11,7 @@ function Code({ children }) {
     <div className="relative group">
       <pre dir="ltr" className="overflow-x-auto rounded-xl bg-[#0b1f3a] text-slate-100 text-[12.5px] leading-relaxed p-4 pr-12 font-mono">{text}</pre>
       <button onClick={copy} aria-label="Copy"
-        className="absolute top-2.5 right-2.5 rounded-lg bg-white/10 hover:bg-white/20 p-1.5 text-slate-200 transition">
+        className="absolute top-2.5 right-2.5 rounded-brand bg-white/10 hover:bg-white/20 p-1.5 text-slate-200 transition">
         {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
       </button>
     </div>

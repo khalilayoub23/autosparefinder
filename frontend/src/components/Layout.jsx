@@ -109,11 +109,11 @@ export default function Layout({ children }) {
 
       <div className="min-h-screen flex flex-col bg-[#0F1218]">
       {/* Top navbar */}
-      <header className="fixed top-0 right-0 left-0 z-40 bg-[#1B2228] border-b border-slate-600 shadow-[0_10px_28px_rgba(0,0,0,0.35)]">
+      <header className="fixed top-0 right-0 left-0 z-40 bg-[var(--header-bg)] border-b border-[var(--header-border)] shadow-[0_10px_28px_rgba(0,0,0,0.35)]">
         <div className="flex items-center justify-between h-24 px-4 max-w-7xl mx-auto">
           {/* Logo - Root fix 1:1 image implementation with breakpoint support */}
-          <Link to="/chat" className="flex items-center">
-              <BrandLogo size="appHeader" alt="AutoSpare logo" blend />
+          <Link to="/" className="flex items-center" aria-label="AutoSpareFinder — דף הבית">
+              <BrandLogo size="header" alt="AutoSpare logo" blend />
             </Link>
 
           {/* Desktop nav */}
@@ -175,7 +175,7 @@ export default function Layout({ children }) {
             {/* Notifications bell */}
             <div className="relative" ref={notifsRef}>
               <button
-                className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors"
+                className="relative p-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors"
                 onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) fetchNotifications() }}
               >
                 <Bell className="w-5 h-5" />
@@ -200,7 +200,7 @@ export default function Layout({ children }) {
                   </div>
                   <div className="max-h-80 overflow-y-auto divide-y divide-[rgba(148,163,184,0.06)]">
                     {notifications.length === 0 ? (
-                      <p className="text-sm text-[#475569] text-center py-8">אין התראות</p>
+                      <p className="text-sm text-[#94A3B8] text-center py-8">אין התראות</p>
                     ) : notifications.map((n) => (
                       <div
                         key={n.id}
@@ -221,7 +221,7 @@ export default function Layout({ children }) {
                         {n.message && (
                           <div className="mt-0.5">
                             <p
-                              className={`text-xs text-[#64748B] whitespace-pre-wrap break-words ${expandedNotifId === n.id ? '' : 'line-clamp-2'}`}
+                              className={`text-xs text-[#94A3B8] whitespace-pre-wrap break-words ${expandedNotifId === n.id ? '' : 'line-clamp-2'}`}
                             >
                               {n.message}
                             </p>
@@ -248,7 +248,7 @@ export default function Layout({ children }) {
 
             {/* User menu */}
             <div className="relative group">
-              <button className="flex items-center gap-2 px-3 py-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors">
+              <button className="flex items-center gap-2 px-3 py-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors">
                 <div className="w-7 h-7 bg-white/10 border border-[#00CCFF]/50 rounded-full flex items-center justify-center">
                   <span className="text-[#9AEFFF] font-black text-xs">
                     {user?.full_name?.charAt(0) || 'U'}
@@ -270,7 +270,7 @@ export default function Layout({ children }) {
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[rgba(239,68,68,0.10)] text-sm text-[#EF4444] transition-colors"
+                    className="w-full flex items-center gap-3 px-3 py-2 rounded-brand hover:bg-[rgba(239,68,68,0.10)] text-sm text-[#EF4444] transition-colors"
                   >
                     <LogOut className="w-4 h-4" /> התנתק
                   </button>
@@ -280,7 +280,7 @@ export default function Layout({ children }) {
 
             {/* Mobile menu btn */}
             {!isAdminRoute && (
-              <button className="md:hidden p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <button className="md:hidden p-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors" onClick={() => setSidebarOpen(!sidebarOpen)}>
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             )}
@@ -309,7 +309,7 @@ export default function Layout({ children }) {
                 <Icon className="w-5 h-5" /> {label}
               </Link>
             ))}
-            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-[#EF4444] hover:bg-[rgba(239,68,68,0.10)] mt-2 transition-colors">
+            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-brand text-sm font-medium text-[#EF4444] hover:bg-[rgba(239,68,68,0.10)] mt-2 transition-colors">
               <LogOut className="w-5 h-5" /> התנתק
             </button>
           </nav>
@@ -325,7 +325,7 @@ export default function Layout({ children }) {
 
       {/* Footer */}
       <footer className="bg-[#0F1218] border-t border-[rgba(148,163,184,0.08)] py-4 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#475569]" dir="rtl">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#94A3B8]" dir="rtl">
           <span>© {new Date().getFullYear()} AutoSpare</span>
           <div className="flex items-center gap-4">
             <Link to="/privacy" className="hover:text-[#38BDF8] transition-colors">מדיניות פרטיות</Link>
@@ -342,7 +342,7 @@ export default function Layout({ children }) {
               <h3 className="text-sm font-bold text-[#E2E8F0]">פרטי התראה</h3>
               <button
                 type="button"
-                className="text-[#475569] hover:text-[#94A3B8] transition-colors"
+                className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 onClick={() => setSelectedNotif(null)}
               >
                 <X className="w-5 h-5" />

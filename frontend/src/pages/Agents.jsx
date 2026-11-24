@@ -282,7 +282,7 @@ function AgentCard({ agent, onSave, isSaving }) {
               <button
                 onClick={handleTest}
                 disabled={testing || !testMsg.trim()}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 rounded-brand text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
               >
                 {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 {testing ? 'שולח...' : 'שלח'}

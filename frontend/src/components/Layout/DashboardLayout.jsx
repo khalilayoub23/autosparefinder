@@ -90,7 +90,7 @@ const DashboardLayout = ({ children }) => {
             <button
               type="button"
               onClick={closeMobile}
-              className="lg:hidden w-9 h-9 rounded-lg border border-slate-600 text-slate-200 flex items-center justify-center"
+              className="lg:hidden w-9 h-9 rounded-brand border border-slate-600 text-slate-200 flex items-center justify-center"
               aria-label="Close navigation"
             >
               <X className="w-4 h-4" />

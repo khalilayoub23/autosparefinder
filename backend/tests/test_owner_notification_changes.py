@@ -55,7 +55,7 @@ class FakeRedis:
 def owner(monkeypatch):
     calls, result, r, clock = [], {"value": {"ok": True}}, FakeRedis(), {"t": 1_800_000_000.0}
 
-    async def fake_update(text, critical=False, alert_key=""):
+    async def fake_update(text, critical=False, alert_key="", meta=None):
         calls.append({"text": text, "critical": critical, "alert_key": alert_key})
         return dict(result["value"])
 
@@ -495,7 +495,7 @@ def test_concurrent_enqueue_distinct_and_keyless_loses_nothing(q):
 
 
 @needs_redis
-@pytest.mark.parametrize("failure", [ConnectionError("bridge unreachable"), {"ok": False, "error": "bridge 503"},
+@pytest.mark.parametrize("failure", [ConnectionError("bridge timeout"), {"ok": False, "error": "bridge 503"},
                                      {"ok": False}])
 def test_failed_delivery_is_kept_and_delivered_once_on_retry(q, failure):
     q.window["open"] = True

@@ -10,8 +10,8 @@ function Section({ title, icon: Icon, children }) {
   return (
     <div className="card p-6">
       <div className="flex items-center gap-2 mb-5">
-        <Icon className="w-5 h-5 text-brand-600" />
-        <h2 className="font-bold text-brand-navy">{title}</h2>
+        <Icon className="w-5 h-5 text-[#38BDF8]" />
+        <h2 className="font-bold text-white">{title}</h2>
       </div>
       {children}
     </div>
@@ -157,18 +157,18 @@ export default function Profile() {
       </div>
 
       {account.verified !== null && (
-        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${account.verified ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+        <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${account.verified ? 'border-[rgba(34,197,94,0.35)] bg-[rgba(34,197,94,0.12)]' : 'border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.12)]'}`}>
           <div className="flex items-center gap-2 text-sm">
             <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-white ${account.verified ? 'bg-emerald-500' : 'bg-amber-500'}`}>
               {account.verified ? '✓' : '!'}
             </span>
-            <span className={account.verified ? 'text-emerald-800' : 'text-amber-800'}>
+            <span className={account.verified ? 'text-[#4ADE80]' : 'text-[#FBBF24]'}>
               {account.verified ? 'המייל שלך מאומת' : `המייל ${account.email} עדיין לא אומת`}
             </span>
           </div>
           {!account.verified && (
             <button type="button" onClick={resendVerify} disabled={resending}
-              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50">
+              className="rounded-brand bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-50">
               {resending ? 'שולח…' : 'שלח מייל אימות'}
             </button>
           )}
@@ -176,7 +176,7 @@ export default function Profile() {
       )}
 
       <div className="hidden">
-        <p className="text-gray-500 mt-1">{user?.email}</p>
+        <p className="text-[#94A3B8] mt-1">{user?.email}</p>
       </div>
 
       {/* Personal info */}
@@ -184,31 +184,31 @@ export default function Profile() {
         <form onSubmit={saveProfile} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">שם מלא</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">שם מלא</label>
               <input className="input-field" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">אימייל</label>
-              <input className="input-field bg-gray-50" value={user?.email || ''} readOnly dir="ltr" />
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">אימייל</label>
+              <input className="input-field bg-[#1E2535]" value={user?.email || ''} readOnly dir="ltr" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">טלפון</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">טלפון</label>
               <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="972501234567" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">עיר</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
               <input className="input-field" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
             </div>
             <div className="col-span-full">
-              <label className="block text-sm font-medium text-gray-700 mb-1">כתובת</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">כתובת</label>
               <input className="input-field" value={form.address_line1} placeholder="רחוב ומספר בית" onChange={(e) => { setForm({ ...form, address_line1: e.target.value }); setGeoResult(null) }} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">מספר דירה</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מספר דירה</label>
               <input className="input-field" value={form.apartment} placeholder="דירה / קומה" onChange={(e) => { setForm({ ...form, apartment: e.target.value }); setGeoResult(null) }} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">מיקוד</label>
+              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
               <input className="input-field" value={form.postal_code} onChange={(e) => { setForm({ ...form, postal_code: e.target.value }); setGeoResult(null) }} />
             </div>
             {/* Geo validation */}
@@ -217,21 +217,21 @@ export default function Profile() {
                 type="button"
                 onClick={validateAddress}
                 disabled={geoChecking}
-                className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-brand-300 text-brand-600 hover:bg-brand-50 transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-brand border border-[rgba(14,165,233,0.35)] text-[#38BDF8] hover:bg-[#252D3D] transition-colors disabled:opacity-50"
               >
                 {geoChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
                 אמת כתובת
               </button>
               {geoResult && geoResult.ok && (
-                <div className="mt-2 flex items-start gap-2 p-3 rounded-xl bg-green-50 border border-green-200">
-                  <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 shrink-0" />
-                  <div className="text-xs text-green-800">
+                <div className="mt-2 flex items-start gap-2 p-3 rounded-xl bg-[rgba(34,197,94,0.12)] border border-[rgba(34,197,94,0.35)]">
+                  <CheckCircle2 className="w-4 h-4 text-[#4ADE80] mt-0.5 shrink-0" />
+                  <div className="text-xs text-[#4ADE80]">
                     <p className="font-medium mb-0.5">הכתובת אומתה ✓</p>
-                    <p className="text-green-700">{geoResult.display}</p>
+                    <p className="text-[#4ADE80]">{geoResult.display}</p>
                     <a
                       href={`https://www.openstreetmap.org/?mlat=${geoResult.lat}&mlon=${geoResult.lon}&zoom=17`}
                       target="_blank" rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 mt-1 underline text-green-600"
+                      className="inline-flex items-center gap-1 mt-1 underline text-[#4ADE80]"
                     >
                       <ExternalLink className="w-3 h-3" /> הצג במפה
                     </a>
@@ -239,16 +239,16 @@ export default function Profile() {
                 </div>
               )}
               {geoResult && !geoResult.ok && (
-                <div className="mt-2 flex items-center gap-2 p-3 rounded-xl bg-red-50 border border-red-200">
+                <div className="mt-2 flex items-center gap-2 p-3 rounded-xl bg-[rgba(239,68,68,0.12)] border border-[rgba(239,68,68,0.35)]">
                   <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  <p className="text-xs text-red-700">הכתובת לא נמצאה — בדוק שגיאות ונסה שוב</p>
+                  <p className="text-xs text-[#F87171]">הכתובת לא נמצאה — בדוק שגיאות ונסה שוב</p>
                 </div>
               )}
             </div>
           </div>
           <div className="flex items-center gap-3">
             {user?.is_verified ? (
-              <span className="badge bg-green-100 text-green-700">✓ מאומת</span>
+              <span className="badge bg-[rgba(34,197,94,0.12)] text-[#4ADE80]">✓ מאומת</span>
             ) : (
               <span className="badge bg-yellow-100 text-yellow-700">⚠ לא מאומת</span>
             )}
@@ -263,14 +263,14 @@ export default function Profile() {
       {/* Vehicles */}
       <Section title="הרכבים שלי" icon={Car}>
         <div className="space-y-2 mb-4">
-          {vehicles.length === 0 && <p className="text-sm text-gray-400">לא נוספו רכבים</p>}
+          {vehicles.length === 0 && <p className="text-sm text-[#94A3B8]">לא נוספו רכבים</p>}
           {vehicles.map((v) => (
-            <div key={v.id} className="flex items-center justify-between p-3 rounded-xl border border-gray-200 bg-gray-50">
+            <div key={v.id} className="flex items-center justify-between p-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[#1E2535]">
               <div className="flex items-center gap-2">
-                <Car className="w-4 h-4 text-brand-500" />
-                <span className="text-sm font-medium text-brand-navy">{v.nickname || `${v.manufacturer} ${v.model}`}</span>
-                <span className="text-xs text-gray-400">{v.year}</span>
-                {v.is_primary && <span className="badge bg-brand-50 text-brand-600 text-xs">ראשי</span>}
+                <Car className="w-4 h-4 text-[#38BDF8]" />
+                <span className="text-sm font-medium text-white">{v.nickname || `${v.manufacturer} ${v.model}`}</span>
+                <span className="text-xs text-[#94A3B8]">{v.year}</span>
+                {v.is_primary && <span className="badge bg-[rgba(14,165,233,0.12)] text-[#38BDF8] text-xs">ראשי</span>}
               </div>
               <div className="flex items-center gap-2">
                 {!v.is_primary && (
@@ -278,7 +278,7 @@ export default function Profile() {
                     <Star className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <button onClick={() => removeVehicle(v.id)} className="p-1.5 rounded-lg hover:bg-red-100 text-red-400">
+                <button onClick={() => removeVehicle(v.id)} className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -297,15 +297,15 @@ export default function Profile() {
       <Section title="שינוי סיסמה" icon={Lock}>
         <form onSubmit={changePassword} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה נוכחית</label>
+            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה נוכחית</label>
             <input type="password" dir="ltr" className="input-field" value={passwords.current} onChange={(e) => setPasswords({ ...passwords, current: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה חדשה</label>
+            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה חדשה</label>
             <input type="password" dir="ltr" className="input-field" value={passwords.new} onChange={(e) => setPasswords({ ...passwords, new: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">אישור סיסמה חדשה</label>
+            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">אישור סיסמה חדשה</label>
             <input type="password" dir="ltr" className="input-field" value={passwords.confirm} onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })} required />
           </div>
           <button type="submit" disabled={savingPass} className="btn-primary flex items-center gap-2">
@@ -321,8 +321,8 @@ export default function Profile() {
           {NOTIF_KEYS.map(({ key, label, desc }) => (
             <div key={key} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
               <div>
-                <p className="text-sm font-medium text-brand-navy">{label}</p>
-                <p className="text-xs text-gray-400">{desc}</p>
+                <p className="text-sm font-medium text-white">{label}</p>
+                <p className="text-xs text-[#94A3B8]">{desc}</p>
               </div>
               <button
                 onClick={() => toggleNotif(key)}
@@ -330,7 +330,7 @@ export default function Profile() {
                   notifPrefs[key] ? 'bg-brand-500' : 'bg-gray-200'
                 }`}
               >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-[#1E2535] shadow transition-transform ${
                   notifPrefs[key] ? 'translate-x-6' : 'translate-x-1'
                 }`} />
               </button>
@@ -346,54 +346,54 @@ export default function Profile() {
             href="/privacy"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between p-3 rounded-xl border border-[rgba(148,163,184,0.18)] hover:bg-[#1E2535] transition-colors"
           >
             <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-brand-navy">מדיניות הפרטיות</span>
+              <ShieldCheck className="w-4 h-4 text-[#38BDF8]" />
+              <span className="text-sm font-medium text-white">מדיניות הפרטיות</span>
             </div>
-            <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+            <ExternalLink className="w-3.5 h-3.5 text-[#94A3B8]" />
           </a>
           <a
             href="/terms"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between p-3 rounded-xl border border-[rgba(148,163,184,0.18)] hover:bg-[#1E2535] transition-colors"
           >
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-brand-navy">תנאי השימוש</span>
+              <FileText className="w-4 h-4 text-[#38BDF8]" />
+              <span className="text-sm font-medium text-white">תנאי השימוש</span>
             </div>
-            <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+            <ExternalLink className="w-3.5 h-3.5 text-[#94A3B8]" />
           </a>
           <a
             href="/refund"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-between p-3 rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between p-3 rounded-xl border border-[rgba(148,163,184,0.18)] hover:bg-[#1E2535] transition-colors"
           >
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-brand-500" />
-              <span className="text-sm font-medium text-brand-navy">מדיניות ביטולים והחזרות</span>
+              <FileText className="w-4 h-4 text-[#38BDF8]" />
+              <span className="text-sm font-medium text-white">מדיניות ביטולים והחזרות</span>
             </div>
-            <ExternalLink className="w-3.5 h-3.5 text-gray-400" />
+            <ExternalLink className="w-3.5 h-3.5 text-[#94A3B8]" />
           </a>
-          <div className="mt-2 p-3 bg-gray-50 rounded-xl text-xs text-gray-500 leading-relaxed">
-            <p className="font-medium text-gray-700 mb-1">הנתונים שאנו שומרים עליך:</p>
+          <div className="mt-2 p-3 bg-[#1E2535] rounded-xl text-xs text-[#94A3B8] leading-relaxed">
+            <p className="font-medium text-[#E2E8F0] mb-1">הנתונים שאנו שומרים עליך:</p>
             <ul className="list-disc list-inside space-y-0.5">
               <li>שם, אימייל, טלפון (מוצפנים, לא משותפים)</li>
               <li>היסטריית הזמנות (7 שנים לפי חוק)</li>
               <li>פרטי רכב (לצורך חיפוש חלפים בלבד)</li>
             </ul>
-            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:info@autosparefinder.co.il" className="text-brand-600 hover:underline">info@autosparefinder.co.il</a></p>
+            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:info@autosparefinder.co.il" className="text-[#38BDF8] hover:underline">info@autosparefinder.co.il</a></p>
           </div>
         </div>
       </Section>
 
       {/* Danger zone */}
-      <div className="card p-6 border-red-200">
-        <h2 className="font-bold text-red-600 mb-3">אזור סכנה</h2>
-        <button onClick={() => { logout(); window.location.href = '/login' }} className="text-sm text-red-600 hover:text-red-700 font-medium border border-red-200 px-4 py-2 rounded-lg hover:bg-red-50">
+      <div className="card p-6 border-[rgba(239,68,68,0.35)]">
+        <h2 className="font-bold text-[#F87171] mb-3">אזור סכנה</h2>
+        <button onClick={() => { logout(); window.location.href = '/login' }} className="text-sm text-[#F87171] hover:text-[#F87171] font-medium border border-[rgba(239,68,68,0.35)] px-4 py-2 rounded-lg hover:bg-[rgba(239,68,68,0.12)]">
           התנתק מכל המכשירים
         </button>
       </div>

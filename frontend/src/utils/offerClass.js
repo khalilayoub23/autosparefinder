@@ -1,10 +1,10 @@
 // Offer classification shown to customers (backend: offer_classification.offer_label). Hebrew labels mirror class_label_he.
 const LABELS = {
-  oem: { label: 'OEM', cls: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
-  oe_equivalent: { label: 'שווה ערך ל-OEM', cls: 'border-sky-200 bg-sky-50 text-sky-700' },
-  aftermarket: { label: 'חליפי (Aftermarket)', cls: 'border-amber-200 bg-amber-50 text-amber-700' },
-  remanufactured: { label: 'משופץ', cls: 'border-slate-200 bg-slate-50 text-slate-600' },
-  used: { label: 'משומש', cls: 'border-slate-200 bg-slate-50 text-slate-600' },
+  oem: { label: 'OEM', cls: 'chip-success' },
+  oe_equivalent: { label: 'שווה ערך ל-OEM', cls: 'chip-info' },
+  aftermarket: { label: 'חליפי (Aftermarket)', cls: 'chip-warning' },
+  remanufactured: { label: 'משופץ', cls: 'chip-neutral' },
+  used: { label: 'משומש', cls: 'chip-neutral' },
 }
 
 export function offerClassInfo(partType) {

@@ -4698,7 +4698,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                 for _fr in _err_tasks:
                     _tn = str(_fr.get("task", "?"))
                     _es = str(_fr.get("error", ""))
-                    _current_fail_map[_tn] = _es[-120:].lstrip() if len(_es) > 120 else _es
+                    _current_fail_map[_tn] = _es[:600]  # full head of the error: the owner message classifies it, the log keeps it (was [-120:], which cut the cause off)
 
                 # Delta: which tasks are NEW vs ONGOING
                 _new_tasks = {t: e for t, e in _current_fail_map.items() if t not in _prev_fail_map}
@@ -4726,14 +4726,17 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                             _lines.append(f"  • {_t}: {_e}" if _e else f"  • {_t}")
                     if len(_err_tasks) > 8:
                         _lines.append(f"…ועוד {len(_err_tasks) - 8}")
-                    _lines.append(f"({ok_count} הצליחו · {total_elapsed:.0f}s)")
+                    _lines.append(f"(שאר המשימות הצליחו: {ok_count} · סה״כ {total_elapsed / 60:.0f} דקות; "
+                                  f"הכשלים ירוצו שוב בסבב הבא)")
                     _owner = os.getenv("OWNER_WHATSAPP_PHONE", "")
                     if _owner:
                         try:
                             from BACKEND_API_ROUTES import notify_owner as _notify
+                            from owner_message_format import he_count as _omf_he_count
+                            _omf_plural = lambda n: _omf_he_count(n, "task")  # noqa: E731
                             await _notify(
                                 "health",
-                                f"db_update_agent — {err_count} משימות נכשלו",
+                                f"עבודת הלילה: {_omf_plural(err_count)} נכשלו",
                                 "\n".join(_lines),
                                 severity="error" if _new_tasks else "warning",
                                 state="new" if _new_tasks else "changed",
@@ -4759,7 +4762,7 @@ async def run_all_tasks(db: AsyncSession) -> Dict[str, Any]:
                         await _notify_res(
                             "health",
                             "db_update_agent — כל המשימות שוחזרו",
-                            f"שוקמו: {_resolved_names}\n({ok_count} הצליחו · {total_elapsed:.0f}s)",
+                            f"שוקמו: {_resolved_names}\n(כל {ok_count} המשימות הצליחו בסבב האחרון)",
                             severity="success",
                             state="resolved",
                         )

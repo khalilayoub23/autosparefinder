@@ -185,17 +185,17 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
                 <span className="font-semibold text-gray-800">חשבונית — {orderNumber}</span>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={handlePrint} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
+                <button onClick={handlePrint} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
                   {loading === 'print' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} הדפס
                 </button>
-                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg bg-brand-700 hover:bg-brand-800 text-white transition-colors disabled:opacity-50">
+                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand bg-brand-700 hover:bg-brand-800 text-white transition-colors disabled:opacity-50">
                   {loading === 'download' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} הורד
                 </button>
-                <button onClick={handleShare} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
+                <button onClick={handleShare} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
                   {loading === 'share' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
                   {copied ? 'הועתק!' : 'שתף'}
                 </button>
-                <button onClick={closePreview} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors">
+                <button onClick={closePreview} className="p-1.5 rounded-brand hover:bg-gray-100 text-gray-500 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>

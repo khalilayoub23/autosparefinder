@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/authStore'
 import { useCartStore } from '../stores/cartStore'
 import { useI18n, LANGS, LANG_NAMES, LANG_FLAGS } from '../i18n'
 import { partsApi } from '../api/parts'
+import BrandLogo from '../components/BrandLogo'
 
 /* ── WhatsApp SVG icon ─────────────────────────────────────────────── */
 function WhatsAppIcon({ className = "w-4 h-4" }) {
@@ -123,6 +124,7 @@ export default function LandingPage() {
 
   /* nav search */
   const [navQuery, setNavQuery] = useState("")
+  const [menuOpen, setMenuOpen] = useState(false)
   /* hero search */
   const [activeTab, setActiveTab] = useState("vin")
   const [heroQuery, setHeroQuery] = useState("")
@@ -145,7 +147,7 @@ export default function LandingPage() {
       {/* ═══════════════════════════════════════════════════════════════
           HEADER
       ═══════════════════════════════════════════════════════════════ */}
-      <header className="bg-[#0F1218] text-white font-sans">
+      <header className="bg-[var(--header-bg)] border-b border-[var(--header-border)] text-white font-sans">
 
         {/* Top info bar */}
         <div className="border-b border-white/10 text-[12px] text-slate-300 bg-[#0A0E17]">
@@ -209,20 +211,16 @@ export default function LandingPage() {
 
         {/* Main nav: logo + search + icons */}
         <div className="max-w-[1400px] mx-auto px-4 py-2.5 md:py-3 flex items-center justify-between gap-4 md:gap-5">
-          <a href="/" className="flex-shrink-0">
-            <img
-              src="/logo-tests/autosparefinder-logo-header.svg"
-              alt="AutoSpare Finder"
-              className="h-[86px] md:h-[94px] w-auto max-w-[128px] md:max-w-[144px] object-contain opacity-[0.95] drop-shadow-[0_5px_12px_rgba(0,0,0,0.22)]"
-            />
-          </a>
+          <Link to="/" className="flex-shrink-0" aria-label="AutoSpareFinder — דף הבית">
+            <BrandLogo size="header" blend alt="AutoSpare Finder" />
+          </Link>
 
           <div className="flex-1 hidden md:flex items-center bg-[#1E2535] border border-[rgba(148,163,184,0.12)] rounded-md overflow-hidden max-w-[700px] h-[52px] focus-within:border-[rgba(14,165,233,0.40)] transition-colors">
             <input
               value={navQuery}
               onChange={(e) => setNavQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleNavSearch()}
-              className="flex-1 px-5 py-2 text-[15px] text-[#E2E8F0] bg-transparent outline-none h-full placeholder:text-[#475569]"
+              className="flex-1 px-5 py-2 text-[15px] text-[#E2E8F0] bg-transparent outline-none h-full placeholder:text-[#94A3B8]"
               placeholder={t('search.navPlaceholder')}
             />
             <div className="h-2/3 w-[1px] bg-[rgba(148,163,184,0.20)]"></div>
@@ -265,10 +263,46 @@ export default function LandingPage() {
               <span className="font-bold">{t('account.cart')}</span>
             </a>
           </div>
+          <button
+            type="button"
+            className="md:hidden flex items-center justify-center w-11 h-11 rounded-brand text-slate-100 hover:bg-white/10"
+            aria-label={menuOpen ? 'סגור תפריט' : 'פתח תפריט'}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+              {menuOpen ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6l12 12M18 6L6 18" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />}
+            </svg>
+          </button>
         </div>
 
+        {/* Mobile menu: the same destinations as the desktop header, plus search (hidden below md in the bar) */}
+        {menuOpen && (
+          <div id="mobile-menu" className="md:hidden border-t border-[var(--header-border)] px-4 py-3 space-y-3">
+            <div className="flex items-center bg-[#1E2535] border border-[var(--border)] rounded-brand overflow-hidden h-12">
+              <input
+                value={navQuery}
+                onChange={(e) => setNavQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleNavSearch()}
+                className="flex-1 px-4 text-[15px] text-[#E2E8F0] bg-transparent outline-none h-full placeholder:text-[#94A3B8]"
+                placeholder={t('search.navPlaceholder')}
+                aria-label={t('search.navPlaceholder')}
+              />
+              <button type="button" onClick={handleNavSearch} aria-label={t('search.navPlaceholder')} className="h-full px-4 bg-[#0EA5E9] text-[#0F1218]">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Link to="/cart" className="btn-secondary btn-md text-center">{t('account.cart')}{cartCount > 0 ? ` (${cartCount})` : ''}</Link>
+              <Link to={user ? '/account' : '/login'} className="btn-secondary btn-md text-center">{user ? t('account.myAccount') : t('account.signIn')}</Link>
+              <Link to="/chat" className="btn-secondary btn-md text-center col-span-2">{t('account.chatWithUs')}</Link>
+            </div>
+          </div>
+        )}
+
         {/* Sub-nav */}
-        <nav className="bg-[#0F1218] border-t border-white/5 border-b border-white/5">
+        <nav className="bg-[var(--header-bg)] border-t border-[var(--header-border)]">
           <div className="max-w-[1400px] mx-auto px-4 flex items-center gap-2 overflow-x-auto whitespace-nowrap text-[15px] font-semibold">
             {menuItems.map((item, idx) => (
               <a
@@ -338,7 +372,7 @@ export default function LandingPage() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-0 rounded-lg overflow-hidden bg-[#1E2535] border border-[rgba(148,163,184,0.12)] focus-within:border-[rgba(14,165,233,0.40)] focus-within:ring-1 focus-within:ring-[#0EA5E9] transition-all mt-2 relative">
-                  <div className="absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 text-[#475569]">
+                  <div className="absolute ltr:left-4 rtl:right-4 top-1/2 -translate-y-1/2 text-[#94A3B8]">
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
@@ -348,7 +382,7 @@ export default function LandingPage() {
                     value={heroQuery}
                     onChange={(e) => setHeroQuery(e.target.value)}
                     placeholder={activeTab === "vin" ? t('hero.vinPlaceholder') : t('hero.partPlaceholder')}
-                    className="flex-1 ltr:pl-12 ltr:pr-4 rtl:pr-12 rtl:pl-4 py-4 md:text-[15px] text-[#E2E8F0] bg-transparent outline-none w-full font-medium placeholder:text-[#475569] placeholder:italic"
+                    className="flex-1 ltr:pl-12 ltr:pr-4 rtl:pr-12 rtl:pl-4 py-4 md:text-[15px] text-[#E2E8F0] bg-transparent outline-none w-full font-medium placeholder:text-[#94A3B8] placeholder:italic"
                     onKeyDown={(e) => e.key === "Enter" && handleHeroSearch()}
                   />
                   <button
@@ -431,7 +465,7 @@ export default function LandingPage() {
                         {idx + 1}
                       </div>
                       {/* Separator */}
-                      <span className="text-[#475569] self-center font-light text-lg leading-none">:</span>
+                      <span className="text-[#94A3B8] self-center font-light text-lg leading-none">:</span>
                       {/* Step icon */}
                       <div className="h-9 w-9 shrink-0 rounded-lg bg-[#252D3D] flex items-center justify-center">
                         <svg className="w-5 h-5 text-[#0EA5E9]" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -117,7 +117,7 @@ what the report SAYS (a reason, a state), never of volatile counters. State is s
 (30 d) only after a confirmed send or queue. Redis down: the alert is sent (never lost); a "resolved" is not sent (never invented).
 Severities: `critical` (immediate, bypasses quiet hours) · `error` 🟠 · `warning` 🟡 · `info` · `success`.
 
-**Sources (reconciled against the code 2026-11-13; the earlier audit listed 23).** 57 owner-alert call sites (`notify_owner` and its thin wrappers) in 26 sources, plus the `resolve_owner_alert` closers:
+**Sources (reconciled 2026-11-13; the call-site COUNT is superseded by §9, 2026-11-24: 76 AST-verified call sites in 12 files, guarded by a test).** The table lists the sources (the earlier audit listed 23):
 
 | # | Source (function) | Key / dedup | Class |
 |---|---|---|---|
@@ -158,3 +158,65 @@ summary (`group_scanner.py`), campaign WhatsApp tool (`social/tools.py`, called 
 **Queue.** Enqueue = one Lua script (dedup by `alert_key` + append + overflow to dead letters). Flush = peek, send, then
 remove **that payload** (`_WA_QUIET_REMOVE_LUA`) or update its attempts only while it is still the head
 (`_WA_QUIET_REPLACE_HEAD_LUA`); a failed send (exception or `ok:false`) keeps the item. At-least-once.
+
+
+## 9. Verified inventory of owner-notification call sites (2026-11-24, #152)
+
+Counted with an AST scan (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
+`resolve_owner_alert`, `_notify`, `_notify_res`, `_wa_send_update`, and the injected `notify` callable) over production
+code (tests/devtests/legacy excluded). The earlier "57 sites" and the audit's "69 call lines" were both stale/partial:
+the true number is **76 call sites in 12 files**. `tests/test_owner_alert_quality_2026_11.py::test_notification_source_inventory_is_complete`
+fails when a call site is added, removed or moved, until the registry in that test AND this table are updated.
+
+| File | Calls | Sources it carries |
+|---|---|---|
+| `BACKEND_API_ROUTES.py` | notify_owner 28 · _alert_owner 11 · _wa_send_update 8 · resolve_owner_alert 5 | health monitor (service down/restored, errors, disk, OOM, zombie jobs, dead letters, WhatsApp channel), harvest supervisor + FlareSolverr, Meili parity, catalog stagnation, NOA posts/briefs/daily report, orders, digests (daily status, night pipeline, weekly harvest) |
+| `BACKEND_AI_AGENTS.py` | _notify 2 | agent-side owner notices |
+| `boaz_tasks.py` | notify 1 | BOAZ decision requests (merged with the Email Agent alert for the same mail) |
+| `db_cleanup_agent.py` | notify_owner 2 | learned keywords backlog, cleanup alerts |
+| `db_update_agent.py` | _notify 4 · _notify_res 1 | night-pipeline task failures / recovered, watchdog anomalies |
+| `ebay_api_watch.py` | notify_owner 1 | eBay quota |
+| `email_agent/loop.py` | notify 1 | Gmail connection |
+| `email_agent/owner_flow.py` | notify 3 · resolve_owner_alert 1 | important mail, digest, stale handoffs |
+| `procurement.py` | notify 1 | procurement approvals |
+| `social/facebook_browser/group_scanner.py` | notify_owner 1 | group scan report |
+| `social/facebook_browser/session.py` | notify_owner 1 · resolve_owner_alert 1 | Facebook session expired / restored |
+| `social/noa_ops.py` | _notify 3 · notify_owner 1 | NOA operations alerts |
+
+Direct provider sends (customer chat, 2FA, post-payment, reminder loops) are NOT owner alerts and stay on the reviewed
+allowlist in `tests/test_owner_notification_changes.py`.
+
+## 10. One event = one message, sanitised, consolidated, outage-safe (2026-11-24, #152)
+
+**Renderer.** `backend/owner_message_format.py` (pure): `he_count` (Hebrew counts - "משימה אחת", "שתי משימות", "3 משימות"),
+`sanitize_body` (tracebacks, SQL, docs URLs, code fences and shell commands never reach the phone; the raw text is logged as
+`[owner_error ref=…]`, the message carries a classification + stable reference), `cap_message` (1,200 chars, cut at a line),
+`disk_same_storage`, `format_noa_daily`. `notify_owner` applies sanitising and the cap to EVERY alert (single enforcement point).
+
+**Event identity.** `notify_owner(event_keys=[...])`: a report whose key was already reported within 3 days is merged
+(`{"suppressed": True, "error": "same_event"}`, logged) and all its keys are recorded as seen. The Email Agent passes
+`mail:<ref>` and `thread:<sha1(sender|subject)>`; BOAZ passes `mail:<email_ref>` for tasks the Email Agent filed. A different
+subject from the same sender is a different event. Fingerprints stay "what the report says", never counters.
+
+**Incident lifecycle (FlareSolverr example).** warning at start → one escalation to critical after
+`HARVESTER_FS_CRITICAL_AFTER_H` (6 h) if still open → reminder every 6 h → one resolved message. The cause is stated as observed.
+No alert tells the owner to run a root command (guarded by test).
+
+**Disk.** one stream per storage: two mount points reporting the same total and ±2 GB used are one disk (the container's `st_dev`
+differs for `/` and `/app/state`, which is why the old guard let both through).
+
+**Queue (quiet hours unchanged).** Payloads carry `meta={group,state,sev,title}` and `queued_ts`. At window open
+`wa_queue_plan.plan_flush` decides per item: `merged` (opened and resolved overnight, nothing critical), `superseded` (a newer
+state of the same condition is queued), `digest` (>4 routine info updates → ONE "🌅 עדכוני הלילה" message), `deliver` (critical,
+decisions, the rest). Delivery is paced (`WA_FLUSH_PACE_S`, 3 s). Every decision is recorded in `<queue key>:audit` (500, 14 d)
+and logged. Legacy payloads without `meta` are never merged.
+
+**Channel outage.** `wa_queue_plan.channel_error_kind`: logged out / awaiting QR / bridge unreachable = `down`. While down no
+item spends an attempt and nothing is dead-lettered (the 16-17 Nov outage dead-lettered 9 alerts); the outage start is recorded
+in `<queue key>:channel` and logged; immediate critical sends that provably did not leave are kept in the retry queue (72 h);
+the dead-letter summary is NOT sent while the channel is down. The first accepted send after an outage sends ONE
+"WhatsApp חזר לפעול" message and clears the state. Items older than `WA_QUEUE_MAX_AGE_S` (72 h) are dead-lettered as `expired`.
+A crash between send and removal cannot double-send (a per-item marker, cleared after removal).
+
+**Delivery semantics unchanged and stated honestly:** "accepted by WhatsApp" (bridge `Sent OK`) is the strongest signal; delivery
+and read receipts are not recorded, no message or log line says otherwise.

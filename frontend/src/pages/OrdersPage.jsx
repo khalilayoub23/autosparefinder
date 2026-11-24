@@ -7,15 +7,15 @@ import toast from 'react-hot-toast'
 import api from '../api/client'
 
 const STATUS_META = {
-  pending_payment: { label: 'ממתין לתשלום', cls: 'bg-amber-100 text-amber-800' },
-  paid: { label: 'שולם', cls: 'bg-blue-100 text-blue-700' },
-  confirmed: { label: 'אושר', cls: 'bg-blue-100 text-blue-700' },
+  pending_payment: { label: 'ממתין לתשלום', cls: 'bg-[rgba(245,158,11,0.12)] text-[#FBBF24]' },
+  paid: { label: 'שולם', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
+  confirmed: { label: 'אושר', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
   processing: { label: 'בעיבוד', cls: 'bg-indigo-100 text-indigo-700' },
   supplier_ordered: { label: 'הוזמן מספק', cls: 'bg-cyan-100 text-cyan-700' },
-  shipped: { label: 'נשלח', cls: 'bg-blue-100 text-blue-800' },
-  delivered: { label: 'הושלם', cls: 'bg-green-100 text-green-700' },
-  cancelled: { label: 'בוטל', cls: 'bg-red-100 text-red-700' },
-  refunded: { label: 'הוחזר', cls: 'bg-brand-100 text-brand-700' },
+  shipped: { label: 'נשלח', cls: 'bg-[rgba(14,165,233,0.12)] text-blue-800' },
+  delivered: { label: 'הושלם', cls: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
+  cancelled: { label: 'בוטל', cls: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
+  refunded: { label: 'הוחזר', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
 }
 
 const FILTER_OPTIONS = [
@@ -44,7 +44,7 @@ function formatDate(value) {
 }
 
 function getStatusMeta(status) {
-  return STATUS_META[status] || { label: status || 'לא ידוע', cls: 'bg-slate-100 text-slate-600' }
+  return STATUS_META[status] || { label: status || 'לא ידוע', cls: 'bg-[#252D3D] text-[#94A3B8]' }
 }
 
 const OrdersPage = () => {
@@ -127,7 +127,7 @@ const OrdersPage = () => {
   return (
     <div className="space-y-6 lg:space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl sm:text-3xl font-black text-brand-navy">הזמנות</h1>
+        <h1 className="text-2xl sm:text-3xl font-black text-white">הזמנות</h1>
         <div className="flex items-center gap-2">
           <select
             value={statusFilter}
@@ -159,30 +159,30 @@ const OrdersPage = () => {
           </>
         ) : (
           <>
-            <StatCard label="ממתין" value={stats.pending} icon={FaClock} colorClass="bg-amber-100 text-amber-600" />
-            <StatCard label="נשלח" value={stats.shipped} icon={FaTruck} colorClass="bg-blue-100 text-blue-600" />
-            <StatCard label="הושלם" value={stats.completed} icon={FaCheckCircle} colorClass="bg-green-100 text-green-600" />
+            <StatCard label="ממתין" value={stats.pending} icon={FaClock} colorClass="bg-[rgba(245,158,11,0.12)] text-[#FBBF24]" />
+            <StatCard label="נשלח" value={stats.shipped} icon={FaTruck} colorClass="bg-[rgba(14,165,233,0.12)] text-[#38BDF8]" />
+            <StatCard label="הושלם" value={stats.completed} icon={FaCheckCircle} colorClass="bg-[rgba(34,197,94,0.12)] text-[#4ADE80]" />
           </>
         )}
       </div>
 
-      <div className="bg-white rounded-brand border border-brand-border overflow-hidden shadow-sm">
+      <div className="bg-[#1E2535] rounded-brand border border-brand-border overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-right">
             <thead className="bg-brand-surface border-b border-brand-border">
               <tr>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 whitespace-nowrap">מספר הזמנה</th>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 whitespace-nowrap">לקוח</th>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 whitespace-nowrap">תאריך</th>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 text-left whitespace-nowrap">סה״כ</th>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 text-center whitespace-nowrap">סטטוס</th>
-                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-slate-500 text-left whitespace-nowrap">פעולות</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] whitespace-nowrap">מספר הזמנה</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] whitespace-nowrap">לקוח</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] whitespace-nowrap">תאריך</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] text-left whitespace-nowrap">סה״כ</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] text-center whitespace-nowrap">סטטוס</th>
+                <th className="py-3 px-4 sm:px-6 text-xs sm:text-sm font-bold text-[#94A3B8] text-left whitespace-nowrap">פעולות</th>
               </tr>
             </thead>
             <tbody>
               {!loading && orders.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400 font-medium">אין הזמנות להצגה</td>
+                  <td colSpan={6} className="py-12 text-center text-[#94A3B8] font-medium">אין הזמנות להצגה</td>
                 </tr>
               )}
 
@@ -193,11 +193,11 @@ const OrdersPage = () => {
                   <tr key={order.id} className="hover:bg-brand-surface/70 transition-colors border-b border-brand-border last:border-0">
                     <td className="py-4 px-4 sm:px-6 font-bold text-brand-blue whitespace-nowrap">#{orderNo}</td>
                     <td className="py-4 px-4 sm:px-6">
-                      <p className="font-medium text-brand-navy leading-tight">{order.user_name || '-'}</p>
-                      <p className="text-xs text-slate-500 mt-0.5" dir="ltr">{order.user_email || '-'}</p>
+                      <p className="font-medium text-white leading-tight">{order.user_name || '-'}</p>
+                      <p className="text-xs text-[#94A3B8] mt-0.5" dir="ltr">{order.user_email || '-'}</p>
                     </td>
-                    <td className="py-4 px-4 sm:px-6 text-slate-500 text-sm whitespace-nowrap">{formatDate(order.created_at)}</td>
-                    <td className="py-4 px-4 sm:px-6 text-left font-bold text-brand-navy whitespace-nowrap">₪{formatAmount(order.total)}</td>
+                    <td className="py-4 px-4 sm:px-6 text-[#94A3B8] text-sm whitespace-nowrap">{formatDate(order.created_at)}</td>
+                    <td className="py-4 px-4 sm:px-6 text-left font-bold text-white whitespace-nowrap">₪{formatAmount(order.total)}</td>
                     <td className="py-4 px-4 sm:px-6 text-center">
                       <span className={`px-3 py-1 rounded-full text-[11px] font-bold whitespace-nowrap ${statusMeta.cls}`}>
                         {statusMeta.label}
@@ -208,7 +208,7 @@ const OrdersPage = () => {
                         type="button"
                         onClick={() => exportOrderToPDF(order)}
                         disabled={exportingId === order.id}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg transition-colors border border-slate-200 disabled:opacity-60"
+                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#252D3D] hover:bg-slate-200 text-[#94A3B8] text-xs font-bold rounded-lg transition-colors border border-[rgba(148,163,184,0.18)] disabled:opacity-60"
                       >
                         <FaFilePdf className="text-red-500" />
                         {exportingId === order.id ? 'מייצא...' : 'Export'}

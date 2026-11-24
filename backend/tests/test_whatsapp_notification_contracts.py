@@ -86,7 +86,7 @@ def capture(monkeypatch):
     calls = []
     result = {"value": {"ok": True}}
 
-    async def fake_update(text, critical=False, alert_key=""):
+    async def fake_update(text, critical=False, alert_key="", meta=None):
         calls.append({"text": text, "critical": critical, "alert_key": alert_key})
         return result["value"]
 

@@ -78,11 +78,23 @@ ACTION_HE = {
     "ignore": "לא נדרשת פעולה", "no_reply": "לא נדרשת תשובה",
 }
 
+from owner_message_format import he_count  # noqa: E402
+
 Notify = Callable[..., Awaitable[Dict[str, Any]]]
 
 
 def ref(row: Dict[str, Any]) -> str:
     return str(row.get("id") or "")[:8]
+
+
+def event_keys(row: Dict[str, Any]) -> List[str]:
+    """Semantic identity of the event behind an email alert (audit 2026-11-24): the mail itself (so BOAZ's task alert
+    for the same mail merges into this one) and the sender+normalised subject (so ten "Product Updates" newsletters
+    from one supplier are one event, the rest go to the digest)."""
+    import hashlib, re as _re
+    subj = _re.sub(r"\d+", "#", str(row.get("subject") or "").lower()).strip()[:80]
+    thread = hashlib.sha1(f"{str(row.get('sender_email') or '').lower()}|{subj}".encode()).hexdigest()[:12]
+    return [f"mail:{ref(row)}", f"thread:{thread}"]
 
 
 def _sender_domain(row: Dict[str, Any]) -> str:
@@ -336,7 +348,7 @@ async def process_owner_updates(store, notify: Notify, todos, now: Optional[date
         result = await notify("email", title, body,
                               severity="warning" if row.get("requires_human") else "info",
                               alert_key=f"email_{row['id']}", cooldown_s=30 * 86400,
-                              ref=ref(row),
+                              ref=ref(row), event_keys=event_keys(row),
                               choices=_owner_poll.email_choices(ref(row), has_draft=bool(row.get("gmail_draft_id"))))
         if _delivered(result or {}):
             await store.mark_owner_notified(row["id"])
@@ -395,7 +407,8 @@ async def check_handoffs(todos, notify: Notify, now: Optional[datetime] = None) 
     by_agent: Dict[str, int] = {}
     for t in stale:
         by_agent[str(t.get("agent") or "?")] = by_agent.get(str(t.get("agent") or "?"), 0) + 1
-    lines = [f"• {a}: {n} משימות לא התחילו מעל {HANDOFF_STALE_H:g} שעות" for a, n in sorted(by_agent.items())]
+    from owner_message_format import he_count
+    lines = [f"• {a}: {he_count(n, 'task')} לא התחילו מעל {HANDOFF_STALE_H:g} שעות" for a, n in sorted(by_agent.items())]
     if "BOAZ" in by_agent and not _sf.enabled("BOAZ_TASKS_ENABLED"):
         lines.append("סיבה: מבצע המשימות של BOAZ כבוי (BOAZ_TASKS_ENABLED) — המשימות רק ממתינות; הפעלה היא החלטת הבעלים.")
     lines.append("פרטים: *משימות מייל*; סגירה ידנית: *סגורמשימה <מזהה>*.")
@@ -450,7 +463,7 @@ async def close_item(store, todos, token: str) -> str:
         return f"המייל {ref(row)} כבר טופל."
     await store.close_item(row["id"])
     done = await todos.complete(_json(row.get("task_ids"), []) or [])
-    return f"✅ המייל {ref(row)} סומן כטופל (ללא שליחה)" + (f" · {done} משימות נסגרו" if done else "")
+    return f"✅ המייל {ref(row)} סומן כטופל (ללא שליחה)" + (f" · {he_count(done, 'task')} נסגרו" if done else "")
 
 
 async def approve_and_send(store, client, todos, token: str, approver: str = "owner_whatsapp") -> str:
@@ -486,7 +499,7 @@ async def approve_and_send(store, client, todos, token: str, approver: str = "ow
     await store.mark_sent(row["id"], str(sent.get("id")))
     done = await todos.complete(_json(row.get("task_ids"), []) or [])
     return (f"✅ נשלח: התשובה ל-{row.get('sender_email') or '?'} (מייל {r})"
-            + (f" · {done} משימות נסגרו" if done else ""))
+            + (f" · {he_count(done, 'task')} נסגרו" if done else ""))
 
 
 async def open_tasks_text(todos) -> str:

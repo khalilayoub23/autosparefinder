@@ -132,7 +132,7 @@ export default function ConsentModal() {
           <button
             onClick={handleAccept}
             disabled={!canSubmit || loading}
-            className={`w-full py-3 rounded-xl font-bold text-base transition-all
+            className={`w-full py-3 rounded-brand font-bold text-base transition-all
               ${canSubmit && !loading
                 ? 'bg-brand-600 hover:bg-brand-700 text-white shadow-md hover:shadow-lg active:scale-95'
                 : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}

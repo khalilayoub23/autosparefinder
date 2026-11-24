@@ -192,7 +192,7 @@ const AgentTodoList = () => {
             </select>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleCreate} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg">Create</button>
+            <button onClick={handleCreate} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-brand">Create</button>
             <button onClick={() => setShowCreateForm(false)} className="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg">Cancel</button>
           </div>
         </div>
@@ -322,7 +322,7 @@ const AgentTodoList = () => {
             </select>
             <button
               onClick={fetchAliasReviews}
-              className="px-3 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
+              className="px-3 py-2 text-sm rounded-brand border border-gray-300 hover:bg-gray-50"
             >
               Refresh
             </button>

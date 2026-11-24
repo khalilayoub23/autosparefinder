@@ -44,6 +44,16 @@
     --warning: #F59E0B;
     --danger:  #EF4444;
 
+    /* Radius scale (DESIGN.md: geometric, not pill-shaped). Controls = buttons/inputs/selects; surfaces = cards/panels;
+       chips = status badges only. A button never uses the chip radius. */
+    --radius-control: 6px;
+    --radius-surface: 12px;
+    --radius-chip: 9999px;
+
+    /* Header tokens — ONE definition for the landing and the app header */
+    --header-bg:     #151B27;
+    --header-border: rgba(148,163,184,0.12);
+
     /* Legacy compat — referenced by older components */
     --theme-surface-0:    #252D3D;
     --theme-surface-1:    #151B27;
@@ -105,7 +115,8 @@
   /* ── Ghost button ───────────────────────────────────────────────────── */
   .btn-ghost {
     color: #94A3B8;
-    @apply font-medium py-2 px-4 rounded-lg transition-all duration-200;
+    @apply font-medium py-2 px-4 rounded-brand transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-[#0EA5E9];
   }
   .btn-ghost:hover {
     background: rgba(148,163,184,0.08);
@@ -117,7 +128,7 @@
     background: #252D3D;
     border: 1px solid rgba(148,163,184,0.12);
     color: #FFFFFF;
-    @apply w-full rounded-lg px-4 py-2.5 placeholder-[#475569]
+    @apply w-full rounded-brand px-4 py-2.5 placeholder-[#475569]
            focus:outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:border-transparent
            transition-all duration-200;
   }
@@ -173,4 +184,40 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.4);
   }
 
+
+  /* ── Danger button + sizes + loading (shared by <Button>) ───────────── */
+  .btn-danger {
+    background: #EF4444;
+    color: #FFFFFF;
+    @apply font-semibold py-2.5 px-5 rounded-brand transition-all duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-[#EF4444] focus:ring-offset-2 focus:ring-offset-[#0F1218];
+  }
+  .btn-danger:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-sm { @apply py-1.5 px-3 text-sm; min-height: 36px; }
+  .btn-md { min-height: 44px; }                 /* touch target >= 44px */
+  .btn-lg { @apply py-3 px-6 text-base; min-height: 48px; }
+  .btn[aria-busy="true"] { cursor: progress; }
+
+  /* ── Part / offer result card — the dark surface for search results ──────
+     Replaces the light-theme utility soup (bg-white, border-gray-100, text-brand-navy = dark text on light) that made
+     result cards white on the dark shell. */
+  .part-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-surface);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4), 0 4px 12px rgba(0,0,0,0.3);
+    color: var(--text-head);
+    overflow: hidden;
+    transition: border-color .2s, box-shadow .2s;
+  }
+  .part-card:hover { border-color: var(--border-hover); }
+
+  /* Status chips — semantic, dark-surface-safe (AA contrast on #151B27) */
+  .chip { @apply inline-flex items-center gap-1 text-xs px-2 py-0.5 font-medium; border-radius: var(--radius-chip); border: 1px solid transparent; }
+  .chip-success { background: rgba(34,197,94,.12);  color: #4ADE80; border-color: rgba(34,197,94,.35); }
+  .chip-warning { background: rgba(245,158,11,.12); color: #FBBF24; border-color: rgba(245,158,11,.35); }
+  .chip-danger  { background: rgba(239,68,68,.12);  color: #F87171; border-color: rgba(239,68,68,.35); }
+  .chip-info    { background: rgba(14,165,233,.12); color: #38BDF8; border-color: rgba(14,165,233,.35); }
+  .chip-neutral { background: rgba(148,163,184,.10); color: #CBD5E1; border-color: rgba(148,163,184,.25); }
 }

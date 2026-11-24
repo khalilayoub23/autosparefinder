@@ -151,7 +151,7 @@ def test_permanent_error_is_dropped_at_once_and_the_rest_is_delivered(env):
 
 def test_transient_error_keeps_fifo_and_retries_then_records_exhaustion(env):
     env.window["open"] = True
-    err = {"ok": False, "error": "bridge unreachable: x"}
+    err = {"ok": False, "error": "bridge timeout: x"}
 
     async def go():
         k = env.app._WA_QUIET_QUEUE_KEY
@@ -220,3 +220,49 @@ def test_flush_reports_drops_to_the_owner_with_a_daily_key(env):
     assert n["title"] == "1 התראות WhatsApp לא נמסרו ב-24 השעות האחרונות"
     assert "הודעה ריקה או ללא נמען: 1" in n["body"]
     assert n["alert_key"].startswith("wa_dead_letter_") and n["cooldown_s"] == 86400
+
+
+# ── channel outage (audit 2026-11-24, #152): the nine alerts dead-lettered in the 16-17 Nov logout ──────────────
+def test_channel_down_keeps_every_item_and_spends_no_attempts(env):
+    env.window["open"] = True
+    down = {"ok": False, "error": "WhatsApp session invalid (logged out by WhatsApp) — re-pairing required"}
+
+    async def go():
+        k = env.app._WA_QUIET_QUEUE_KEY
+        for t in ("a", "b"):
+            await env.r.rpush(k, json.dumps({"to": "+972500000001", "text": t, "queued_at": "x"}))
+        for _ in range(env.app._WA_QUIET_MAX_ATTEMPTS + 3):          # many passes, far above the attempt limit
+            env.outcomes.append(dict(down))
+            assert await env.app._flush_wa_quiet_queue() == 0
+        q, dead = await _queue(env), await _dead(env)
+        chan = await env.r.get(env.app._wa_channel_key())
+        env.outcomes.extend([{"ok": True}, {"ok": True}, {"ok": True}])
+        n = await env.app._flush_wa_quiet_queue()
+        return q, dead, chan, n, await _queue(env), await env.r.get(env.app._wa_channel_key())
+    q, dead, chan, n, q_after, chan_after = env.run(go)
+    assert [i["text"] for i in q] == ["a", "b"] and all("attempts" not in i for i in q)
+    assert dead == [] and chan and "logged out" in chan
+    assert n == 2 and q_after == [] and chan_after is None            # recovery: delivered once, outage state cleared
+    assert env.notified == [] or all("לא נמסרו" not in str(n_) for n_ in env.notified)   # no dead-letter report via the dead channel
+
+
+def test_flush_merges_opened_and_resolved_and_collapses_routine_updates(env):
+    env.window["open"] = True
+
+    def it(group, state, sev, title):
+        return {"to": "+972500000001", "text": f"{title} text", "queued_at": "01/11 23:00", "alert_key": f"{group}:{state}",
+                "meta": {"group": group, "state": state, "sev": sev, "title": title}}
+
+    async def go():
+        k = env.app._WA_QUIET_QUEUE_KEY
+        for x in [it("stag", "new", "warning", "stagnation"), it("stag", "resolved", "success", "back"),
+                  *[it(f"r{i}", "new", "info", f"routine {i}") for i in range(5)], it("oom", "new", "critical", "OOM")]:
+            await env.r.rpush(k, json.dumps(x))
+        n = await env.app._flush_wa_quiet_queue()
+        audit = [json.loads(a) for a in await env.r.lrange(env.app._wa_audit_key(), 0, -1)]
+        return n, audit
+    n, audit = env.run(go)
+    decisions = sorted(a["decision"] for a in audit)
+    assert decisions.count("merged") == 2 and decisions.count("digested") == 5 and decisions.count("delivered") == 2
+    assert n == 2 and len(env.sent) == 2                              # the critical alert + ONE morning digest (not 8)
+    assert any("עדכוני הלילה (5)" in s["text"] for s in env.sent) and any("OOM text" in s["text"] for s in env.sent)
