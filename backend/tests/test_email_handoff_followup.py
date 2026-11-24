@@ -45,7 +45,7 @@ def test_stale_handoffs_alert_once_with_fingerprint_and_real_cause(monkeypatch):
     assert n == 2 and len(calls) == 1
     cat, title, body, kw = calls[0]
     assert kw["alert_key"] == "email_handoff_stale" and kw["fingerprint"] == "00000001,00000002"
-    assert "BOAZ: 2" in body and "BOAZ_TASKS_ENABLED" in body
+    assert "BOAZ: שתי משימות" in body and "BOAZ_TASKS_ENABLED" in body
 
 
 def test_executor_on_does_not_claim_it_is_off(monkeypatch):

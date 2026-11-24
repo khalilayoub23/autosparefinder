@@ -229,5 +229,5 @@ def test_daily_facebook_report_says_whether_the_group_scan_ran():
     src = open(ROUTES, encoding="utf-8").read()
     i = src.index('_gs_marker.status("group_scan")')
     block = src[i:i + 1800]
-    for phrase in ("still running", "INTERRUPTED", "did NOT run in the last 24 h", "no run recorded"):
+    for phrase in ("עדיין רצה", "הופסקה", "לא רצה ב-24 השעות האחרונות", "לא נרשמה סריקת קבוצות"):
         assert phrase in block, phrase
