@@ -42,6 +42,19 @@ async def main():
     if a.status:
         return await _status()
     deps = A.build_prod_deps(allow_send=a.allow_send)
+    # Same lock as the in-process loop (BACKEND_API_ROUTES._nir_contact_enrichment_loop): never two NIR cycles at once.
+    from BACKEND_AUTH_SECURITY import get_redis
+    from distributed_lock import acquire_lock
+    lock = await acquire_lock(await get_redis(), "nir_agent_cycle", ttl_seconds=1800)
+    if not lock:
+        print("another NIR cycle is running (lock autospare:lock:nir_agent_cycle) - not starting a second one"); return
+    try:
+        await _run(a, A, deps)
+    finally:
+        await lock.release()
+
+
+async def _run(a, A, deps):
     if a.task:
         far = A._now().replace(year=2100)
         task = next((t for t in await deps.repo.due_tasks(500, far) if t["id"].startswith(a.task)), None)

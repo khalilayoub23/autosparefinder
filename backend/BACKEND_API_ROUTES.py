@@ -5062,12 +5062,24 @@ async def _nir_contact_enrichment_loop():
         if os.getenv("NIR_AGENT_ENABLED", "0") == "1":
             try:
                 from services import nir_agent as _na
-                _agent_budget = _agent_budget or _na.CallBudget()
-                ares = await _na.run_agent_cycle(_na.build_prod_deps(allow_send=True, budget=_agent_budget),
-                                                 batch=int(os.getenv("NIR_AGENT_BATCH", "1")))
-                logger.info("[nir_agent] %s", {k: v for k, v in ares.items() if k != "tasks"} | {"tasks": [(t["task_id"][:8], t["status"]) for t in ares["tasks"]]})
-                _na.write_status(ares)
-                idle = idle and not ares["tasks"]
+                from distributed_lock import acquire_lock as _acquire_lock
+                _redis = await get_redis()
+                # ONE cycle at a time across restarts / a manual maintenance/nir_agent_run.py: the task rows carry no lease, so
+                # two overlapping cycles would run the same task (and could plan the same inquiry) twice.
+                _lock = await _acquire_lock(_redis, "nir_agent_cycle", ttl_seconds=1800)
+                if not _lock:
+                    logger.info("[nir_agent] another cycle holds the lock - skipping")
+                else:
+                    try:
+                        _agent_budget = _agent_budget or await _na.CallBudget().restore(_redis)
+                        ares = await _na.run_agent_cycle(_na.build_prod_deps(allow_send=True, budget=_agent_budget),
+                                                         batch=int(os.getenv("NIR_AGENT_BATCH", "1")))
+                        await _agent_budget.persist(_redis)
+                    finally:
+                        await _lock.release()
+                    logger.info("[nir_agent] %s", {k: v for k, v in ares.items() if k != "tasks"} | {"tasks": [(t["task_id"][:8], t["status"]) for t in ares["tasks"]]})
+                    _na.write_status(ares)
+                    idle = idle and not ares["tasks"]
             except Exception as exc:
                 logger.error("[nir_agent] cycle failed: %s", exc)
         await asyncio.sleep(3600 if idle else max(int(os.getenv("NIR_CONTACT_INTERVAL_S", "600")), int(os.getenv("NIR_AGENT_MIN_INTERVAL_S", "300"))))

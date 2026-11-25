@@ -94,7 +94,10 @@ module.exports.BufferJSON = { replacer: (k, v) => v, reviver: (k, v) => v }
 
 async function startBridge() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-lifecycle-'))
-  for (const f of ['index.js', 'bridge_lifecycle.js', 'safe_logging.js', 'atomic_write.js', 'msg_cache.js', 'package.json']) {
+  // Every local module index.js imports must be copied, or the bridge under test cannot start (send_journal.js,
+  // poll_votes.js and poll_decrypt.js were missing: the lifecycle tests silently stopped exercising index.js).
+  const _localImports = [...fs.readFileSync(path.join(HERE, 'index.js'), 'utf8').matchAll(/from '\.\/([\w.-]+\.js)'/g)].map((m) => m[1])
+  for (const f of [...new Set(['index.js', 'package.json', ...(_localImports)])]) {
     fs.copyFileSync(f === 'index.js' && process.env.BRIDGE_TEST_INDEX ? process.env.BRIDGE_TEST_INDEX : path.join(HERE, f), path.join(dir, f))
   }
   const nm = path.join(dir, 'node_modules')

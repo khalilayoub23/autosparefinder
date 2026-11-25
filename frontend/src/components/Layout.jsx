@@ -163,7 +163,7 @@ export default function Layout({ children }) {
           {/* Right actions */}
           <div className="flex items-center gap-2">
             {/* Cart */}
-            <Link to="/cart" className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors focus-visible:outline-none">
+            <Link to="/cart" aria-label={cartTotals.count > 0 ? `עגלת קניות (${cartTotals.count} פריטים)` : 'עגלת קניות'} className="relative p-2 rounded-lg text-slate-100 hover:bg-white/10 transition-colors focus-visible:outline-none">
               <ShoppingCart className="w-5 h-5" />
               {cartTotals.count > 0 && (
                 <span className="absolute -top-1 -left-1 min-w-[1.25rem] h-5 px-1 bg-[#00CCFF] text-[#1B2228] text-[10px] rounded-full flex items-center justify-center font-black leading-none">

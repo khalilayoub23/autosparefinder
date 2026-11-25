@@ -108,6 +108,27 @@ class CallBudget:
     def used(self) -> int:
         return self._n
 
+    # The daily ceiling must survive a loop restart / process restart (a fresh CallBudget() used to start at 0, so every
+    # restart re-granted the whole day's LLM calls). The count is mirrored to Redis after each cycle and re-read on creation.
+    def _day_key(self, now: Optional[datetime] = None) -> str:
+        return (now or _now()).astimezone(timezone(timedelta(hours=2))).date().isoformat()
+
+    async def restore(self, redis, now: Optional[datetime] = None) -> "CallBudget":
+        try:
+            raw = await redis.get(f"autospare:nir_agent:calls:{self._day_key(now)}")
+            if raw is not None:
+                self._day = (now or _now()).astimezone(timezone(timedelta(hours=2))).date()
+                self._n = max(self._n, int(raw))
+        except Exception:
+            pass                                    # Redis unavailable -> fall back to the in-process count
+        return self
+
+    async def persist(self, redis, now: Optional[datetime] = None) -> None:
+        try:
+            await redis.set(f"autospare:nir_agent:calls:{self._day_key(now)}", str(self._n), ex=2 * 86400)
+        except Exception:
+            pass
+
 
 # ── tools ───────────────────────────────────────────────────────────────────────────────────────────────────────
 def _public_url(url: str) -> bool:
