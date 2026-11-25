@@ -116,7 +116,9 @@ def test_retry_exhaustion_dead_letters_and_same_key_replaces(renv):
         await e.app._wa_send_quiet("+972500000001", "v2", alert_key="same")
         q1 = await _retry(e)
         for _ in range(e.app._WA_QUIET_MAX_ATTEMPTS):
-            e.outcomes.append(UNREACHABLE)
+            # since #152 "bridge unreachable" means the CHANNEL is down: the item is kept, not counted (test_channel_down_*).
+            # Exhaustion is reached by an error that is the item's own: a transient provider failure.
+            e.outcomes.append({"ok": False, "error": "HTTP 500"})
             await e.app._flush_wa_retry_queue()
         left = await _retry(e)
         dead = await _dead(e)
@@ -155,3 +157,19 @@ def test_success_path_unchanged(renv):
         return res, q
     res, q = e.run(go)
     assert res == {"ok": True} and q == [] and e.sent[0]["text"] == "ok now"
+
+
+def test_channel_down_keeps_the_item_and_never_counts_an_attempt_or_dead_letters(renv):
+    """The #152 behaviour the exhaustion test used to be mistaken for: an unreachable bridge breaks the CHANNEL, not the item."""
+    e = renv
+    e.window["open"] = True
+
+    async def go():
+        e.outcomes.append(UNREACHABLE)
+        await e.app._wa_send_quiet("+972500000001", "v1", alert_key="k")
+        for _ in range(e.app._WA_QUIET_MAX_ATTEMPTS + 2):
+            e.outcomes.append(UNREACHABLE)
+            await e.app._flush_wa_retry_queue()
+        return await _retry(e), await _dead(e)
+    left, dead = e.run(go)
+    assert len(left) == 1 and left[0]["text"] == "v1" and int(left[0].get("attempts", 0)) == 0 and dead == []

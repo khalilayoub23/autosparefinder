@@ -1,0 +1,71 @@
+🌅 *AutoSpareFinder — עדכון בוקר* · 25/11
+מזהה D20261125 · 9 פריטים
+👉 שני פריטים דורשים את פעולתך
+
+*🏥 בריאות המערכת ותפעול*
+• 🟠 עבודת הלילה: 3 משימות נכשלו
+  dedup_catalog_parts: שגיאת בסיס נתונים · אסמכתה 363542
+• 🟡 שימוש בדיסק 80.1%
+  הדיסק מתמלא  (חזר 2 פעמים)
+
+*📧 מייל · NIR · BOAZ*
+• מייל חדש — ספק
+  מאת: ASAP Network  (חזר 20 פעמים)
+
+*🛰️ ייבוא, מחירים וקטלוג*
+• 🟡 🔄 ייבוא ספק ממתין לאישור
+  הקובץ עודכן — 2 קבצים  (חזר 4 פעמים)
+
+*📣 NOA וסוכנים*
+• NOA בפייסבוק אתמול
+  20 טיוטות ממתינות
+
+*✅ הושלם ונפתר*
+• סנכרון מחירים הושלם
+  ok
+• ✅ תקלת סנכרון — נפתח ונפתר מאז הדיגסט הקודם
+
+*👉 דורש את פעולתך*
+• ספק חדש ממתין לאישורך
+  נמצא ספק חדש
+  ▶ אשרספק S12
+  ▶ דחהספק S12  #S12
+• הזמנה ממתינה לתשלום
+  הזמנה פתוחה
+  ▶ הזמנות  #O77
+
+--- SUMMARY ---
+{
+ "producer_calls": 34,
+ "critical_sent_immediately": 1,
+ "routine_events_collected": 33,
+ "merged_as_duplicates": 19,
+ "repeats_suppressed_by_cooldown_or_unchanged": 3,
+ "suppressed_unchanged": 0,
+ "replaced_by_newer_version": 1,
+ "opened_and_resolved_in_one_digest": 1,
+ "occurrences_counted_as_repeats": 23,
+ "items_in_digest": 9,
+ "sections": {
+  "health": 2,
+  "mail": 1,
+  "catalog": 1,
+  "noa": 1,
+  "done": 2,
+  "action": 2
+ },
+ "action_items": 2,
+ "digest_id": "D20261125",
+ "message_chars": 729,
+ "event_ids": [
+  "k:email_00000001-aaaa-bbbb-cccc-000000000000",
+  "k:disk_warning",
+  "k:import_wait",
+  "k:dbfail",
+  "k:noa_eod",
+  "k:job_ok",
+  "k:inc",
+  "k:sup_new",
+  "k:order_wait"
+ ]
+}

@@ -319,7 +319,8 @@ def app(monkeypatch):
         direct.append({"text": text, "critical": critical})
         return {"ok": True}
 
-    async def fake_bridge(to, text):
+    async def fake_bridge(to, text, client_msg_id=""):
+        assert len(client_msg_id) == 32 and client_msg_id.startswith("3EB0")      # every digest send carries a stable id
         bridge.append({"to": to, "text": text})
         return {"ok": True}
     monkeypatch.setattr(a, "get_redis", _get)
@@ -371,7 +372,7 @@ def test_bridge_outage_keeps_events_reports_nothing_through_the_dead_channel_and
     run(app.a.notify_owner("health", "אירוע", "x", alert_key="e1"))
     results = {"mode": "down"}
 
-    async def bridge(to, text):
+    async def bridge(to, text, client_msg_id=""):
         if results["mode"] == "down":
             return {"ok": False, "error": "WhatsApp session invalid (logged out)"}
         app.bridge.append(text)

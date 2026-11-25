@@ -1,0 +1,1 @@
+BEFORE (build of 047c43d, same harness, 70 runs): {"button-name": 107, "document-title": 2, "html-has-lang": 2, "label": 36, "select-name": 44, "aria-required-children": 4, "target-size": 4, "scrollable-region-focusable": 11, "link-in-text-block": 2} (the 2 document-title/html-has-lang are my mock checkout page, a harness artefact, fixed in the harness)

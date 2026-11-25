@@ -196,16 +196,16 @@ function AgentCard({ agent, onSave, isSaving }) {
           {editing && (
             <div className="mt-3 space-y-3 bg-brand-50/80 rounded-xl p-3 border border-brand-200">
               <div>
-                <label className="text-xs text-slate-400">שם סוכן (תצוגה)</label>
-                <input
+                <label htmlFor="agents-f1" className="text-xs text-slate-400">שם סוכן (תצוגה)</label>
+                <input id="agents-f1"
                   className="input-field w-full mt-1"
                   value={editForm.persona}
                   onChange={(e) => setEditForm((f) => ({ ...f, persona: e.target.value }))}
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400">מודל</label>
-                <input
+                <label htmlFor="agents-f2" className="text-xs text-slate-400">מודל</label>
+                <input id="agents-f2"
                   className="input-field w-full mt-1"
                   value={editForm.model}
                   onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))}
@@ -213,8 +213,8 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400">טמפרטורה</label>
-                <input
+                <label htmlFor="agents-f3" className="text-xs text-slate-400">טמפרטורה</label>
+                <input id="agents-f3"
                   type="number"
                   step="0.1"
                   min="0"
@@ -226,8 +226,8 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400">System Prompt</label>
-                <textarea
+                <label htmlFor="agents-f4" className="text-xs text-slate-400">System Prompt</label>
+                <textarea id="agents-f4"
                   rows={6}
                   className="input-field w-full mt-1 resize-y"
                   value={editForm.system_prompt}
@@ -236,8 +236,8 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400">משימות משויכות (שורה לכל משימה)</label>
-                <textarea
+                <label htmlFor="agents-f5" className="text-xs text-slate-400">משימות משויכות (שורה לכל משימה)</label>
+                <textarea id="agents-f5"
                   rows={4}
                   className="input-field w-full mt-1 resize-y"
                   value={editForm.assigned_tasks_text}
@@ -688,7 +688,7 @@ export default function Agents() {
               value={taskLogFilters.agent}
               onChange={(e) => setTaskLogFilters((f) => ({ ...f, agent: e.target.value }))}
             />
-            <select
+            <select aria-label="All sources"
               className="input-field text-sm"
               value={taskLogFilters.source}
               onChange={(e) => setTaskLogFilters((f) => ({ ...f, source: e.target.value }))}
@@ -698,7 +698,7 @@ export default function Agents() {
                 <option key={src} value={src}>{src}</option>
               ))}
             </select>
-            <select
+            <select aria-label="All actions"
               className="input-field text-sm"
               value={taskLogFilters.actionType}
               onChange={(e) => setTaskLogFilters((f) => ({ ...f, actionType: e.target.value }))}
@@ -708,7 +708,7 @@ export default function Agents() {
                 <option key={act} value={act}>{act}</option>
               ))}
             </select>
-            <select
+            <select aria-label="All statuses"
               className="input-field text-sm"
               value={taskLogFilters.success}
               onChange={(e) => setTaskLogFilters((f) => ({ ...f, success: e.target.value }))}
@@ -785,7 +785,7 @@ export default function Agents() {
           </div>
 
           <div className="flex items-center gap-2 min-w-[320px] w-full md:w-auto flex-wrap md:flex-nowrap">
-            <select
+            <select aria-label="ספק טוקנים"
               className="input-field w-full md:w-52"
               value={runtimeTokenProvider}
               onChange={(e) => setRuntimeTokenProvider(e.target.value)}
@@ -846,7 +846,7 @@ export default function Agents() {
             />
           </div>
 
-          <select
+          <select aria-label="כל הסוגים"
             className="input-field"
             value={agentTypeFilter}
             onChange={(e) => setAgentTypeFilter(e.target.value)}
@@ -857,7 +857,7 @@ export default function Agents() {
             <option value="internal">פנימי</option>
           </select>
 
-          <select
+          <select aria-label="כל המצבים"
             className="input-field"
             value={agentModeFilter}
             onChange={(e) => setAgentModeFilter(e.target.value)}

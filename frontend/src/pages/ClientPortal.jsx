@@ -135,35 +135,35 @@ export default function ClientPortal() {
           <form className="space-y-3" onSubmit={saveProfile}>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-[#94A3B8]">שם מלא</label>
-                <input className="input-field mt-1" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+                <label htmlFor="clientportal-f1" className="text-sm text-[#94A3B8]">שם מלא</label>
+                <input id="clientportal-f1" className="input-field mt-1" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
               </div>
               <div>
-                <label className="text-sm text-[#94A3B8]">אימייל</label>
-                <input className="input-field mt-1 bg-[#1E2535]" value={user?.email || ''} readOnly dir="ltr" />
+                <label htmlFor="clientportal-f2" className="text-sm text-[#94A3B8]">אימייל</label>
+                <input id="clientportal-f2" className="input-field mt-1 bg-[#1E2535]" value={user?.email || ''} readOnly dir="ltr" />
               </div>
               <div>
-                <label className="text-sm text-[#94A3B8]">טלפון</label>
-                <input className="input-field mt-1" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" />
+                <label htmlFor="clientportal-f3" className="text-sm text-[#94A3B8]">טלפון</label>
+                <input id="clientportal-f3" className="input-field mt-1" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" />
               </div>
               <div>
-                <label className="text-sm text-[#94A3B8]">מיקוד</label>
-                <input className="input-field mt-1" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} />
+                <label htmlFor="clientportal-f4" className="text-sm text-[#94A3B8]">מיקוד</label>
+                <input id="clientportal-f4" className="input-field mt-1" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} />
               </div>
             </div>
 
             <div>
-              <label className="text-sm text-[#94A3B8]">כתובת</label>
-              <input className="input-field mt-1" value={form.address_line1} onChange={(e) => setForm({ ...form, address_line1: e.target.value })} />
+              <label htmlFor="clientportal-f5" className="text-sm text-[#94A3B8]">כתובת</label>
+              <input id="clientportal-f5" className="input-field mt-1" value={form.address_line1} onChange={(e) => setForm({ ...form, address_line1: e.target.value })} />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-[#94A3B8]">דירה / קומה</label>
-                <input className="input-field mt-1" value={form.address_line2} onChange={(e) => setForm({ ...form, address_line2: e.target.value })} />
+                <label htmlFor="clientportal-f6" className="text-sm text-[#94A3B8]">דירה / קומה</label>
+                <input id="clientportal-f6" className="input-field mt-1" value={form.address_line2} onChange={(e) => setForm({ ...form, address_line2: e.target.value })} />
               </div>
               <div>
-                <label className="text-sm text-[#94A3B8]">עיר</label>
-                <input className="input-field mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+                <label htmlFor="clientportal-f7" className="text-sm text-[#94A3B8]">עיר</label>
+                <input id="clientportal-f7" className="input-field mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
               </div>
             </div>
 
@@ -187,7 +187,7 @@ export default function ClientPortal() {
               <Link to="/parts" className="text-[#38BDF8] hover:underline">התחל חיפוש חלקים</Link>
             </div>
           ) : (
-            <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+            <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1" tabIndex={0} role="region" aria-label="רשימה (גלילה)">
               {orders.slice(0, 12).map((order) => (
                 <div key={order.id} className="border border-[rgba(148,163,184,0.18)] rounded-xl p-3">
                   <div className="flex items-center justify-between gap-2">

@@ -322,6 +322,9 @@ ALLOWED_WRITERS = {
     "maintenance/cpie_overwrite_repair.py": "owner-run repair, manifest-pinned",
     "maintenance/repair_double_margin_129.py": "owner-run journaled repair (rollback)",
     "maintenance/repair_vat_paths_151.py": "owner-run journaled repair (rollback)",
+    # classified 2026-11-25 (mission 4): the quarantine writes base_price = 0 and --restore puts back the EXACT previous value kept in
+    # specifications.msrp_quarantine.prev_base - it never computes a price (no margin, no formula); dry-run by default, offer-policy gated
+    "maintenance/asap_msrp_quarantine.py": "owner-run quarantine: zero + exact restore of the stored previous value, no computation",
 }
 
 

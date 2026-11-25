@@ -172,7 +172,7 @@ function Message({ msg, onRate, onCatalogSearch }) {
           {!isUser && !rated && (
             <div className="flex gap-1 mr-2">
               {[1, 2, 3, 4, 5].map((s) => (
-                <button key={s} onClick={() => { setRated(true); onRate(s) }} className="text-gray-300 hover:text-yellow-400">
+                <button key={s} aria-label={`דרג ${s} מתוך 5`} onClick={() => { setRated(true); onRate(s) }} className="text-gray-300 hover:text-yellow-400">
                   <Star className="w-3 h-3" />
                 </button>
               ))}
@@ -399,7 +399,7 @@ export default function Chat() {
                   </div>
                 </div>
               </div>
-              <button
+              <button aria-label="מחק"
                 onClick={(e) => { e.stopPropagation(); deleteConversation(c.id) }}
                 className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/15 text-red-400 ml-1 mt-0.5 transition-opacity"
               >
@@ -522,7 +522,7 @@ export default function Chat() {
           {/* Input */}
         <div className="p-4 border-t border-brand-border">
           <div className="flex items-end gap-2">
-            <button onClick={() => fileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600">
+            <button aria-label="צרף תמונה" onClick={() => fileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600">
               <Image className="w-5 h-5" />
             </button>
             <input
@@ -535,7 +535,7 @@ export default function Chat() {
                   setAudioFile(null)
                 }}
               />
-              <button onClick={() => audioFileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600" title="שלח הקלטה">
+              <button aria-label="שלח הקלטה" onClick={() => audioFileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600" title="שלח הקלטה">
                 <Mic className="w-5 h-5" />
               </button>
               <input
@@ -565,6 +565,7 @@ export default function Chat() {
             <button
               onClick={() => handleSend()}
               disabled={(!input.trim() && !imageFile && !audioFile) || isTyping}
+              aria-label="שלח הודעה"
               className="btn-primary p-2.5 flex-shrink-0"
             >
               {isTyping ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}

@@ -195,7 +195,7 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
                   {loading === 'share' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
                   {copied ? 'הועתק!' : 'שתף'}
                 </button>
-                <button onClick={closePreview} className="p-1.5 rounded-brand hover:bg-brand-100 text-slate-400 transition-colors">
+                <button aria-label="סגור" onClick={closePreview} className="p-1.5 rounded-brand hover:bg-brand-100 text-slate-400 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>

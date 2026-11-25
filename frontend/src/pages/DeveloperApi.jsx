@@ -9,7 +9,7 @@ function Code({ children }) {
   const copy = () => { navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }) }
   return (
     <div className="relative group">
-      <pre dir="ltr" className="overflow-x-auto rounded-xl bg-[#0b1f3a] text-slate-100 text-[12.5px] leading-relaxed p-4 pr-12 font-mono">{text}</pre>
+      <pre dir="ltr" tabIndex={0} role="region" aria-label="Code sample" className="overflow-x-auto rounded-xl bg-[#0b1f3a] text-slate-100 text-[12.5px] leading-relaxed p-4 pr-12 font-mono">{text}</pre>
       <button onClick={copy} aria-label="Copy"
         className="absolute top-2.5 right-2.5 rounded-brand bg-white/10 hover:bg-white/20 p-1.5 text-slate-200 transition">
         {copied ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}

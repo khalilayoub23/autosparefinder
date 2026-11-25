@@ -184,32 +184,32 @@ export default function Profile() {
         <form onSubmit={saveProfile} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">שם מלא</label>
-              <input className="input-field" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+              <label htmlFor="profile-f1" className="block text-sm font-medium text-[#E2E8F0] mb-1">שם מלא</label>
+              <input id="profile-f1" className="input-field" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">אימייל</label>
-              <input className="input-field bg-[#1E2535]" value={user?.email || ''} readOnly dir="ltr" />
+              <label htmlFor="profile-f2" className="block text-sm font-medium text-[#E2E8F0] mb-1">אימייל</label>
+              <input id="profile-f2" className="input-field bg-[#1E2535]" value={user?.email || ''} readOnly dir="ltr" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">טלפון</label>
-              <input className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="972501234567" />
+              <label htmlFor="profile-f3" className="block text-sm font-medium text-[#E2E8F0] mb-1">טלפון</label>
+              <input id="profile-f3" className="input-field" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} dir="ltr" placeholder="972501234567" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
-              <input className="input-field" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+              <label htmlFor="profile-f4" className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
+              <input id="profile-f4" className="input-field" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
             </div>
             <div className="col-span-full">
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">כתובת</label>
-              <input className="input-field" value={form.address_line1} placeholder="רחוב ומספר בית" onChange={(e) => { setForm({ ...form, address_line1: e.target.value }); setGeoResult(null) }} />
+              <label htmlFor="profile-f5" className="block text-sm font-medium text-[#E2E8F0] mb-1">כתובת</label>
+              <input id="profile-f5" className="input-field" value={form.address_line1} placeholder="רחוב ומספר בית" onChange={(e) => { setForm({ ...form, address_line1: e.target.value }); setGeoResult(null) }} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מספר דירה</label>
-              <input className="input-field" value={form.apartment} placeholder="דירה / קומה" onChange={(e) => { setForm({ ...form, apartment: e.target.value }); setGeoResult(null) }} />
+              <label htmlFor="profile-f6" className="block text-sm font-medium text-[#E2E8F0] mb-1">מספר דירה</label>
+              <input id="profile-f6" className="input-field" value={form.apartment} placeholder="דירה / קומה" onChange={(e) => { setForm({ ...form, apartment: e.target.value }); setGeoResult(null) }} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
-              <input className="input-field" value={form.postal_code} onChange={(e) => { setForm({ ...form, postal_code: e.target.value }); setGeoResult(null) }} />
+              <label htmlFor="profile-f7" className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
+              <input id="profile-f7" className="input-field" value={form.postal_code} onChange={(e) => { setForm({ ...form, postal_code: e.target.value }); setGeoResult(null) }} />
             </div>
             {/* Geo validation */}
             <div className="col-span-full">
@@ -278,7 +278,7 @@ export default function Profile() {
                     <Star className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <button onClick={() => removeVehicle(v.id)} className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400">
+                <button aria-label="מחק" onClick={() => removeVehicle(v.id)} className="p-1.5 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -297,16 +297,16 @@ export default function Profile() {
       <Section title="שינוי סיסמה" icon={Lock}>
         <form onSubmit={changePassword} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה נוכחית</label>
-            <input type="password" dir="ltr" className="input-field" value={passwords.current} onChange={(e) => setPasswords({ ...passwords, current: e.target.value })} required />
+            <label htmlFor="profile-f8" className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה נוכחית</label>
+            <input id="profile-f8" type="password" dir="ltr" className="input-field" value={passwords.current} onChange={(e) => setPasswords({ ...passwords, current: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה חדשה</label>
-            <input type="password" dir="ltr" className="input-field" value={passwords.new} onChange={(e) => setPasswords({ ...passwords, new: e.target.value })} required />
+            <label htmlFor="profile-f9" className="block text-sm font-medium text-[#E2E8F0] mb-1">סיסמה חדשה</label>
+            <input id="profile-f9" type="password" dir="ltr" className="input-field" value={passwords.new} onChange={(e) => setPasswords({ ...passwords, new: e.target.value })} required />
           </div>
           <div>
-            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">אישור סיסמה חדשה</label>
-            <input type="password" dir="ltr" className="input-field" value={passwords.confirm} onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })} required />
+            <label htmlFor="profile-f10" className="block text-sm font-medium text-[#E2E8F0] mb-1">אישור סיסמה חדשה</label>
+            <input id="profile-f10" type="password" dir="ltr" className="input-field" value={passwords.confirm} onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })} required />
           </div>
           <button type="submit" disabled={savingPass} className="btn-primary flex items-center gap-2">
             {savingPass ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
@@ -325,6 +325,9 @@ export default function Profile() {
                 <p className="text-xs text-[#94A3B8]">{desc}</p>
               </div>
               <button
+                role="switch"
+                aria-checked={!!notifPrefs[key]}
+                aria-label={label}
                 onClick={() => toggleNotif(key)}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
                   notifPrefs[key] ? 'bg-brand-500' : 'bg-brand-50'
@@ -385,7 +388,7 @@ export default function Profile() {
               <li>היסטריית הזמנות (7 שנים לפי חוק)</li>
               <li>פרטי רכב (לצורך חיפוש חלפים בלבד)</li>
             </ul>
-            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:info@autosparefinder.co.il" className="text-[#38BDF8] hover:underline">info@autosparefinder.co.il</a></p>
+            <p className="mt-2">לבקשת מחיקת נתונים או עיין בהם, פנה/י ל: <a href="mailto:info@autosparefinder.co.il" className="text-[#38BDF8] underline">info@autosparefinder.co.il</a></p>
           </div>
         </div>
       </Section>

@@ -220,14 +220,15 @@ export default function LandingPage() {
               value={navQuery}
               onChange={(e) => setNavQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleNavSearch()}
+              aria-label={t('search.navPlaceholder')}
               className="flex-1 px-5 py-2 text-[15px] text-[#E2E8F0] bg-transparent outline-none h-full placeholder:text-[#94A3B8]"
               placeholder={t('search.navPlaceholder')}
             />
             <div className="h-2/3 w-[1px] bg-[rgba(148,163,184,0.20)]"></div>
-            <select className="px-3 h-full text-[13px] text-[#94A3B8] outline-none bg-transparent cursor-pointer font-medium hover:bg-[#252D3D] transition-colors">
+            <select aria-label={t('search.allCategories')} className="px-3 h-full text-[13px] text-[#94A3B8] outline-none bg-transparent cursor-pointer font-medium hover:bg-[#252D3D] transition-colors">
               <option className="bg-[#1E2535]">{t('search.allCategories')}</option>
             </select>
-            <button onClick={handleNavSearch} className="h-full bg-[#0EA5E9] hover:bg-[#0284C7] px-6 transition-colors flex items-center justify-center">
+            <button aria-label={t('hero.searchBtn')} onClick={handleNavSearch} className="h-full bg-[#0EA5E9] hover:bg-[#0284C7] px-6 transition-colors flex items-center justify-center">
               <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
@@ -349,7 +350,7 @@ export default function LandingPage() {
               </p>
 
               <div className="mt-8 rounded-xl border border-[rgba(148,163,184,0.12)] bg-[#151B27]/80 p-4 lg:p-5 shadow-2xl backdrop-blur-md">
-                <div role="tablist" aria-label="Search tabs" className="flex flex-wrap gap-2 mb-3">
+                <div role="group" aria-label="Search tabs" className="flex flex-wrap gap-2 mb-3">
                   {heroTabs.map((tab) => {
                     const active = tab.id === activeTab
                     return (

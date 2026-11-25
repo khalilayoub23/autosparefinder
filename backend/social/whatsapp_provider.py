@@ -113,8 +113,9 @@ async def _post_send(payload: dict, timeout: float) -> dict:
         delay = min(delay * 2, 5.0)
 
 
-async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
-    """Send WhatsApp message via Baileys bridge."""
+async def send_message(to: str, text: str, reply_jid: str = "", client_msg_id: str = "") -> dict:
+    """Send WhatsApp message via Baileys bridge. `client_msg_id` makes the send idempotent: the bridge journal returns the
+    original result for an id it already accepted instead of sending again (owner digest, 2026-11-25)."""
     # Invariant: never send an empty body. An empty message is a caller error, not a
     # bridge-down event — it must not enter the retry loop (root-fix 2026-10-02).
     if not text or not str(text).strip():
@@ -129,6 +130,8 @@ async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
     payload = {"to": _normalize_bridge_phone(to), "text": text}
     if reply_jid:
         payload["reply_jid"] = _route_reply_jid(reply_jid)
+    if client_msg_id:
+        payload["client_msg_id"] = client_msg_id
     try:
         data = await _post_send(payload, 15.0)
         if data.get("ok") and _poll and _owner_poll.is_owner_target(to):
@@ -139,7 +142,8 @@ async def send_message(to: str, text: str, reply_jid: str = "") -> dict:
                 pass
         # "key" is the sent-message key (remoteJid/id/fromMe) — lets the caller later
         # delete-for-everyone (e.g. remove a verified 2FA code from the chat).
-        return {"ok": data.get("ok", False), "error": data.get("error"), "key": data.get("key")}
+        return {"ok": data.get("ok", False), "error": data.get("error"), "key": data.get("key"),
+                "deduplicated": bool(data.get("deduplicated"))}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "key": None}
 

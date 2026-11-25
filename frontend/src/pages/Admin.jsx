@@ -213,13 +213,13 @@ function SupplierFormFields({ f, setF, isCreate }) {
               <input className="input-field w-full" value={f.country} onChange={(e) => setF('country', e.target.value)} placeholder="Israel" dir="ltr" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-200 mb-1">עדיפות</label>
-              <input type="number" className="input-field w-full" value={f.priority} onChange={(e) => setF('priority', Number(e.target.value))} min={0} max={100} dir="ltr" />
+              <label htmlFor="admin-f1" className="block text-sm font-medium text-slate-200 mb-1">עדיפות</label>
+              <input id="admin-f1" type="number" className="input-field w-full" value={f.priority} onChange={(e) => setF('priority', Number(e.target.value))} min={0} max={100} dir="ltr" />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-200 mb-1">אמינות (0–10)</label>
-            <input type="number" step="0.1" min="0" max="10" className="input-field w-full" value={f.reliability_score} onChange={(e) => setF('reliability_score', Number(e.target.value))} dir="ltr" />
+            <label htmlFor="admin-f2" className="block text-sm font-medium text-slate-200 mb-1">אמינות (0–10)</label>
+            <input id="admin-f2" type="number" step="0.1" min="0" max="10" className="input-field w-full" value={f.reliability_score} onChange={(e) => setF('reliability_score', Number(e.target.value))} dir="ltr" />
           </div>
           {!isCreate && (
             <div className="flex items-center gap-3">
@@ -235,16 +235,16 @@ function SupplierFormFields({ f, setF, isCreate }) {
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">פרטי קשר</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-slate-200 mb-1">אימייל קשר</label>
-            <input className="input-field w-full" type="email" value={f.contact_email} onChange={(e) => setF('contact_email', e.target.value)} placeholder="supplier@example.com" dir="ltr" />
+            <label htmlFor="admin-f3" className="block text-sm font-medium text-slate-200 mb-1">אימייל קשר</label>
+            <input id="admin-f3" className="input-field w-full" type="email" value={f.contact_email} onChange={(e) => setF('contact_email', e.target.value)} placeholder="supplier@example.com" dir="ltr" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-200 mb-1">טלפון קשר</label>
-            <input className="input-field w-full" type="tel" value={f.contact_phone} onChange={(e) => setF('contact_phone', e.target.value)} placeholder="972-5X-XXXXXXX" dir="ltr" />
+            <label htmlFor="admin-f4" className="block text-sm font-medium text-slate-200 mb-1">טלפון קשר</label>
+            <input id="admin-f4" className="input-field w-full" type="tel" value={f.contact_phone} onChange={(e) => setF('contact_phone', e.target.value)} placeholder="972-5X-XXXXXXX" dir="ltr" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-200 mb-1">אתר אינטרנט</label>
-            <input className="input-field w-full" type="url" value={f.website} onChange={(e) => setF('website', e.target.value)} placeholder="https://supplier.com" dir="ltr" />
+            <label htmlFor="admin-f5" className="block text-sm font-medium text-slate-200 mb-1">אתר אינטרנט</label>
+            <input id="admin-f5" className="input-field w-full" type="url" value={f.website} onChange={(e) => setF('website', e.target.value)} placeholder="https://supplier.com" dir="ltr" />
           </div>
         </div>
       </div>
@@ -252,14 +252,14 @@ function SupplierFormFields({ f, setF, isCreate }) {
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">API</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-slate-200 mb-1">כתובת API</label>
-            <input className="input-field w-full" value={f.api_endpoint} onChange={(e) => setF('api_endpoint', e.target.value)} placeholder="https://api.supplier.com/v1" dir="ltr" />
+            <label htmlFor="admin-f6" className="block text-sm font-medium text-slate-200 mb-1">כתובת API</label>
+            <input id="admin-f6" className="input-field w-full" value={f.api_endpoint} onChange={(e) => setF('api_endpoint', e.target.value)} placeholder="https://api.supplier.com/v1" dir="ltr" />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-200 mb-1">{isCreate ? 'מפתח API' : 'מפתח API חדש (ריק = ללא שינוי)'}</label>
             <div className="relative">
               <input className="input-field w-full pl-10" type={showApiKey ? 'text' : 'password'} value={f.api_key} onChange={(e) => setF('api_key', e.target.value)} placeholder="sk-..." dir="ltr" />
-              <button type="button" onClick={() => setShowApiKey((v) => !v)} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300">
+              <button type="button" aria-label={showApiKey ? 'הסתר מפתח API' : 'הצג מפתח API'} onClick={() => setShowApiKey((v) => !v)} className="absolute left-0.5 top-1/2 -translate-y-1/2 p-2.5 text-slate-400 hover:text-slate-300">
                 {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
@@ -277,12 +277,12 @@ function SupplierFormFields({ f, setF, isCreate }) {
           {f.supports_express && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1">מוביל</label>
-                <input className="input-field w-full" value={f.express_carrier} onChange={(e) => setF('express_carrier', e.target.value)} placeholder="DHL Express" dir="ltr" />
+                <label htmlFor="admin-f7" className="block text-sm font-medium text-slate-200 mb-1">מוביל</label>
+                <input id="admin-f7" className="input-field w-full" value={f.express_carrier} onChange={(e) => setF('express_carrier', e.target.value)} placeholder="DHL Express" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1">עלות בסיס ($)</label>
-                <input type="number" step="0.01" min="0" className="input-field w-full" value={f.express_base_cost_usd} onChange={(e) => setF('express_base_cost_usd', e.target.value)} placeholder="15.00" dir="ltr" />
+                <label htmlFor="admin-f8" className="block text-sm font-medium text-slate-200 mb-1">עלות בסיס ($)</label>
+                <input id="admin-f8" type="number" step="0.01" min="0" className="input-field w-full" value={f.express_base_cost_usd} onChange={(e) => setF('express_base_cost_usd', e.target.value)} placeholder="15.00" dir="ltr" />
               </div>
             </div>
           )}
@@ -1880,7 +1880,7 @@ export default function Admin() {
             </div>
           </div>
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
-            <div className="overflow-x-auto overflow-y-hidden">
+            <div className="overflow-x-auto overflow-y-hidden" tabIndex={0} role="region" aria-label="טבלה (גלילה אופקית)">
               <table className="w-full text-sm">
                 <thead className="bg-brand-100">
                   <tr>
@@ -1895,27 +1895,27 @@ export default function Admin() {
                   {/* Filter row */}
                   <tr className="border-t border-brand-border">
                     <th className="px-2 py-2">
-                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:border-brand-400" placeholder="חיפוש שם..." value={uf.name} onChange={(e) => setUF('name', e.target.value)} />
+                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none focus:border-brand-400" placeholder="חיפוש שם..." value={uf.name} onChange={(e) => setUF('name', e.target.value)} />
                     </th>
                     <th className="px-2 py-2">
-                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:border-brand-400" placeholder="חיפוש אימייל..." value={uf.email} onChange={(e) => setUF('email', e.target.value)} dir="ltr" />
+                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none focus:border-brand-400" placeholder="חיפוש אימייל..." value={uf.email} onChange={(e) => setUF('email', e.target.value)} dir="ltr" />
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.verified} onChange={(e) => setUF('verified', e.target.value)}>
+                      <select aria-label="הכל" className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none" value={uf.verified} onChange={(e) => setUF('verified', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="yes">מאומת</option>
                         <option value="no">לא מאומת</option>
                       </select>
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.role} onChange={(e) => setUF('role', e.target.value)}>
+                      <select aria-label="הכל" className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none" value={uf.role} onChange={(e) => setUF('role', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="admin">אדמין</option>
                         <option value="customer">משתמש</option>
                       </select>
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.status} onChange={(e) => setUF('status', e.target.value)}>
+                      <select aria-label="הכל" className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none" value={uf.status} onChange={(e) => setUF('status', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="active">פעיל</option>
                         <option value="blocked">חסום</option>
@@ -1996,8 +1996,8 @@ export default function Admin() {
           <div className="space-y-4">
             <div className="card p-4 flex flex-col lg:flex-row lg:items-end gap-3">
               <div className="w-full lg:w-72">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טבלה</label>
-                <select
+                <label htmlFor="admin-f9" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טבלה</label>
+                <select id="admin-f9" aria-label="בחירת טבלה"
                   className="input-field w-full"
                   value={dbViewDataset}
                   onChange={(e) => {
@@ -2019,8 +2019,8 @@ export default function Admin() {
                 </select>
               </div>
               <div className="w-full lg:flex-1">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">חיפוש</label>
-                <input
+                <label htmlFor="admin-f10" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">חיפוש</label>
+                <input id="admin-f10"
                   className="input-field w-full"
                   value={dbViewSearch}
                   onChange={(e) => setDbViewSearch(e.target.value)}
@@ -2034,8 +2034,8 @@ export default function Admin() {
                 />
               </div>
               <div className="w-full lg:w-36">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תוצאות לעמוד</label>
-                <select
+                <label htmlFor="admin-f11" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תוצאות לעמוד</label>
+                <select id="admin-f11" aria-label="25"
                   className="input-field w-full"
                   value={dbViewLimit}
                   onChange={(e) => {
@@ -2071,7 +2071,7 @@ export default function Admin() {
                 <div className="flex justify-center p-10"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
               ) : (
                 <>
-                  <div className="overflow-x-auto overflow-y-hidden">
+                  <div className="overflow-x-auto overflow-y-hidden" tabIndex={0} role="region" aria-label="טבלה (גלילה אופקית)">
                     <table className="w-full text-sm">
                       <thead className="bg-brand-100">
                         <tr>
@@ -2163,7 +2163,7 @@ export default function Admin() {
           </div>
 
             <div className="card p-4 flex flex-wrap items-center gap-2">
-            <select
+            <select aria-label="כל הערוצים"
               className="input-field text-sm py-1.5 w-44"
               value={chatFilters.channel}
               onChange={(e) => {
@@ -2689,7 +2689,7 @@ export default function Admin() {
           <div className="p-4 border-b border-brand-border flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-bold text-slate-100">כל ההזמנות ({orders.length})</h3>
             <div className="flex items-center gap-2 flex-wrap">
-              <select
+              <select aria-label="כל הסטטוסים"
                 className="input-field text-sm py-1.5 w-44"
                 value={statusFilter}
                 onChange={(e) => {
@@ -2702,13 +2702,13 @@ export default function Admin() {
                   <option key={k} value={k}>{v.label}</option>
                 ))}
               </select>
-              <button onClick={() => loadOrders(statusFilter)} className="btn-ghost text-sm flex items-center gap-1">
+              <button aria-label="רענן הזמנות" onClick={() => loadOrders(statusFilter)} className="btn-ghost text-sm flex items-center gap-1 min-w-[40px] min-h-[40px] justify-center">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
           </div>
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
-            <div className="overflow-x-auto overflow-y-hidden">
+            <div className="overflow-x-auto overflow-y-hidden" tabIndex={0} role="region" aria-label="טבלה (גלילה אופקית)">
               <table className="w-full text-sm">
                 <thead className="bg-brand-100">
                   <tr>
@@ -2725,7 +2725,7 @@ export default function Admin() {
                     const st = STATUS_HE[o.status] || { label: o.status, cls: 'bg-brand-100 text-slate-200' }
                     return (
                       <tr key={o.id} className="hover:bg-brand-100">
-                        <td className="px-3 py-3 font-medium text-slate-100 font-mono text-xs" dir="ltr">{o.order_number}</td>
+                        <td className="px-3 py-3 font-medium text-slate-100 font-mono text-xs break-all min-w-[9rem]" dir="ltr">{o.order_number}</td>
                         <td className="px-3 py-3">
                           <div className="text-xs">
                             <p className="font-medium text-slate-200">{o.user_name}</p>
@@ -2737,11 +2737,11 @@ export default function Admin() {
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1">
-                            <select
+                            <select aria-label="שינוי סטטוס הזמנה"
                               defaultValue={o.status}
                               disabled={updatingStatus === o.id}
                               onChange={(e) => updateOrderStatus(o.id, e.target.value)}
-                              className="text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                              className="text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 text-slate-100 focus:outline-none focus:ring-1 focus:ring-brand-400"
                             >
                               {Object.entries(STATUS_HE).map(([k, v]) => (
                                 <option key={k} value={k}>{v.label}</option>
@@ -2797,7 +2797,7 @@ export default function Admin() {
                 <button onClick={() => setShowCreateSupplier(true)} className="btn-primary text-sm flex items-center gap-1.5 py-1.5 px-3">
                   <PlusCircle className="w-4 h-4" />ספק חדש
                 </button>
-                <button onClick={loadSuppliers} className="btn-ghost text-sm flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
+                <button aria-label="רענן" onClick={loadSuppliers} className="btn-ghost text-sm flex items-center gap-1 min-w-[40px] min-h-[40px] justify-center"><RefreshCw className="w-4 h-4" /></button>
               </div>
             </div>
             {/* Filter bar */}
@@ -2816,7 +2816,7 @@ export default function Admin() {
                   onChange={(e) => setSupplierFilters((f) => ({ ...f, country: e.target.value }))}
                   dir="ltr"
                 />
-                <select
+                <select aria-label="כל הספקים"
                   className="input-field text-sm py-1.5 w-1/4 text-center"
                   value={supplierFilters.status}
                   onChange={(e) => setSupplierFilters((f) => ({ ...f, status: e.target.value }))}
@@ -2826,7 +2826,7 @@ export default function Admin() {
                   <option value="inactive">לא פעילים</option>
                 </select>
                 {Object.values(supplierFilters).some(Boolean) && (
-                  <button onClick={() => setSupplierFilters({ name: '', country: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
+                  <button aria-label="סגור" onClick={() => setSupplierFilters({ name: '', country: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -2874,7 +2874,7 @@ export default function Admin() {
                             <button onClick={() => syncSupplier(s.id)} className="btn-secondary text-xs px-3 py-1.5">סנכרן</button>
                             <button onClick={() => { openEditSupplier(s); }} title="ערוך" className="p-1.5 rounded hover:bg-blue-500/15 text-blue-500 hover:text-blue-300 transition-colors"><Pencil className="w-4 h-4" /></button>
                             <button onClick={() => deleteSupplierById(s.id, s.name)} title="מחק" className="p-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 transition-colors"><Trash2 className="w-4 h-4" /></button>
-                            <button onClick={() => toggleSupplier(s.id, s.is_active)}>
+                            <button role="switch" aria-checked={!!s.is_active} aria-label={`ספק פעיל: ${s.name}`} onClick={() => toggleSupplier(s.id, s.is_active)}>
                               {s.is_active ? <ToggleRight className="w-6 h-6 text-green-500" /> : <ToggleLeft className="w-6 h-6 text-slate-400" />}
                             </button>
                           </div>
@@ -2948,7 +2948,7 @@ export default function Admin() {
                   <span className="badge bg-amber-500/15 text-amber-300">{supplierOrdersPending} דורשות בדיקה</span>
                 )}
               </h3>
-              <button onClick={loadSupplierOrders} className="btn-ghost text-sm flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
+              <button aria-label="רענן" onClick={loadSupplierOrders} className="btn-ghost text-sm flex items-center gap-1 min-w-[40px] min-h-[40px] justify-center"><RefreshCw className="w-4 h-4" /></button>
             </div>
             {/* Order log filter bar */}
             <div className="px-4 py-2 border-b border-brand-border bg-brand-100">
@@ -2959,7 +2959,7 @@ export default function Admin() {
                   value={orderLogFilters.search}
                   onChange={(e) => setOrderLogFilters((f) => ({ ...f, search: e.target.value }))}
                 />
-                <select
+                <select aria-label="כל הסטטוסים"
                   className="input-field text-sm py-1.5 w-1/4 text-center"
                   value={orderLogFilters.status}
                   onChange={(e) => setOrderLogFilters((f) => ({ ...f, status: e.target.value }))}
@@ -2969,7 +2969,7 @@ export default function Admin() {
                   <option value="done">בוצע</option>
                 </select>
                 {Object.values(orderLogFilters).some(Boolean) && (
-                  <button onClick={() => setOrderLogFilters({ search: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
+                  <button aria-label="סגור" onClick={() => setOrderLogFilters({ search: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -3354,7 +3354,7 @@ export default function Admin() {
             <p className="text-xs text-slate-400 mb-2" data-testid="admin-upload-price-hint">
               <span className="font-mono">max_price_ils</span> — מחיר קמעונאי / מחיר ייחוס (לא עלות רכש מספק). הכותרת הישנה <span className="font-mono">base_price</span> עדיין מתקבלת.
             </p>
-            <div className="overflow-x-auto overflow-y-hidden">
+            <div className="overflow-x-auto overflow-y-hidden" tabIndex={0} role="region" aria-label="טבלה (גלילה אופקית)">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-brand-100">
@@ -3384,7 +3384,7 @@ export default function Admin() {
             <div className="space-y-4">
               <div className="flex gap-3">
                 <input className="input-field flex-1" placeholder="נושא הפוסט... (מבצע על בלמים, טיפ לחורף...)" value={genTopic} onChange={(e) => setGenTopic(e.target.value)} />
-                <select className="input-field w-40" value={genPlatform} onChange={(e) => setGenPlatform(e.target.value)}>
+                <select aria-label="Facebook" className="input-field w-40" value={genPlatform} onChange={(e) => setGenPlatform(e.target.value)}>
                   <option value="facebook">Facebook</option>
                   <option value="instagram">Instagram</option>
                   <option value="tiktok">TikTok</option>
@@ -3444,7 +3444,7 @@ export default function Admin() {
                   <span key={t.k} className={`text-xs px-2 py-1 rounded-lg border ${t.cls}`}>{t.label}</span>
                 ))}
               </div>
-              <button onClick={loadAgents} className="btn-ghost text-sm flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
+              <button aria-label="רענן" onClick={loadAgents} className="btn-ghost text-sm flex items-center gap-1 min-w-[40px] min-h-[40px] justify-center"><RefreshCw className="w-4 h-4" /></button>
             </div>
           </div>
 
@@ -3560,7 +3560,7 @@ export default function Admin() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <select
+              <select aria-label="כל הסטטוסים"
                 className="input-field text-sm py-1.5 w-44"
                 value={returnsFilter}
                 onChange={(e) => { setReturnsFilter(e.target.value); loadAdminReturns(e.target.value) }}
@@ -3571,7 +3571,7 @@ export default function Admin() {
                 <option value="rejected">נדחה</option>
                 <option value="cancelled">בוטל</option>
               </select>
-              <button onClick={() => loadAdminReturns()} className="btn-ghost text-sm flex items-center gap-1">
+              <button aria-label="רענן" onClick={() => loadAdminReturns()} className="btn-ghost text-sm flex items-center gap-1">
                 <RefreshCw className="w-4 h-4" />
               </button>
             </div>
@@ -3587,7 +3587,7 @@ export default function Admin() {
             </div>
           ) : (
             <div className="card overflow-hidden">
-              <div className="overflow-x-auto overflow-y-hidden">
+              <div className="overflow-x-auto overflow-y-hidden" tabIndex={0} role="region" aria-label="טבלה (גלילה אופקית)">
                 <table className="w-full text-sm">
                   <thead className="bg-brand-100">
                     <tr>
@@ -3616,7 +3616,7 @@ export default function Admin() {
                               <p className="text-slate-400" dir="ltr">{r.user_email}</p>
                             </div>
                           </td>
-                          <td className="px-3 py-3 font-mono text-xs text-slate-400">{r.order_number || '—'}</td>
+                          <td className="px-3 py-3 font-mono text-xs text-slate-400 break-all min-w-[9rem]">{r.order_number || '—'}</td>
                           <td className="px-3 py-3 text-xs text-slate-300">
                             <div>
                               <p className="font-medium">{REASON_HE[r.reason] || r.reason}</p>
@@ -3701,7 +3701,7 @@ export default function Admin() {
               <h3 className="font-bold text-slate-100">רשומת DB מלאה</h3>
               <p className="text-xs text-slate-400 mt-0.5">{dbViewDataset}</p>
             </div>
-            <button onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-brand-100">
+            <button aria-label="סגור" onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-brand-100">
               <X className="w-5 h-5 text-slate-400" />
             </button>
           </div>
@@ -3723,11 +3723,11 @@ export default function Admin() {
         <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-brand-border">
             <h3 className="font-bold text-slate-100 flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
-            <button onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+            <button aria-label="סגור" onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="p-6">
-            <label className="block text-sm font-medium text-slate-200 mb-2">סיבת הדחייה (תישלח ללקוח)</label>
-            <textarea
+            <label htmlFor="admin-f12" className="block text-sm font-medium text-slate-200 mb-2">סיבת הדחייה (תישלח ללקוח)</label>
+            <textarea id="admin-f12"
               rows={3}
               className="input-field w-full text-sm"
               placeholder="הבקשה לא עומדת בתנאי מדיניות ההחזרה..."
@@ -3759,41 +3759,41 @@ export default function Admin() {
               <h3 className="font-bold text-lg text-slate-100">עריכת סוכן</h3>
               <p className="text-xs text-slate-400 mt-0.5">{editAgent.name}</p>
             </div>
-            <button onClick={() => setEditAgent(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+            <button aria-label="סגור" onClick={() => setEditAgent(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם תפקיד (עברית)</label>
-                <input className="input-field w-full text-sm" value={editAgentForm.name_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, name_he: e.target.value }))} />
+                <label htmlFor="admin-f13" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם תפקיד (עברית)</label>
+                <input id="admin-f13" className="input-field w-full text-sm" value={editAgentForm.name_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, name_he: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם פרסונה</label>
-                <input className="input-field w-full text-sm" dir="ltr" value={editAgentForm.persona || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, persona: e.target.value }))} />
+                <label htmlFor="admin-f14" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם פרסונה</label>
+                <input id="admin-f14" className="input-field w-full text-sm" dir="ltr" value={editAgentForm.persona || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, persona: e.target.value }))} />
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תיאור תפקיד</label>
-              <textarea className="input-field w-full text-sm" rows={2} value={editAgentForm.description_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, description_he: e.target.value }))} />
+              <label htmlFor="admin-f15" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תיאור תפקיד</label>
+              <textarea id="admin-f15" className="input-field w-full text-sm" rows={2} value={editAgentForm.description_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, description_he: e.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">מודל AI</label>
-                <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'gpt-4o'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
+                <label htmlFor="admin-f16" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">מודל AI</label>
+                <select id="admin-f16" aria-label="gpt-4o" className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'gpt-4o'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
                   <option value="gpt-4o">gpt-4o</option>
                   <option value="gpt-4o-mini">gpt-4o-mini</option>
                   <option value="o1-mini">o1-mini</option>
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טמפרטורה: {editAgentForm.temperature ?? 0.5}</label>
-                <input type="range" min="0" max="1" step="0.05" className="w-full mt-2" value={editAgentForm.temperature ?? 0.5} onChange={(e) => setEditAgentForm((f) => ({ ...f, temperature: parseFloat(e.target.value) }))} />
+                <label htmlFor="admin-f17" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טמפרטורה: {editAgentForm.temperature ?? 0.5}</label>
+                <input id="admin-f17" type="range" min="0" max="1" step="0.05" className="w-full mt-2" value={editAgentForm.temperature ?? 0.5} onChange={(e) => setEditAgentForm((f) => ({ ...f, temperature: parseFloat(e.target.value) }))} />
                 <div className="flex justify-between text-xs text-slate-400 mt-1"><span>מדויק</span><span>יצירתי</span></div>
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">יכולות (מופרדות בפסיק)</label>
-              <input className="input-field w-full text-sm" dir="ltr" placeholder="Part search, Price comparison, ..." value={editAgentForm.capabilities || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, capabilities: e.target.value }))} />
+              <label htmlFor="admin-f18" className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">יכולות (מופרדות בפסיק)</label>
+              <input id="admin-f18" className="input-field w-full text-sm" dir="ltr" placeholder="Part search, Price comparison, ..." value={editAgentForm.capabilities || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, capabilities: e.target.value }))} />
             </div>
             <div className="flex items-center gap-3 p-3 rounded-xl bg-brand-100 border border-brand-border">
               <span className="text-sm text-slate-300">סוכן פעיל</span>
@@ -3825,7 +3825,7 @@ export default function Admin() {
           <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-6 border-b border-brand-border">
               <h3 className="font-bold text-lg text-slate-100">ספק חדש</h3>
-              <button onClick={() => setShowCreateSupplier(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+              <button aria-label="סגור" onClick={() => setShowCreateSupplier(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5">
               <SupplierFormFields f={f} setF={setF} isCreate />
@@ -3851,7 +3851,7 @@ export default function Admin() {
                 <h3 className="font-bold text-lg text-slate-100">עריכת ספק</h3>
                 <p className="text-xs text-slate-400 mt-0.5">{editSupplier.name}</p>
               </div>
-              <button onClick={() => setEditSupplier(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+              <button aria-label="סגור" onClick={() => setEditSupplier(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5">
               <SupplierFormFields f={f} setF={setF} />
@@ -3871,7 +3871,7 @@ export default function Admin() {
         <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-6 border-b border-brand-border">
             <h3 className="font-bold text-lg text-slate-100">{['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'יצירת נציג חדש' : 'יצירת משתמש חדש'}</h3>
-            <button onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+            <button aria-label="סגור" onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
             <div className="grid grid-cols-1 gap-4">
@@ -3892,8 +3892,8 @@ export default function Admin() {
                 <input className="input-field w-full" type="password" value={createForm.password} onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))} placeholder="לפחות 8 תווים" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-200 mb-1">תפקיד</label>
-                <select className="input-field w-full" value={createForm.role} onChange={(e) => { const r = e.target.value; setCreateForm((f) => ({ ...f, role: r, is_admin: r === 'admin' })) }}>
+                <label htmlFor="admin-f19" className="block text-sm font-medium text-slate-200 mb-1">תפקיד</label>
+                <select id="admin-f19" aria-label="לקוח" className="input-field w-full" value={createForm.role} onChange={(e) => { const r = e.target.value; setCreateForm((f) => ({ ...f, role: r, is_admin: r === 'admin' })) }}>
                   <option value="customer">לקוח</option>
                   <option value="support">נציג שירות</option>
                   <option value="admin">מנהל</option>
@@ -3937,7 +3937,7 @@ export default function Admin() {
               <h3 className="font-bold text-lg text-slate-100">עדכון פרטי משתמש</h3>
               <p className="text-xs text-slate-400 mt-0.5">נרשם: {editUser.created_at ? new Date(editUser.created_at).toLocaleDateString('he-IL') : '—'}</p>
             </div>
-            <button onClick={() => setEditUser(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
+            <button aria-label="סגור" onClick={() => setEditUser(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
 
           {/* Scrollable body */}
@@ -3948,16 +3948,16 @@ export default function Admin() {
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">פרטים אישיים</p>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">שם מלא</label>
-                  <input className="input-field w-full" value={editForm.full_name} onChange={(e) => setEditForm((f) => ({ ...f, full_name: e.target.value }))} placeholder="שם מלא" />
+                  <label htmlFor="admin-f20" className="block text-sm font-medium text-slate-200 mb-1">שם מלא</label>
+                  <input id="admin-f20" className="input-field w-full" value={editForm.full_name} onChange={(e) => setEditForm((f) => ({ ...f, full_name: e.target.value }))} placeholder="שם מלא" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">אימייל</label>
-                  <input className="input-field w-full" type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" dir="ltr" />
+                  <label htmlFor="admin-f21" className="block text-sm font-medium text-slate-200 mb-1">אימייל</label>
+                  <input id="admin-f21" className="input-field w-full" type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" dir="ltr" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">טלפון</label>
-                  <input className="input-field w-full" type="tel" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} placeholder="05X-XXXXXXX" dir="ltr" />
+                  <label htmlFor="admin-f22" className="block text-sm font-medium text-slate-200 mb-1">טלפון</label>
+                  <input id="admin-f22" className="input-field w-full" type="tel" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} placeholder="05X-XXXXXXX" dir="ltr" />
                 </div>
               </div>
             </div>
@@ -3965,7 +3965,7 @@ export default function Admin() {
             {/* Role */}
             <div>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">תפקיד</p>
-              <select
+              <select aria-label="לקוח"
                 className="input-field w-full"
                 value={editForm.role}
                 onChange={(e) => {

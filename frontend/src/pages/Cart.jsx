@@ -280,7 +280,7 @@ export default function Cart() {
       <div className="max-w-lg mx-auto mt-16 card p-10 text-center">
         <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto mb-4" />
         <h2 className="text-2xl font-bold text-white mb-2">הזמנה בוצעה!</h2>
-        <p className="text-[#94A3B8] mb-1">מספר הזמנה: <strong>{orderNumber}</strong></p>
+        <p className="text-[#94A3B8] mb-1">מספר הזמנה: <strong className="break-all"><bdi dir="ltr">{orderNumber}</bdi></strong></p>
         <p className="text-sm text-[#94A3B8] mb-6">קבלה נשלחה לאימייל {user?.email}</p>
         <div className="flex gap-3 justify-center">
           <Link to="/orders" className="btn-primary">הזמנות שלי</Link>
@@ -329,16 +329,16 @@ export default function Cart() {
 
           <div className="space-y-3">
             {items.map((item) => (
-              <div key={item.supplierPartId} className="card p-4 flex items-center gap-4">
+              <div key={item.supplierPartId} className="card p-4 flex flex-wrap items-center gap-x-4 gap-y-3">
                 <input
                   type="checkbox"
                   checked={selectedSupplierPartIds.includes(item.supplierPartId)}
                   onChange={() => toggleSelectItem(item.supplierPartId)}
                   className="w-4 h-4 accent-brand-600 shrink-0"
-                  aria-label={`select-${item.supplierPartId}`}
+                  aria-label={`בחר: ${item.name}`}
                 />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-white truncate">{item.name}</p>
+                <div className="flex-1 min-w-[10rem] basis-[calc(100%-3rem)] sm:basis-0">
+                  <p className="font-medium text-white break-words">{item.name}</p>
                   <p className="text-xs text-[#94A3B8]">{item.manufacturer}</p>
                   {offerClassInfo(item.offerPartType) && (
                     <span className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium mt-0.5 ${offerClassInfo(item.offerPartType).cls}`}>{offerClassInfo(item.offerPartType).label}</span>
@@ -353,16 +353,16 @@ export default function Cart() {
                     </p>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => handleUpdateQty(item, item.quantity - 1)} className="w-7 h-7 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
+                <div className="flex items-center gap-2 ms-auto">
+                  <button aria-label={`הפחת כמות: ${item.name}`} onClick={() => handleUpdateQty(item, item.quantity - 1)} className="w-9 h-9 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
                     <Minus className="w-3 h-3" />
                   </button>
-                  <span className="w-6 text-center font-medium text-white">{item.quantity}</span>
-                  <button onClick={() => handleUpdateQty(item, item.quantity + 1)} className="w-7 h-7 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
+                  <span className="w-6 text-center font-medium text-white" aria-label={`כמות ${item.quantity}`}>{item.quantity}</span>
+                  <button aria-label={`הוסף כמות: ${item.name}`} onClick={() => handleUpdateQty(item, item.quantity + 1)} className="w-9 h-9 rounded-full border border-[rgba(148,163,184,0.18)] flex items-center justify-center hover:bg-[#252D3D]">
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
-                <button onClick={() => handleRemoveItem(item.serverCartItemId)} className="p-2 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400 hover:text-[#F87171]">
+                <button aria-label={`הסר מהסל: ${item.name}`} onClick={() => handleRemoveItem(item.serverCartItemId)} className="p-2.5 rounded-lg hover:bg-[rgba(239,68,68,0.12)] text-red-400 hover:text-[#F87171]">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -444,16 +444,16 @@ export default function Cart() {
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">רחוב ומספר</label>
-                  <input className="input-field" placeholder="הרצל 55" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
+                  <label htmlFor="cart-f1" className="block text-sm font-medium text-[#E2E8F0] mb-1">רחוב ומספר</label>
+                  <input id="cart-f1" className="input-field" placeholder="הרצל 55" value={address.street} onChange={(e) => setAddress({ ...address, street: e.target.value })} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
-                  <input className="input-field" placeholder="עכו" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} />
+                  <label htmlFor="cart-f2" className="block text-sm font-medium text-[#E2E8F0] mb-1">עיר</label>
+                  <input id="cart-f2" className="input-field" placeholder="עכו" value={address.city} onChange={(e) => setAddress({ ...address, city: e.target.value })} />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
-                  <input className="input-field" placeholder="24100" value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value })} />
+                  <label htmlFor="cart-f3" className="block text-sm font-medium text-[#E2E8F0] mb-1">מיקוד</label>
+                  <input id="cart-f3" className="input-field" placeholder="24100" value={address.postal_code} onChange={(e) => setAddress({ ...address, postal_code: e.target.value })} />
                 </div>
               </div>
             </>

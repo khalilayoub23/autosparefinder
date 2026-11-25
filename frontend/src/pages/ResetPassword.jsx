@@ -70,8 +70,8 @@ export default function ResetPassword() {
               </div>
               <form onSubmit={handleRequest} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">כתובת אימייל</label>
-                  <input
+                  <label htmlFor="resetpassword-f1" className="block text-sm font-medium text-slate-200 mb-1">כתובת אימייל</label>
+                  <input id="resetpassword-f1"
                     type="email"
                     className="input-field"
                     placeholder="your@email.com"
@@ -122,8 +122,8 @@ export default function ResetPassword() {
               </div>
               <form onSubmit={handleReset} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">קוד איפוס</label>
-                  <input
+                  <label htmlFor="resetpassword-f2" className="block text-sm font-medium text-slate-200 mb-1">קוד איפוס</label>
+                  <input id="resetpassword-f2"
                     type="text"
                     className="input-field"
                     placeholder="הדבק כאן את הקוד מהאימייל"
@@ -134,8 +134,8 @@ export default function ResetPassword() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">סיסמה חדשה</label>
-                  <input
+                  <label htmlFor="resetpassword-f3" className="block text-sm font-medium text-slate-200 mb-1">סיסמה חדשה</label>
+                  <input id="resetpassword-f3"
                     type="password"
                     className="input-field"
                     placeholder="לפחות 8 תווים"
@@ -146,8 +146,8 @@ export default function ResetPassword() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-200 mb-1">אישור סיסמה</label>
-                  <input
+                  <label htmlFor="resetpassword-f4" className="block text-sm font-medium text-slate-200 mb-1">אישור סיסמה</label>
+                  <input id="resetpassword-f4"
                     type="password"
                     className="input-field"
                     placeholder="••••••••"

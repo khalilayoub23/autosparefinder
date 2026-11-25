@@ -102,14 +102,14 @@ export default function PaymentSuccess() {
         <div className="space-y-1 mb-4">
           {orderData.orders.map((o) => (
             <p key={o.order_id} className="text-slate-300 text-sm">
-              <strong className="text-slate-200">{o.order_number}</strong> — ₪{parseFloat(o.amount).toFixed(2)}
+              <strong className="text-slate-200 break-all"><bdi dir="ltr">{o.order_number}</bdi></strong> — ₪{parseFloat(o.amount).toFixed(2)}
             </p>
           ))}
         </div>
       ) : (
         orderData?.order_number && (
           <p className="text-slate-400 mb-1">
-            מספר הזמנה: <strong className="text-slate-200">{orderData.order_number}</strong>
+            מספר הזמנה: <strong className="text-slate-200 break-all"><bdi dir="ltr">{orderData.order_number}</bdi></strong>
           </p>
         )
       )}
@@ -136,7 +136,7 @@ export default function PaymentSuccess() {
           <p className="text-xs text-slate-400 mb-1">חשבוניות להזמנות:</p>
           {orderData.orders.map((o) => (
             <div key={o.order_id} className="flex flex-col gap-1 items-end">
-              <p className="text-xs text-slate-400 font-medium">{o.order_number}</p>
+              <p className="text-xs text-slate-400 font-medium break-all"><bdi dir="ltr">{o.order_number}</bdi></p>
               <InvoiceActions orderId={o.order_id} orderNumber={o.order_number} />
             </div>
           ))}

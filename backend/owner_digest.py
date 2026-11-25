@@ -15,7 +15,7 @@ Process:
      record (id D<YYYYMMDD>[-n], rendered text, parts), sends it, and ONLY on success writes the "seen" memory and
      the checkpoint. A failed send keeps the frozen record and retries it unchanged with backoff (resuming at the
      first unsent part); a digest that never left and is older than a day is dissolved back into pending so the
-     next one is complete. A crash between send and checkpoint re-sends the SAME digest id (at-least-once).
+     next one is complete. A crash between provider acceptance and persistence re-sends the SAME message id; the bridge journal answers it without a second send (see docs §11b).
   4. Nothing is deleted without a trace: events older than DIGEST_EVENT_MAX_AGE_S go to the dead list (visible,
      replayable) and never raise an alert; an outage is never reported through the broken channel.
 Data Imported/Modified: Redis keys under `autospare:digest:` (AOF-persistent). No Postgres, no schema.
@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -206,6 +207,27 @@ def render_digest(digest_id: str, events: list[dict], *, now_local: datetime, si
     return out
 
 
+# ── delivery identity (pure) ──────────────────────────────────────────────────────────────────────────
+
+def client_msg_id(digest_id: str, part_index: int, text: str) -> str:
+    """Stable provider message id for ONE part of ONE frozen digest: the same (digest, part, text) always yields the
+    same id, a different text a different one. Hex in the shape WhatsApp uses ('3EB0...'), so the bridge can both
+    de-duplicate on it (its journal) and hand it to the provider as the message id of the send."""
+    h = hashlib.sha256(f"asf-digest|{digest_id}|{int(part_index)}|{text}".encode()).hexdigest()[:28].upper()
+    return "3EB0" + h
+
+
+async def _call_send(send: Callable[..., Awaitable[dict]], text: str, msg_id: str) -> dict:
+    """`send(text, client_msg_id=...)` when the sender accepts it (production), else `send(text)` (legacy)."""
+    try:
+        params = inspect.signature(send).parameters
+    except (TypeError, ValueError):
+        params = {}
+    if "client_msg_id" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return await send(text, client_msg_id=msg_id)
+    return await send(text)
+
+
 # ── store ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def _s(v: Any) -> str:
@@ -312,6 +334,38 @@ class Store:
         finally:
             await self._unlock(tok)
 
+    async def note_repeat(self, *, category: str, title: str, alert_key: str = "", event_keys: Optional[list] = None,
+                          reason: str = "repeat") -> dict:
+        """A producer repeated an event that an upstream guard (cooldown, same-event alias, unchanged fingerprint) already
+        suppressed. Nothing is listed again; the repeat is COUNTED on the still-pending event (shown as 'חזר N פעמים') or, when
+        that event was already delivered, only in the stats - so the digest's duplicate/repeat numbers are real, not zero."""
+        tok = await self._lock()
+        try:
+            ident = identity_for(category, title, alert_key)
+            keys = [str(k) for k in (event_keys or []) if k]
+            found = False
+            for k in keys:
+                al = await self.r.get(NS + "alias:" + k)
+                if al:
+                    ident, found = _s(al), True
+                    break
+            if found:                                       # every alias of this producer joins the same event (as event_seen does)
+                for k in keys:
+                    await self.r.set(NS + "alias:" + k, ident, ex=ALIAS_TTL_S)
+            raw = await self.r.hget(K_EVENTS, ident)
+            stat = "merged_duplicate" if reason == "same_event" else "repeat_suppressed"
+            if raw:
+                ev = json.loads(_s(raw))
+                ev["repeats"] = int(ev.get("repeats", 1)) + 1
+                ev["last_ts"] = self.now()
+                await self.r.hset(K_EVENTS, ident, json.dumps(ev, ensure_ascii=False))
+                await self._stat(stat)
+                return {"counted": True, "event_id": ident}
+            await self._stat(stat + "_after_delivery")
+            return {"counted": False, "event_id": ident}
+        finally:
+            await self._unlock(tok)
+
     # read ----------------------------------------------------------------------------------------------
     async def pending(self) -> list[dict]:
         raw = await self.r.hgetall(K_EVENTS)
@@ -401,14 +455,22 @@ class Store:
             finally:
                 await self._unlock(tok)
             # send outside the lock: events arriving now stay pending for the next digest
+            acks = fz.setdefault("acks", {})
             for i in range(int(fz["sent_parts"]), len(fz["parts"])):
                 text = fz["parts"][i]
                 if note and i == 0 and note not in text:                       # outage note is known only at send time
                     ls = text.split("\n")
                     ls.insert(min(3, len(ls)), f"ℹ️ {note}")
                     text = "\n".join(ls)
+                    fz["parts"][i] = text                                      # frozen WITH the note: a retry is byte-identical
+                mid = client_msg_id(fz["id"], i, text)
+                if (fz.get("inflight") or {}).get("part") == i:
+                    await self._stat("resend_after_unknown_outcome")           # a previous attempt may have been accepted
+                # write-ahead intent: persisted BEFORE the provider call, so a crash at any later point is recoverable
+                fz["inflight"] = {"part": i, "msg_id": mid, "since": now}
+                await self.r.set(K_FROZEN, json.dumps(fz, ensure_ascii=False))
                 try:
-                    res = await send(text)
+                    res = await _call_send(send, text, mid)
                 except Exception as exc:  # noqa: BLE001
                     res = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
                 if not res.get("ok") or res.get("queued"):
@@ -421,7 +483,12 @@ class Store:
                           f"attempt={fz['attempts']} error={fz['last_error']} (events kept, retry in "
                           f"{int(fz['next_try'] - now)}s)")
                     return {"ok": False, "digest": fz["id"], "error": fz["last_error"], "attempts": fz["attempts"]}
+                acks[str(i)] = {"msg_id": mid, "provider_id": (res.get("key") or {}).get("id"),
+                                "deduplicated": bool(res.get("deduplicated")), "ts": now}
+                if res.get("deduplicated"):
+                    await self._stat("deduplicated_by_bridge")
                 fz["sent_parts"] = i + 1
+                fz.pop("inflight", None)
                 await self.r.set(K_FROZEN, json.dumps(fz, ensure_ascii=False))
             # fully sent: checkpoint exactly once
             tok = await self._lock()
@@ -433,7 +500,8 @@ class Store:
                         await self.r.set(NS + "seen:" + ev["id"], json.dumps({"fp": ev["fp"], "ts": now,
                                          "digest": fz["id"]}), ex=SEEN_TTL_S)
                 await self.r.set(K_LAST, json.dumps({"id": fz["id"], "ts": now, "events": [e["id"] for e in fz["events"]],
-                                                     "attempts": fz["attempts"], "parts": len(fz["parts"])}))
+                                                     "attempts": fz["attempts"], "parts": len(fz["parts"]),
+                                                     "acks": fz.get("acks", {})}))
                 await self.r.lpush(K_LOG, json.dumps({"id": fz["id"], "ts": now, "events": [e["id"] for e in fz["events"]]}))
                 await self.r.ltrim(K_LOG, 0, 59)
                 await self.r.delete(K_FROZEN)

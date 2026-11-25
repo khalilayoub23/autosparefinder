@@ -121,7 +121,8 @@ export default function Login() {
                     />
                     <button
                       type="button"
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
+                      aria-label={showPass ? 'הסתר סיסמה' : 'הצג סיסמה'}
+                      className="absolute left-0.5 top-1/2 -translate-y-1/2 p-2.5 text-slate-400 hover:text-slate-300"
                       onClick={() => setShowPass(!showPass)}
                     >
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

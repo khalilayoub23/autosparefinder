@@ -84,7 +84,7 @@ function OrderTimeline({ status }) {
   }
   const activeIdx = TIMELINE_STEPS.findIndex((s) => s.key === status)
   return (
-    <div className="flex items-center overflow-x-auto pb-2 gap-0">
+    <div className="flex items-center overflow-x-auto pb-2 gap-0" tabIndex={0} role="group" aria-label="התקדמות ההזמנה">
       {TIMELINE_STEPS.map((step, i) => {
         const done   = i < activeIdx
         const active = i === activeIdx
@@ -205,31 +205,34 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
 
   return (
     <div className="card overflow-hidden">
-      <div className="p-5 flex items-center justify-between cursor-pointer hover:bg-[#1E2535]" onClick={load}>
+      <div className="p-5 flex flex-wrap items-center justify-between gap-x-3 gap-y-3 cursor-pointer hover:bg-[#1E2535]" onClick={load}>
         {/* Left: optional checkbox + icon + order info */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1 basis-[14rem]">
           {order.status === 'pending_payment' && (
             <input
               type="checkbox"
               checked={!!selected}
               onChange={() => onSelect(order.id)}
               onClick={(e) => e.stopPropagation()}
-              className="w-4 h-4 accent-brand-600 cursor-pointer flex-shrink-0"
+              aria-label={`בחר הזמנה ${order.order_number} לתשלום`}
+              className="w-5 h-5 accent-brand-600 cursor-pointer flex-shrink-0"
             />
           )}
           <div className="w-10 h-10 bg-[rgba(14,165,233,0.12)] rounded-xl flex items-center justify-center flex-shrink-0">
             <Package className="w-5 h-5 text-[#38BDF8]" />
           </div>
-          <div>
-            <p className="font-semibold text-white">{order.order_number}</p>
-            <p className="text-xs text-[#94A3B8]">
+          {/* The row stays click-to-expand for the mouse; this button is the keyboard / screen-reader control for it. */}
+          <button type="button" aria-expanded={expanded} onClick={(e) => { e.stopPropagation(); load() }}
+                  className="min-w-0 text-start rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#38BDF8]">
+            <span className="block font-semibold text-white break-all"><bdi dir="ltr">{order.order_number}</bdi></span>
+            <span className="block text-xs text-[#94A3B8]">
               {safeFormatDate(order.created_at)}
-            </p>
-          </div>
+            </span>
+          </button>
         </div>
         {/* Right: amount + pay shortcut + status + chevron */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="text-left hidden sm:block">
+        <div className="flex items-center gap-2 sm:gap-3 ms-auto">
+          <div className="text-left">
             <p className="font-bold text-white">₪{Number(order.total).toFixed(2)}</p>
           </div>
           {order.status === 'pending_payment' && (
@@ -423,8 +426,8 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
         <p className="text-sm text-[#94A3B8] mb-4">ניתן להחזיר תוך 14 יום מקבלת המשלוח · נחזור תוך 24 שעות</p>
         <form onSubmit={submit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">סיבת ההחזרה</label>
-            <select className="input-field" value={reason} onChange={(e) => setReason(e.target.value)} required>
+            <label htmlFor="orders-f1" className="block text-sm font-medium text-[#E2E8F0] mb-1">סיבת ההחזרה</label>
+            <select id="orders-f1" aria-label="בחר סיבה..." className="input-field" value={reason} onChange={(e) => setReason(e.target.value)} required>
               <option value="">בחר סיבה...</option>
               {Object.entries(RETURN_REASONS).map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
@@ -452,8 +455,8 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-[#E2E8F0] mb-1">פרטים נוספים (אופציונלי)</label>
-            <textarea
+            <label htmlFor="orders-f2" className="block text-sm font-medium text-[#E2E8F0] mb-1">פרטים נוספים (אופציונלי)</label>
+            <textarea id="orders-f2"
               className="input-field resize-none"
               rows={3}
               placeholder="תאר את הבעיה בפירוט כדי לזרז את הטיפול..."
@@ -637,7 +640,8 @@ export default function Orders() {
                       checked={selectedIds.size > 0 && selectedIds.size === pendingOrders.length}
                       ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < pendingOrders.length }}
                       onChange={handleSelectAll}
-                      className="w-4 h-4 accent-brand-600 cursor-pointer"
+                      aria-label="בחר את כל ההזמנות הממתינות לתשלום"
+                      className="w-5 h-5 accent-brand-600 cursor-pointer"
                     />
                     <span className="text-sm font-medium text-[#FBBF24]">
                       {selectedIds.size > 0
@@ -696,7 +700,8 @@ export default function Orders() {
                       checked={selectedIds.size > 0 && selectedIds.size === pendingOrders.length}
                       ref={(el) => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < pendingOrders.length }}
                       onChange={handleSelectAll}
-                      className="w-4 h-4 accent-brand-600 cursor-pointer"
+                      aria-label="בחר את כל ההזמנות הממתינות לתשלום"
+                      className="w-5 h-5 accent-brand-600 cursor-pointer"
                     />
                     <div>
                       <p className="font-semibold text-amber-300">
@@ -771,7 +776,7 @@ export default function Orders() {
               <div key={sp.id} className="card p-4 space-y-2">
                 <div className="flex justify-between items-start gap-4">
                   <div>
-                    <p className="font-semibold text-white text-sm">{sp.order_number} · {sp.supplier_name}</p>
+                    <p className="font-semibold text-white text-sm break-words"><bdi dir="ltr" className="break-all">{sp.order_number}</bdi> · {sp.supplier_name}</p>
                     <p className="text-xs text-[#94A3B8] mt-0.5">סטטוס הזמנה: {STATUS_MAP[sp.order_status]?.label || sp.order_status}</p>
                     <p className="text-xs text-[#94A3B8] mt-0.5">סכום ששולם לספק: ₪{Number(sp.amount_ils || 0).toFixed(2)}</p>
                     {sp.customer_amount_ils != null && (
@@ -874,7 +879,7 @@ export default function Orders() {
                   </div>
                   <div>
                     <p className="font-semibold text-white text-sm">{r.return_number}</p>
-                    <p className="text-xs text-[#94A3B8] mt-0.5">הזמנה: {r.order_number}</p>
+                    <p className="text-xs text-[#94A3B8] mt-0.5">הזמנה: <bdi dir="ltr" className="break-all">{r.order_number}</bdi></p>
                     {r.description && <p className="text-xs text-[#94A3B8] mt-0.5">{r.description}</p>}
                     {r.date && (
                       <p className="text-xs text-[#94A3B8] mt-0.5">
@@ -936,7 +941,7 @@ export default function Orders() {
                           <p className="font-semibold text-white text-sm">{r.return_number}</p>
                           {r.order_id && (
                             <p className="text-xs text-[#94A3B8] mt-0.5">
-                              הזמנה: <span className="text-[#38BDF8] font-medium">{r.order_number || r.order_id?.slice(0, 8)}</span>
+                              הזמנה: <bdi dir="ltr" className="text-[#38BDF8] font-medium break-all">{r.order_number || r.order_id?.slice(0, 8)}</bdi>
                             </p>
                           )}
                           {r.requested_at && (

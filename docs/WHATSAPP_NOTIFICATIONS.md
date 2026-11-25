@@ -269,3 +269,29 @@ Over 3,500 chars: compact (shorter lines, then 6/4/2 items per section with "ו�
 **Inspect / recover (read-only except replay).** `docker exec -w /app autospare_backend python3 /app/maintenance/owner_digest_cli.py status|pending|dead|preview`;
 `replay-dead --yes` re-queues expired events. Metrics: `autospare:digest:stats` (recorded, merged_duplicate, replaced_version,
 suppressed_unchanged, resolved_pending, delivery_failed, digests_delivered). A stuck digest = `status.frozen` with `attempts` and `last_error`.
+
+
+## 11b. Digest delivery semantics (mission 4, 2026-11-25) - stable message id + bridge journal
+
+**What the transport offers (VERIFIED by reading `whatsapp-bridge/index.js` and Baileys 6.x `messages-send.js`):** the bridge had no idempotency
+key and no delivery-receipt lookup; `/send` returned `{ok, key}` only. Baileys *does* accept a caller-chosen `messageId` option
+(`sendMessage(jid, content, {messageId})`), which becomes the WhatsApp message id.
+
+**Chosen design (strongest the transport supports):**
+1. `owner_digest.client_msg_id(digest_id, part, text)` = `3EB0` + 28 hex of SHA-256 - stable for the same (digest, part, text), different for any other text.
+2. Write-ahead intent: `deliver` persists `inflight={part,msg_id}` in the frozen record BEFORE each provider call; acknowledgement (`acks[part]` incl. provider id) and `sent_parts` are persisted after it; the checkpoint only after every part.
+3. `social/whatsapp_provider.send_message(..., client_msg_id)` forwards it; the bridge's `send_journal.js` (atomic file `send_journal.json`, 7 d / 5,000 entries) answers a retry of an id already recorded `sent` with the ORIGINAL key and `deduplicated:true` WITHOUT calling WhatsApp; an id left `pending` (outcome unknown) is re-sent with the SAME message id; concurrent calls share one send.
+4. The outage note is frozen into part 1 on first send, so every retry is byte-identical.
+
+**Guarantees (each proven by a crash-injection test, `tests/test_owner_digest_delivery_crash.py` + `whatsapp-bridge/test_send_journal.mjs`):**
+no event is lost at any crash point (pending ∪ frozen ∪ checkpointed always covers every recorded identity); crash before send -> one send after restart;
+crash after provider acceptance but before the backend persisted the ack, and crash after the ack but before the checkpoint -> **zero extra provider calls** (journal / persisted `sent_parts`);
+crash between parts resumes at the unsent part; a failed/crashed retry and a long outage recover as ONE message, never a storm.
+
+**Residual limitation (stated, not hidden): this is NOT exactly-once.** If the bridge process dies after WhatsApp accepted a message and before `sent` reached disk
+(or the journal file is lost), the retry calls WhatsApp again with the SAME message id. Whether WhatsApp drops that duplicate is provider behaviour that cannot be
+proven offline (test `test_RESIDUAL_...` pins `wire_sends == 2` honestly; `owner_visible == 1` there ASSUMES provider-side id dedup). Receipts (delivered/read) are still not recorded.
+**Compatibility / rollback:** a bridge WITHOUT the journal ignores `client_msg_id` (behaviour = previous at-least-once); a backend without it simply omits the field. The journal needs a bridge
+restart to go live (the bridge mounts `./whatsapp-bridge:/app`) - restarting the bridge reconnects the WhatsApp session, so it is a separate owner-approved step. No DB/Redis migration; new Redis fields live inside the existing frozen record.
+
+**Related fixes found while building the representative digest:** (a) the per-alert cooldown in `notify_owner` swallowed a CHANGED report (new fingerprint) inside the cooldown hour - it now lets a changed fingerprint through; (b) repeats suppressed upstream (cooldown / same-event / unchanged) are now counted on the pending event (`Store.note_repeat`, "חזר N פעמים") so duplicate/repeat numbers are real. Evidence: `docs/evidence/2026-11-25-ui-m4/digest_example.txt` (from `tests/test_owner_digest_example.py`).

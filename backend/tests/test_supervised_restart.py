@@ -24,7 +24,11 @@ RESTARTABLE = {
     "social_feedback_loop", "noa_eod_report_loop", "enrich_catalog_loop", "status_update_loop", "rex_dispatch_loop",
     "zombie_reaper", "job_queue_report", "whatsapp_link_monitor", "car_parts_ie_stall_watchdog",
     "car_parts_ie_healthcheck", "amayama_harvest_monitor", "harvest_supervisor",
-    "vat_basis_registry"}   # #129: pure DB read, safe to restart
+    "vat_basis_registry",   # #129: pure DB read, safe to restart
+    # classified 2026-11-25 (mission 4): registered with restart= by 993ed8d but never added here. The enrichment step is checkpointed
+    # in suppliers.credentials.contact_search and resumes after a restart; every exception inside the cycle is caught, so the task only
+    # ends on cancellation (which is never restarted).
+    "nir_contact_enrichment_loop"}
 # subprocess / browser / job-lock loops and unreviewed external modules: alert-only by design
 ALERT_ONLY = {"embed_warmup", "night_pipeline", "cleanup_loop", "email_agent_loop", "group_scan_loop",
               "job_queue_loop", "car_parts_ie_harvester_loop", "car_parts_ie_full_seed", "thumbnail_import_loop",

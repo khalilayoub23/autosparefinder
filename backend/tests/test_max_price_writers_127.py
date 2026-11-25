@@ -92,6 +92,7 @@ MAINTENANCE = [
     'maintenance/repair_foreign_max_price_127.py',
     'maintenance/repair_oms_foreign_max_133.py',   # #133: clears provably-foreign max only, dry-run by default
     'maintenance/repair_inclusive_reference_131.py',   # #131: recomputes via refresh_min_max_for_parts, dry-run by default
+    'maintenance/asap_msrp_quarantine.py',   # classified 2026-11-25: sets max_price_ils=0 (MSRP-derived) and --restore returns the exact stored prev_max; dry-run by default
     'maintenance/repair_vat_paths_151.py',   # #151: KGM (ex-VAT, verified) x1.18 once; foreign SAAB/RA/EBAY max -> NULL; logged, dry-run by default
     'catalog_scraper.py',
     'db_cleanup_agent.py',

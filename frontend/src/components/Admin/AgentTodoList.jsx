@@ -162,7 +162,7 @@ const AgentTodoList = () => {
             className="w-full px-3 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 h-20"
           />
           <div className="grid grid-cols-3 gap-3">
-            <select
+            <select aria-label="Low"
               value={formData.priority}
               onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
               className="px-3 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -172,7 +172,7 @@ const AgentTodoList = () => {
               <option value="high">High</option>
               <option value="critical">Critical</option>
             </select>
-            <select
+            <select aria-label="Rex"
               value={formData.assigned_to_agent}
               onChange={(e) => setFormData({ ...formData, assigned_to_agent: e.target.value })}
               className="px-3 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -181,7 +181,7 @@ const AgentTodoList = () => {
               <option value="db_update_agent">DB Agent</option>
               <option value="pricing_agent">Pricing</option>
             </select>
-            <select
+            <select aria-label="Catalogue"
               value={formData.category}
               onChange={(e) => setFormData({ ...formData, category: e.target.value })}
               className="px-3 py-2 border border-brand-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -199,10 +199,10 @@ const AgentTodoList = () => {
       )}
 
       <div className="flex gap-3 flex-wrap">
-        <select
+        <select aria-label="All Status"
           value={filters.status || ''}
           onChange={(e) => setFilters({ ...filters, status: e.target.value || null })}
-          className="px-3 py-2 border border-brand-border rounded-lg text-sm"
+          className="input-field w-auto text-sm"
         >
           <option value="">All Status</option>
           <option value="not_started">Not Started</option>
@@ -210,20 +210,20 @@ const AgentTodoList = () => {
           <option value="completed">Completed</option>
           <option value="blocked">Blocked</option>
         </select>
-        <select
+        <select aria-label="All Agents"
           value={filters.agent || ''}
           onChange={(e) => setFilters({ ...filters, agent: e.target.value || null })}
-          className="px-3 py-2 border border-brand-border rounded-lg text-sm"
+          className="input-field w-auto text-sm"
         >
           <option value="">All Agents</option>
           <option value="rex">Rex</option>
           <option value="db_update_agent">DB Agent</option>
           <option value="pricing_agent">Pricing</option>
         </select>
-        <select
+        <select aria-label="All Categories"
           value={filters.category || ''}
           onChange={(e) => setFilters({ ...filters, category: e.target.value || null })}
-          className="px-3 py-2 border border-brand-border rounded-lg text-sm"
+          className="input-field w-auto text-sm"
         >
           <option value="">All Categories</option>
           <option value="catalogue">Catalogue</option>
@@ -310,10 +310,10 @@ const AgentTodoList = () => {
         <div className="flex items-center justify-between gap-3">
           <h3 className="text-xl font-semibold text-slate-200">Alias Review Queue</h3>
           <div className="flex items-center gap-2">
-            <select
+            <select aria-label="Pending"
               value={reviewFilter}
               onChange={(e) => setReviewFilter(e.target.value)}
-              className="px-3 py-2 border border-brand-border rounded-lg text-sm"
+              className="input-field w-auto text-sm"
             >
               <option value="pending">Pending</option>
               <option value="approved">Approved</option>

@@ -43,8 +43,8 @@ const SearchFilters = ({ search, setSearch, category, setCategory, licensePlate,
 
       {/* Category Dropdown */}
       <div className="flex flex-col gap-1">
-        <label className="text-[10px] font-bold text-slate-400 uppercase mr-1">קטגוריה</label>
-        <select 
+        <label htmlFor="searchfilters-f1" className="text-[10px] font-bold text-slate-400 uppercase mr-1">קטגוריה</label>
+        <select id="searchfilters-f1" aria-label="כל הקטגוריות" 
           value={category}
           onChange={(e) => setCategory(e.target.value)}
           className="h-10 bg-brand-surface border border-brand-border rounded-lg px-4 text-sm font-medium outline-none focus:border-brand-blue">

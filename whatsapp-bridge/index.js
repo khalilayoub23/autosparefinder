@@ -20,6 +20,7 @@ import qrcode from 'qrcode-terminal'
 import path from 'path'
 import { atomicWriteFile } from './atomic_write.js'
 import { createMsgCache } from './msg_cache.js'
+import { createSendJournal } from './send_journal.js'
 import { createPollRegistry } from './poll_votes.js'
 import { candidatePairs, tryDecryptVote } from './poll_decrypt.js'
 import { createHash } from 'crypto'
@@ -126,6 +127,8 @@ const msgCache = createMsgCache(`${APP_DIR}/msg_cache.json`, {
   onError: (stage, err) => logEvent('MSG_CACHE_ERROR', `stage=${stage} err=${err.message}`),
 })
 
+const sendJournal = createSendJournal({ file: `${APP_DIR}/send_journal.json`, log: logEvent })
+
 const pollRegistry = createPollRegistry({
   load: () => { try { return JSON.parse(fs.readFileSync(`${APP_DIR}/poll_map.json`, 'utf8')) } catch { return {} } },
   save: (obj) => atomicWriteFile(`${APP_DIR}/poll_map.json`, JSON.stringify(obj)).catch(() => {}),
@@ -180,6 +183,9 @@ async function downloadInboundMedia(messageNode, mediaType) {
   return await streamToBuffer(stream)
 }
 
+// Status of an idempotent send: {status:'sent'|'pending'|null}. Read-only; no message content is stored.
+app.get('/sent/:id', (req, res) => res.json({ ok: true, entry: sendJournal.status(req.params.id) }))
+
 app.post('/send', async (req, res) => {
   const unavailable = socketUnavailable(connState, waSocket)
   if (unavailable) {
@@ -200,7 +206,9 @@ app.post('/send', async (req, res) => {
     audio_mime,
     audio_ptt,
     poll,
+    client_msg_id,
   } = req.body
+  const clientMsgId = typeof client_msg_id === 'string' && /^[A-Za-z0-9]{8,64}$/.test(client_msg_id) ? client_msg_id : ''
 
   const hasText = typeof text === 'string' && text.trim().length > 0
   const hasImage = typeof image_base64 === 'string' && image_base64.trim().length > 0
@@ -276,6 +284,17 @@ app.post('/send', async (req, res) => {
       }
     } else {
       console.log('[Bridge] Sending to', jidHint(jid), '| text length:', text.length)  // last 4 digits only (#70)
+      if (clientMsgId) {
+        // Idempotent text send (owner digest): a retry of the same client_msg_id never sends twice (send_journal.js);
+        // the id doubles as the WhatsApp message id so the provider can also drop a re-send of the same message.
+        const once = await sendJournal.sendOnce(clientMsgId, async (mid) => {
+          const s = await waSocket.sendMessage(jid, { text }, { messageId: mid })
+          cacheOutboundMessage(s?.key?.id, s?.message)
+          return { key: s?.key || null }
+        })
+        console.log('[Bridge] Sent OK to', jidHint(jid), once.deduplicated ? '(deduplicated)' : '')
+        return res.json({ ok: true, key: once.result?.key || null, deduplicated: once.deduplicated })
+      }
       sent = await waSocket.sendMessage(jid, { text })
     }
 

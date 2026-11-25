@@ -4440,6 +4440,17 @@ async def _owner_digest_record(category: str, title: str, body: str = "", *, sev
     return res
 
 
+async def _owner_digest_note_repeat(category: str, title: str, alert_key: str, event_keys, reason: str) -> None:
+    """Count a repeat that notify_owner suppressed before the store saw it (best effort, never raises)."""
+    try:
+        import owner_digest as _od
+        if _od.enabled():
+            await _od.Store(await get_redis()).note_repeat(category=category, title=title, alert_key=alert_key,
+                                                           event_keys=event_keys, reason=reason)
+    except Exception:
+        pass
+
+
 async def _owner_digest_report(kind_key: str, title: str, text: str, *, category: str = "health", section: str = "health") -> dict:
     """A periodic report (daily status, weekly harvest, job-queue progress) as ONE digest event: the latest
     version of the same report replaces the pending one. Falls back to the direct send when the store is down."""
@@ -4471,8 +4482,8 @@ async def _owner_digest_pass(force: bool = False) -> dict:
         except Exception:
             pass
 
-        async def _send(text: str) -> dict:
-            return await _wa_send(to=to, text=text)
+        async def _send(text: str, client_msg_id: str = "") -> dict:
+            return await _wa_send(to=to, text=text, client_msg_id=client_msg_id)
 
         res = await _od.Store(_r).deliver(_send, window_open=_notify_window_open()[0], note=note, force=force)
         if res.get("ok"):
@@ -4531,7 +4542,17 @@ async def notify_owner(
             _r = await get_redis()
             _rk = f"autospare:alert_cooldown:{alert_key}"
             if await _r.exists(_rk):
-                return {"ok": False, "suppressed": True, "error": "cooldown"}
+                # A cooldown spaces REPEATS; it must never swallow a CHANGE. With a fingerprint, a report that differs from the
+                # last delivered one is a new fact (mission 4, 2026-11-25: a changed import status inside the hour was dropped
+                # before the digest ever saw it) - let _notify_decide_state below classify it.
+                _changed = False
+                if fingerprint and state != "resolved":
+                    _praw = await _r.get(_alert_state_key(alert_key))
+                    _pst = json.loads(_praw) if _praw else None
+                    _changed = bool(_pst) and str(_pst.get("fp") or "") != str(fingerprint)
+                if not _changed:
+                    await _owner_digest_note_repeat(category, title, alert_key, event_keys, "cooldown")
+                    return {"ok": False, "suppressed": True, "error": "cooldown"}
         except Exception:
             pass  # Redis unavailable — allow the alert through rather than lose it
     if alert_key and fingerprint and state != "resolved":
@@ -4543,6 +4564,7 @@ async def notify_owner(
             _prev = None  # Redis unavailable / unreadable — send rather than lose the alert
         state = _notify_decide_state(_prev, fingerprint, state, remind_s, time.time())
         if state is None:
+            await _owner_digest_note_repeat(category, title, alert_key, event_keys, "unchanged")
             return {"ok": False, "suppressed": True, "error": "unchanged"}
     # One underlying event = one owner message, whichever agent noticed it (audit 2026-11-24: the Email Agent and
     # BOAZ both alerted on the same supplier mail, 19 messages for one newsletter sender). `event_keys` are semantic
@@ -4557,6 +4579,7 @@ async def notify_owner(
                     for _k2 in _ev_keys:
                         await _r.set(f"autospare:event_seen:{_k2}", "1", ex=_EVENT_SEEN_TTL_S)
                     print(f"[notify_owner] merged duplicate event ({_k}) category={category} title={title[:60]!r}")
+                    await _owner_digest_note_repeat(category, title, alert_key, _ev_keys, "same_event")
                     return {"ok": False, "suppressed": True, "error": "same_event"}
         except Exception:
             pass  # Redis unavailable: send rather than lose the alert

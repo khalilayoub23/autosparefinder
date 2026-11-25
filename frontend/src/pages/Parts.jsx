@@ -322,7 +322,7 @@ function PhotoEditorModal({ src, onApply, onClose }) {
             <Camera className="w-5 h-5 text-[#0EA5E9]" />
             <h3 className="font-bold text-[#E2E8F0]">ערוך תמונה לחיפוש מדויק</h3>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-brand hover:bg-[#252D3D]">
+          <button aria-label="סגור" onClick={onClose} className="p-1.5 rounded-brand hover:bg-[#252D3D]">
             <X className="w-5 h-5 text-[#94A3B8]" />
           </button>
         </div>
@@ -831,7 +831,7 @@ function MobileBottomSheet({ open, onClose, title, subtitle, children, footer = 
             <h3 className="text-base font-bold text-white">{title}</h3>
             {subtitle ? <p className="mt-0.5 text-xs text-[#94A3B8]">{subtitle}</p> : null}
           </div>
-          <button
+          <button aria-label="סגור"
             type="button"
             onClick={onClose}
             className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[rgba(148,163,184,0.18)] bg-[#1E2535] text-[#94A3B8]"
@@ -891,7 +891,7 @@ function AllOffersModal({ part, onAddToCart, onClose }) {
               {!loading && offers.length > 0 ? ` · ${offers.length} הצעות` : ''}
             </p>
           </div>
-          <button
+          <button aria-label="סגור"
             type="button"
             onClick={onClose}
             className="inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full border border-[rgba(148,163,184,0.18)] bg-[#1E2535] text-[#94A3B8] hover:bg-[#252D3D]"
@@ -1684,7 +1684,7 @@ function VinScannerModal({ onResult, onClose }) {
             <ScanLine className="w-4 h-4" />
             <span className="text-sm font-semibold">סריקת VIN</span>
           </div>
-          <button onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors">
+          <button aria-label="סגור" onClick={onClose} className="text-[#94A3B8] hover:text-white transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -3667,8 +3667,8 @@ export default function Parts() {
 
             {/* 2. Model */}
             <div className="rounded-2xl border border-[rgba(148,163,184,0.18)] bg-[#1E2535] p-3.5">
-              <label className="block text-xs text-[#94A3B8] mb-1.5 font-medium">דגם</label>
-              <select
+              <label htmlFor="parts-f1" className="block text-xs text-[#94A3B8] mb-1.5 font-medium">דגם</label>
+              <select id="parts-f1" aria-label="דגם"
                 className={FILTER_SELECT_CLASS}
                 value={effectiveManualModel}
                 onChange={(e) => handleManualModelChange(e.target.value)}
@@ -3687,8 +3687,8 @@ export default function Parts() {
 
             {/* 3. Sub-model */}
             <div className="lg:order-3 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[#1E2535] p-3">
-              <label className="block text-xs text-[#94A3B8] mb-1.5 font-medium">תת-דגם / גרסה</label>
-              <select
+              <label htmlFor="parts-f2" className="block text-xs text-[#94A3B8] mb-1.5 font-medium">תת-דגם / גרסה</label>
+              <select id="parts-f2" aria-label="תת-דגם / גרסה"
                 className={FILTER_SELECT_CLASS}
                 value={effectiveManualSubModel}
                 onChange={(e) => handleManualSubModelChange(e.target.value)}
@@ -3710,8 +3710,8 @@ export default function Parts() {
 
             {/* 4. Year */}
             <div className="lg:order-4 rounded-xl border border-[rgba(148,163,184,0.18)] bg-[#1E2535] p-3">
-              <label className="block text-xs text-[#94A3B8] mb-1.5 font-medium">שנה</label>
-              <select
+              <label htmlFor="parts-f3" className="block text-xs text-[#94A3B8] mb-1.5 font-medium">שנה</label>
+              <select id="parts-f3" aria-label="שנה"
                 className={FILTER_SELECT_CLASS}
                 value={effectiveManualYear}
                 onChange={(e) => handleManualYearChange(e.target.value)}
@@ -3873,25 +3873,25 @@ export default function Parts() {
                     }}
                   />
                   {manualManufacturer}
-                  <button onClick={() => handleManualManufacturerChange('')}><X className="w-3 h-3" /></button>
+                  <button aria-label="סגור" onClick={() => handleManualManufacturerChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
               {activeVehicleFilterOrder.includes('model') && (
                 <span className="inline-flex items-center gap-1 bg-[rgba(14,165,233,0.12)] text-[#38BDF8] text-xs px-2.5 py-1 rounded-full font-medium">
                   {effectiveManualModel}
-                  <button onClick={() => handleManualModelChange('')}><X className="w-3 h-3" /></button>
+                  <button aria-label="סגור" onClick={() => handleManualModelChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
               {activeVehicleFilterOrder.includes('submodel') && (
                 <span className="inline-flex items-center gap-1 bg-[rgba(14,165,233,0.12)] text-[#38BDF8] text-xs px-2.5 py-1 rounded-full font-medium">
                   {effectiveManualSubModel}
-                  <button onClick={() => handleManualSubModelChange('')}><X className="w-3 h-3" /></button>
+                  <button aria-label="סגור" onClick={() => handleManualSubModelChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
               {activeVehicleFilterOrder.includes('year') && (
                 <span className="inline-flex items-center gap-1 bg-[rgba(14,165,233,0.12)] text-[#38BDF8] text-xs px-2.5 py-1 rounded-full font-medium">
                   {effectiveManualYear}
-                  <button onClick={() => handleManualYearChange('')}><X className="w-3 h-3" /></button>
+                  <button aria-label="סגור" onClick={() => handleManualYearChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
               {selectedPartFamily && activeVehicleFilterOrder.includes('category') && (
@@ -3906,7 +3906,7 @@ export default function Parts() {
                     />
                   ) : null}
                   {selectedPartFamilyLabel}
-                  <button onClick={() => handlePartFamilyChange('')}><X className="w-3 h-3" /></button>
+                  <button aria-label="סגור" onClick={() => handlePartFamilyChange('')}><X className="w-3 h-3" /></button>
                 </span>
               )}
             </div>
@@ -4236,7 +4236,7 @@ export default function Parts() {
                 <button onClick={() => setShowPhotoEditor(true)} className="btn-secondary px-3 flex items-center gap-1.5">
                   <Crop className="w-4 h-4" /><span className="hidden sm:inline text-sm">ערוך</span>
                 </button>
-                <button onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoResult(null); setPhotoCandidates([]) }} className="btn-secondary px-3">
+                <button aria-label="סגור" onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoResult(null); setPhotoCandidates([]) }} className="btn-secondary px-3">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -4377,7 +4377,7 @@ export default function Parts() {
                 <Crop className="w-4 h-4" />
                 <span className="hidden sm:inline text-sm">ערוך</span>
               </button>
-              <button
+              <button aria-label="סגור"
                 onClick={() => { setPhotoFile(null); setPhotoPreview(null); setPhotoResult(null); setPhotoCandidates([]) }}
                 className="btn-secondary px-3"
               >
@@ -4773,7 +4773,7 @@ export default function Parts() {
               >
                 <Link2 className="h-4 w-4" />
               </button>
-              <select
+              <select aria-label="מיין: זמינות"
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 className="min-h-11 rounded-2xl border border-[rgba(148,163,184,0.18)] bg-[#1E2535] px-3 text-sm text-white outline-none focus:border-[rgba(14,165,233,0.35)] focus:ring-2 focus:ring-brand-200"

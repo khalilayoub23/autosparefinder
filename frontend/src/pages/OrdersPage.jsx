@@ -129,7 +129,7 @@ const OrdersPage = () => {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl sm:text-3xl font-black text-white">הזמנות</h1>
         <div className="flex items-center gap-2">
-          <select
+          <select aria-label="סינון הזמנות לפי סטטוס"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="input-field !py-2 !text-sm w-44"

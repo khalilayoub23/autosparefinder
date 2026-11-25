@@ -175,7 +175,9 @@ export default function Layout({ children }) {
             {/* Notifications bell */}
             <div className="relative" ref={notifsRef}>
               <button
-                className="relative p-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors"
+                className="relative p-2.5 rounded-brand text-slate-100 hover:bg-white/10 transition-colors"
+                aria-label={unreadCount > 0 ? `התראות (${unreadCount} שלא נקראו)` : 'התראות'}
+                aria-expanded={showNotifs}
                 onClick={() => { setShowNotifs(!showNotifs); if (!showNotifs) fetchNotifications() }}
               >
                 <Bell className="w-5 h-5" />
@@ -248,7 +250,7 @@ export default function Layout({ children }) {
 
             {/* User menu */}
             <div className="relative group">
-              <button className="flex items-center gap-2 px-3 py-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors">
+              <button aria-label="הרחב" className="flex items-center gap-2 px-3 py-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors">
                 <div className="w-7 h-7 bg-white/10 border border-[#00CCFF]/50 rounded-full flex items-center justify-center">
                   <span className="text-[#9AEFFF] font-black text-xs">
                     {user?.full_name?.charAt(0) || 'U'}
@@ -280,7 +282,7 @@ export default function Layout({ children }) {
 
             {/* Mobile menu btn */}
             {!isAdminRoute && (
-              <button className="md:hidden p-2 rounded-brand text-slate-100 hover:bg-white/10 transition-colors" onClick={() => setSidebarOpen(!sidebarOpen)}>
+              <button aria-label={sidebarOpen ? 'סגור תפריט' : 'פתח תפריט'} aria-expanded={sidebarOpen} className="md:hidden p-2.5 rounded-brand text-slate-100 hover:bg-white/10 transition-colors" onClick={() => setSidebarOpen(!sidebarOpen)}>
                 {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
               </button>
             )}
@@ -340,7 +342,7 @@ export default function Layout({ children }) {
           <div className="w-full max-w-lg rounded-2xl bg-[#151B27] shadow-[0_20px_60px_rgba(0,0,0,0.7)] border border-[rgba(148,163,184,0.12)]">
             <div className="flex items-center justify-between p-4 border-b border-[rgba(148,163,184,0.08)]">
               <h3 className="text-sm font-bold text-[#E2E8F0]">פרטי התראה</h3>
-              <button
+              <button aria-label="סגור"
                 type="button"
                 className="text-[#94A3B8] hover:text-[#94A3B8] transition-colors"
                 onClick={() => setSelectedNotif(null)}
