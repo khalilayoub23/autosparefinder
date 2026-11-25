@@ -258,12 +258,14 @@ async def _alert(notify, task: Dict[str, Any], text_: str) -> None:
     if not notify:
         return
     try:
+        import owner_poll as _owner_poll
         art = _json(task.get("artifacts"), {})
         # a task the Email Agent filed for a mail it ALREADY reported to the owner is the same event: merge, do not repeat
         keys = [f"mail:{art['email_ref']}"] if art.get("source") == "email_agent" and art.get("email_ref") else None
         await notify("supplier", f"BOAZ צריך החלטה שלך — {str(task.get('title') or '')[:60]}",
                      f"{_he_boaz_reason(text_)}\nמשימה {task['id'][:8]} · כתוב *משימות בועז* לרשימה.",
-                     severity="info", alert_key=f"boaz_task_{task['id']}", cooldown_s=30 * 86400, event_keys=keys)
+                     severity="info", alert_key=f"boaz_task_{task['id']}", cooldown_s=30 * 86400, event_keys=keys,
+                     choices=_owner_poll.boaz_task_choices(art.get("email_ref") or "") or None)
     except Exception:
         pass
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import AgentTodoList from '../components/Admin/AgentTodoList'
+import GroupMentionComposer from '../components/Admin/GroupMentionComposer'
 import {
   LayoutDashboard, Users, Package, TrendingUp, Settings,
   DollarSign, ShoppingBag, BarChart2, Loader2, RefreshCw,
@@ -3379,6 +3380,7 @@ export default function Admin() {
       {/* Social media */}
       {tab === 'social' && (
         <div className="space-y-4">
+          <div className="card p-6"><GroupMentionComposer /></div>
           <div className="card p-6">
             <h3 className="font-bold text-slate-100 mb-4">יצירת תוכן AI לרשתות חברתיות</h3>
             <div className="space-y-4">

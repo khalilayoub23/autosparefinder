@@ -127,3 +127,15 @@ def email_choices(ref: str, *, has_draft: bool) -> list[Choice]:
 
 def inbox_choices(item_id: str) -> list[Choice]:
     return [("✅ שלח תשובה", f"ענה {item_id}"), ("⏭️ דלג", f"דלג {item_id}")]
+
+
+def supplier_candidate_choices(supplier_id: str) -> list[Choice]:
+    """NIR: ONE named candidate (activation never implies messaging, ordering or paying - see supplier_authorization)."""
+    ref = str(supplier_id or "")[:8]
+    return [("✅ הפעל ספק", f"אשרספק {ref}"), ("❌ דחה", f"דחהספק {ref}"), ("📋 ספקים", "ספקים")] if ref else []
+
+
+def boaz_task_choices(email_ref: str) -> list[Choice]:
+    """BOAZ escalation about a supplier's mail: read it, or re-list BOAZ's open tasks. Read-only commands; any reply,
+    offer, purchase order or payment stays a separate typed owner approval (supplier_authorization)."""
+    return [("📖 קרא את המייל", f"מייל {email_ref}"), ("🔁 משימות בועז", "משימות בועז")] if email_ref else []

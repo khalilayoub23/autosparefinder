@@ -277,6 +277,8 @@ _PROVIDER_SEND_ALLOWED = {
     ("routes/webhooks.py", "_send"),                              # late chat answer to the same conversation
     ("routes/webhooks.py", "_owner_reply_bg"),                    # reply to the owner's own console message
     ("routes/webhooks.py", "_whatsapp_webhook_impl"),             # chat replies
+    ("routes/webhooks.py", "_handle_group_mention"),              # answer to the OWNER's own @mention in the group (never an alert)
+    ("routes/wa_group.py", "send_group_message"),                 # an admin typing a message in the group composer
 }
 # Calls to the quiet-hours gate / update router that are not notify_owner itself, each reviewed.
 _GATE_CALL_ALLOWED = {

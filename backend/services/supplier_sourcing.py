@@ -336,7 +336,8 @@ async def run_sourcing_cycle(queries: Optional[list[str]] = None, max_onboard: i
                     reasons=c.get("reasons"), signals=c.get("signals"),
                 )
                 if res.get("created"):
-                    summary["onboarded"].append({"name": res["name"], "domain": c["domain"], "score": score})
+                    summary["onboarded"].append({"name": res["name"], "domain": c["domain"], "score": score,
+                                                  "supplier_id": str(res.get("supplier_id") or "")})
         return summary
     finally:
         if own:

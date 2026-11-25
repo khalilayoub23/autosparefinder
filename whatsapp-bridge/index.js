@@ -24,6 +24,7 @@ import { createSendJournal } from './send_journal.js'
 import { createPollRegistry } from './poll_votes.js'
 import { candidatePairs, tryDecryptVote } from './poll_decrypt.js'
 import { createHash } from 'crypto'
+import { wrapForRelay, buildInteractiveMessage, extractInteractiveResponse, responseContext, extractMentions, validateMentions, parseButtonId } from './interactive.js'
 import { installSafeConsoleFilter, createSafeBaileysLogger, jidHint, maskNumbers } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
@@ -36,6 +37,10 @@ import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, he
 // key material.
 installSafeConsoleFilter()
 
+// Interactive owner messages / group-mention inbound: OFF unless explicitly enabled (rendering on a real device is
+// unverified; with the flag off the bridge behaves exactly as before - polls + text).
+const WA_INTERACTIVE_ENABLED = process.env.WA_INTERACTIVE_ENABLED === '1'
+const WA_GROUP_INBOUND_ENABLED = process.env.WA_GROUP_INBOUND_ENABLED === '1'
 const BACKEND_WEBHOOK = process.env.BACKEND_URL || 'http://backend:8000/api/v1/webhooks/whatsapp'
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_PORT || '3001', 10) || 3001
 // Overridable ONLY so the regression harness can run the real index.js without touching the live
@@ -206,6 +211,8 @@ app.post('/send', async (req, res) => {
     audio_mime,
     audio_ptt,
     poll,
+    interactive,
+    mentions,
     client_msg_id,
   } = req.body
   const clientMsgId = typeof client_msg_id === 'string' && /^[A-Za-z0-9]{8,64}$/.test(client_msg_id) ? client_msg_id : ''
@@ -213,6 +220,7 @@ app.post('/send', async (req, res) => {
   const hasText = typeof text === 'string' && text.trim().length > 0
   const hasImage = typeof image_base64 === 'string' && image_base64.trim().length > 0
   const hasAudio = typeof audio_base64 === 'string' && audio_base64.trim().length > 0
+  const hasInteractive = !!(interactive && typeof interactive.body === 'string' && interactive.interaction_id && Array.isArray(interactive.actions))
   const hasPoll = !!(poll && typeof poll.name === 'string' && Array.isArray(poll.values) && poll.values.length >= 2)
 
   // Root-fix 2026-09-12: `waSocket` is created (non-null) BEFORE authentication
@@ -225,7 +233,7 @@ app.post('/send', async (req, res) => {
   // 'id')" — a confusing 500 instead of a clear, fast, actionable failure.
   // Checking `.user` (only set once Baileys confirms authentication) matches
   // the already-correct /health check exactly.
-  if (!waSocket || !waSocket.user || !to || (!hasText && !hasImage && !hasAudio && !hasPoll)) {
+  if (!waSocket || !waSocket.user || !to || (!hasText && !hasImage && !hasAudio && !hasPoll && !hasInteractive)) {
     return res.status(503).json({
       ok: false,
       error: waSocket && !waSocket.user
@@ -237,6 +245,23 @@ app.post('/send', async (req, res) => {
   try {
     const jid = normalizeTargetJid(to, reply_jid)
     let sent = null
+
+    if (hasInteractive) {
+      if (!WA_INTERACTIVE_ENABLED) return res.status(409).json({ ok: false, error: 'interactive disabled (WA_INTERACTIVE_ENABLED!=1)', fallback: 'poll' })
+      const msg = buildInteractiveMessage(baileys.proto, {
+        body: interactive.body, footer: interactive.footer || '', interactionId: interactive.interaction_id, actions: interactive.actions,
+      })
+      // viewOnce wrapper + biz node: the form community nativeFlow senders use; device rendering UNVERIFIED.
+      const wrapped = wrapForRelay(msg)
+      const full = baileys.generateWAMessageFromContent(jid, wrapped, { userJid: waSocket.user.id })
+      await waSocket.relayMessage(jid, full.message, {
+        messageId: full.key.id,
+        additionalNodes: [{ tag: 'biz', attrs: {}, content: [{ tag: 'interactive', attrs: { type: 'native_flow', v: '1' }, content: [{ tag: 'native_flow', attrs: { v: '9', name: 'mixed' } }] }] }],
+      })
+      cacheOutboundMessage(full.key.id, full.message)
+      console.log('[Bridge] Sent interactive to', jidHint(jid), '| actions:', interactive.actions.length)
+      return res.json({ ok: true, key: full.key, interactive: true })
+    }
 
     if (hasPoll) {
       const values = poll.values.slice(0, 6).map((v) => String(v).slice(0, 40))
@@ -295,7 +320,14 @@ app.post('/send', async (req, res) => {
         console.log('[Bridge] Sent OK to', jidHint(jid), once.deduplicated ? '(deduplicated)' : '')
         return res.json({ ok: true, key: once.result?.key || null, deduplicated: once.deduplicated })
       }
-      sent = await waSocket.sendMessage(jid, { text })
+      const payload = { text }
+      if (Array.isArray(mentions) && mentions.length && jid.endsWith('@g.us')) {
+        const meta = await waSocket.groupMetadata(jid)
+        const ok = validateMentions(mentions, (meta.participants || []).flatMap((p) => [p.id, p.lid, p.phoneNumber].filter(Boolean)))
+        if (ok.length !== new Set(mentions).size) return res.status(400).json({ ok: false, error: 'mention is not a participant of this group' })
+        payload.mentions = ok
+      }
+      sent = await waSocket.sendMessage(jid, payload)
     }
 
     cacheOutboundMessage(sent?.key?.id, sent?.message)
@@ -379,6 +411,24 @@ app.get('/groups', async (_, res) => {
       size: Array.isArray(g.participants) ? g.participants.length : 0,
     }))
     res.json({ ok: true, groups: list })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: String(err && err.message || err) })
+  }
+})
+
+// Read-only participant list of ONE group (mention autocomplete). Sends nothing. `id` is the JID the backend maps to
+// an opaque token - the UI never sees phone numbers.
+app.get('/groups/:jid/participants', async (req, res) => {
+  const unavailable = socketUnavailable(connState, waSocket)
+  if (unavailable) return res.status(503).json({ ok: false, error: unavailable })
+  const gjid = String(req.params.jid || '')
+  if (!/^[0-9-]+@g\.us$/.test(gjid)) return res.status(400).json({ ok: false, error: 'bad group jid' })
+  try {
+    const meta = await waSocket.groupMetadata(gjid)
+    const participants = (meta.participants || []).map((p) => ({
+      jid: p.id, lid: p.lid || null, admin: p.admin || null, name: p.name || p.notify || '',
+    }))
+    res.json({ ok: true, subject: meta.subject || '', participants })
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err && err.message || err) })
   }
@@ -604,9 +654,43 @@ async function startBot() {
     for (const msg of messages) {
       if (!msg.message || msg.key.fromMe) continue
       const jid = msg.key.remoteJid
-      if (!jid || jid.endsWith('@g.us')) continue
-
+      if (!jid) continue
       const content = normalizeMessageContent(msg.message) || msg.message
+
+      // Button / list response (owner taps). Posted to the SAME webhook with the structured selection; the backend
+      // validates owner + interaction and resolves the action. Never executed here.
+      const ir = extractInteractiveResponse(content)
+      if (ir && (!jid.endsWith('@g.us') || WA_GROUP_INBOUND_ENABLED)) {
+        const parsed = parseButtonId(ir.selectedId)
+        const sender = jid.endsWith('@g.us') ? (msg.key.participant || '') : jid
+        logEvent('INTERACTIVE_RESPONSE', `kind=${ir.kind} parsed=${!!parsed}`)
+        try {
+          await axios.post(BACKEND_WEBHOOK, {
+            from: 'whatsapp:' + (sender.endsWith('@lid') ? sender : '+' + sender.split('@')[0].replace(/\D/g, '')),
+            body: '', profile_name: msg.pushName || '', reply_jid: jid, message_id: msg.key.id || '',
+            interactive_response: { kind: ir.kind, selected_id: ir.selectedId, interaction_id: parsed?.interactionId || '',
+              action_id: parsed?.actionId || '', original_message_id: responseContext(content).stanzaId, is_group: jid.endsWith('@g.us') },
+          }, { timeout: 90000 })
+        } catch (err) { console.error('[Bridge] interactive response forward error:', maskNumbers(err.message)) }
+        continue
+      }
+
+      // Group messages: dropped unless WA_GROUP_INBOUND_ENABLED=1; then ONLY messages carrying real mention metadata
+      // of THIS account are forwarded (routing signal, never an approval).
+      if (jid.endsWith('@g.us')) {
+        if (!WA_GROUP_INBOUND_ENABLED) continue
+        const mentioned = extractMentions(content)
+        const me = [sock.user?.id, sock.user?.lid].filter(Boolean).map((x) => x.split(':')[0].split('@')[0])
+        if (!mentioned.some((m) => me.includes(m.split('@')[0]))) continue
+        const gtext = content.conversation || content.extendedTextMessage?.text || ''
+        try {
+          await axios.post(BACKEND_WEBHOOK, {
+            from: 'whatsapp:group', body: gtext, profile_name: msg.pushName || '', reply_jid: jid, message_id: msg.key.id || '',
+            group_message: { group_jid: jid, message_id: msg.key.id || '', sender_jid: msg.key.participant || '', mentioned_jids: mentioned },
+          }, { timeout: 90000 })
+        } catch (err) { console.error('[Bridge] group mention forward error:', maskNumbers(err.message)) }
+        continue
+      }
       if (content.pollUpdateMessage) {
         await handlePollVoteMessage(sock, msg, content.pollUpdateMessage)
         continue

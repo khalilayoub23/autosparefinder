@@ -4613,7 +4613,10 @@ async def notify_owner(
         # cycle all night collapses to one delivery instead of bursting at 09:00.
         text = _omf.cap_message(text, int(os.getenv("OWNER_MSG_MAX_CHARS", "1200")), "(המשך בקונסולה)")
         import owner_digest as _od
-        if not _is_critical and _od.enabled():
+        import owner_interactions as _oix
+        # An interactive DECISION (alert with choices, buttons enabled) is delivered now, never parked for the morning digest.
+        _interactive_decision = bool(choices) and _oix.enabled()
+        if not _is_critical and not _interactive_decision and _od.enabled():
             # ROUTINE alert -> the durable morning digest (mission 3, 2026-11-25). Only severity "critical" keeps the
             # immediate path below. Redis down -> recorded=None and the alert is sent directly (never lost).
             result = await _owner_digest_record(category, title, body, severity=severity, state=state or "new",
@@ -4621,11 +4624,16 @@ async def notify_owner(
                                                 choices=choices, event_keys=_ev_keys)
         else:
             result = None
+        _meta = ({"group": group or alert_key, "state": state or "", "sev": severity,
+                  "title": f"{_state_label + ' · ' if _state_label else ''}{title}"[:120]}
+                 if (group or alert_key) else None)
+        if result is None and _interactive_decision and os.getenv("OWNER_WHATSAPP_PHONE", ""):
+            # Buttons/polls are honoured only in the owner's own 1:1 chat (owner_poll.is_owner_target), so a decision goes
+            # there even when an updates group is configured; quiet hours still apply (queued, flushed at 09:00).
+            result = await _wa_send_quiet(to=os.getenv("OWNER_WHATSAPP_PHONE", ""), text=text, critical=_is_critical,
+                                          alert_key=alert_key, meta=_meta)
         if result is None:
-            result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key,
-                                           meta={"group": group or alert_key, "state": state or "", "sev": severity,
-                                                 "title": f"{_state_label + ' · ' if _state_label else ''}{title}"[:120]}
-                                           if (group or alert_key) else None)
+            result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key, meta=_meta)
         if (result.get("ok") or result.get("queued")) and _ev_keys:
             try:
                 _r = await get_redis()
@@ -5032,6 +5040,9 @@ async def _supplier_sourcing_loop():
                     severity="info",
                     alert_key=f"supplier_sourcing_{_sup_fp}",
                     cooldown_s=7 * 86400,  # same candidate set: at most once/week
+                    # buttons only when the alert names exactly ONE candidate: an approval must authorize what is displayed
+                    choices=(_owner_poll.supplier_candidate_choices(onboarded[0].get("supplier_id", ""))
+                             if len(onboarded) == 1 else None),
                 )
         except Exception as exc:
             logger.error("[supplier_sourcing] cycle failed: %s", exc)
@@ -7935,6 +7946,8 @@ from routes.support import router as support_router
 app.include_router(support_router, tags=["Support"])
 from routes.admin import router as admin_router
 app.include_router(admin_router, tags=["Admin"])
+from routes.wa_group import router as wa_group_router
+app.include_router(wa_group_router, tags=["Admin"])
 
 if __name__ == "__main__":
     import uvicorn

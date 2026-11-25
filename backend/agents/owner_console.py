@@ -1934,6 +1934,11 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
     msg = _quote_rewrite(message, quoted_text)      # quote-reply -> a command on the quoted post (or context)
     low = msg.lower()
 
+    # Inert button self-test (maintenance/wa_interactive_selftest.py): proves a tap reached the console. No side effects.
+    _m_st = re.match(r"^בדיקת(אישור|דחייה|שינוי)\s+(\S+)\s*$", msg)
+    if _m_st:
+        return f"✅ בדיקת כפתורים: התקבלה הבחירה *{_m_st.group(1)}* ({_m_st.group(2)}). לא בוצעה שום פעולה."
+
     # ── leave the current agent session → back to neutral console ─────────────
     if low in ("יציאה", "צא", "exit", "quit", "סיום", "חזרה", "back"):
         prev = await _get_active_agent()

@@ -295,3 +295,74 @@ proven offline (test `test_RESIDUAL_...` pins `wire_sends == 2` honestly; `owner
 restart to go live (the bridge mounts `./whatsapp-bridge:/app`) - restarting the bridge reconnects the WhatsApp session, so it is a separate owner-approved step. No DB/Redis migration; new Redis fields live inside the existing frozen record.
 
 **Related fixes found while building the representative digest:** (a) the per-alert cooldown in `notify_owner` swallowed a CHANGED report (new fingerprint) inside the cooldown hour - it now lets a changed fingerprint through; (b) repeats suppressed upstream (cooldown / same-event / unchanged) are now counted on the pending event (`Store.note_repeat`, "חזר N פעמים") so duplicate/repeat numbers are real. Evidence: `docs/evidence/2026-11-25-ui-m4/digest_example.txt` (from `tests/test_owner_digest_example.py`).
+
+## 12. Interactive owner decisions + group @mentions (mission 6, 2026-11-25) - NOT DEPLOYED, ALL FLAGS OFF
+
+Flags (all default OFF; unset = behaviour unchanged): `WA_INTERACTIVE_ENABLED` (bridge AND backend), `WA_GROUP_INBOUND_ENABLED` (bridge),
+`WA_GROUP_COMPOSER_ENABLED` (backend). Code is bind-mounted: an unrelated restart loads it, but with the flags unset the only new live
+behaviour is the bridge's inbound parser (button/list responses are forwarded to the webhook, which ignores them while the flag is off).
+
+### 12.1 Compatibility matrix - installed `@whiskeysockets/baileys` **6.17.16** (`whatsapp-bridge/test_interactive.mjs`, 6 proofs)
+| Feature | Installed support | Outgoing | Incoming | Evidence / limitation |
+|---|---|---|---|---|
+| Reply buttons via `sendMessage({buttons})` | **NO - silently degraded to plain text** | n/a | n/a | `generateWAMessageContent` has no buttons/sections/templateButtons path (only `buttonReply`, the *reply* direction); the call returns `extendedTextMessage` with no error. Test 1 asserts it, so a Baileys upgrade that changes it fails loudly. |
+| Reply buttons, hand-built | proto supports it (`Message.InteractiveMessage.NativeFlowMessage`) | `relayMessage` of `viewOnceMessage{interactiveMessage{body,footer,nativeFlowMessage{buttons:[quick_reply{display_text,id}]}}}` + `biz/interactive/native_flow` node (`interactive.js`) | `interactiveResponseMessage.nativeFlowResponseMessage.paramsJson -> {id}` | encode/decode round trip of the exact relayed object: PASS. **Device rendering UNVERIFIED** - WhatsApp may not render nativeFlow for a non-Business linked device. |
+| List (>3 actions) | same, `single_select` nativeFlow button | `sections[].rows[].id` | same shape; also `listResponseMessage.singleSelectReply.selectedRowId` | round trip PASS; rendering UNVERIFIED |
+| Legacy response shapes | parsed | - | `buttonsResponseMessage.selectedButtonId`, `templateButtonReplyMessage.selectedId` | PASS (constructed protos) |
+| Mentions | supported | `sendMessage({text, mentions:[jid]})` -> `extendedTextMessage.contextInfo.mentionedJid` | same field | PASS through `proto.Message.encode/decode`. Bridge re-validates every JID against live `groupMetadata`. |
+| Group metadata / participants | supported | `GET /groups/<jid>/participants` (new, read-only) | - | verified live read-only: updates group `AutoSpareFinder - עדכונים מערכת` has **2** participants (the platform account + the owner), so autocomplete lists the owner only; agents are NOT group participants. |
+| Profile pictures | not implemented | - | - | the composer shows an initial; adding pictures needs a backend image proxy (WhatsApp CDN URLs expire and leak the viewer's IP). |
+
+The plain-text alert (with its typed commands) is ALWAYS sent first; the buttons are an additive second message, so a silent device-side
+degradation loses nothing. **Polls stay the live fallback**: the bridge answers 409 `fallback:poll` when the flag is off and the provider then sends the poll exactly as before.
+
+### 12.2 Architecture (`backend/owner_interactions.py`, `owner_interactions_store.py`, PII migration `0043_owner_interactions` NOT APPLIED)
+`notify_owner(choices=[(label, typed_command)])` -> `whatsapp_provider.send_message` -> `create_from_choices` (**persist first**) -> bridge `interactive`
+payload (button id `asf:<interaction_id>:<action_id>`; the visible Hebrew label is never an identifier; the bridge never sees the commands) -> tap ->
+bridge posts `interactive_response` to the webhook -> `resolve_response`: sender must be the owner (`is_owner`, PN or LID; in a group the sender is
+`key.participant`; membership grants nothing), interaction known, action offered, correlated to the original WhatsApp message id, not expired, **atomic
+conditional-UPDATE consume** (concurrent/double taps execute once) -> the EXACT registered typed command runs through the normal owner console, so each
+agent keeps its own gate (`אשר`, `שלחמייל`, ...): a button is never a second authorization path. `details`/`recheck` are read-only (not consumed).
+`change`/`edit` with no registered command hold the interaction `awaiting_input`; the owner's NEXT text is bound to it (`take_followup`) and re-opens it for
+approval of the revised proposal. Every response and every rejection reason is an `owner_interaction_events` row. Actions: approve אישור, reject דחייה,
+change שינוי, edit עריכה, details פרטים נוספים, recheck בדיקה חוזרת, continue המשך, cancel ביטול - only those backed by a registered command are offered.
+
+### 12.3 Agent coverage (verified by grep, not assumed)
+| Agent / workflow | Owner request today | Buttons |
+|---|---|---|
+| NOA - post approval (`BACKEND_API_ROUTES.py` ~5788, `post_choices`) | typed `אשר/ערוך/דחה <id>` + poll | **YES** approve / edit / reject |
+| Email Agent (`email_agent/owner_flow.py:352`, `email_choices`) | typed `מייל/שלחמייל/סגורמייל <ref>` + poll | **YES** details / approve (send the one draft) / cancel |
+| NOA - engagement drafts (`inbox_choices`) | `inbox_choices` is **defined but has no caller**; the alert is an aggregate "N drafts" | NO |
+| NIR - sourcing candidate (`_supplier_sourcing_loop`, `supplier_candidate_choices`) | `אשרספק/דחהספק <id>`, `ספקים` | **YES, only when the alert names exactly ONE candidate** (approval must authorize what is displayed); several candidates = aggregate list, no buttons |
+| BOAZ - escalation about a supplier mail (`boaz_tasks._alert`, `boaz_task_choices`) | read `מייל <ref>`, list `משימות בועז` | **YES, read-only** (details / recheck). Purchase-order and supplier-payment approval (`אשררכש`, `אשרתשלוםספק`) are deliberately NOT buttons: there is no proactive owner alert for them to attach to, and a commercial commitment needs its own owner decision + terms-hash gate |
+| Marketing / advertising (campaign plan + budget) | budget is confirmed through the **admin API** (`routes/admin.py` budget confirmation), no WhatsApp owner command exists | **NO - no applicable WhatsApp decision point.** A button would need a NEW owner command bound to the exact plan hash and amount; not invented here |
+| Verification workflows (category keywords `אשרמילה`, Facebook session) | daily batch of many words / cookie import by the owner | **NO** - batch alerts have no single record; keyword approval has its own evidence gate (`בכוח`) |
+| AVI | owner console chat + deterministic read-only commands; `סטטוס` already maps to `recheck` | NO new decision point - AVI has no approvals of its own; granting it any would be a new permission |
+| NOA engagement drafts | aggregate "N drafts" alert; `inbox_choices` has no caller | **NO** (no per-draft alert) |
+Existing supplier policies are untouched; a button maps to the same typed command, so `supplier_authorization` one-shot/terms-hash rules still decide.
+
+### 12.4 Group mentions
+Composer: Admin -> social tab (`components/Admin/GroupMentionComposer.jsx`, logic `mentionLogic.js`, 4 vitest). `GET /api/v1/admin/whatsapp/group-members` (live
+metadata, 60 s cache, refresh button; opaque HMAC tokens, **no phone numbers/JIDs to the UI**, own account excluded) and `POST .../group-message`
+(`routes/wa_group.py`): `@{token}` -> `@<digits>` + `mentions=[jid]`, bridge re-validates against the group; unknown/removed participant = 400.
+Group JID = `WA_COMPOSER_GROUP_JID` if set, else the configured updates group (`_updates_group_jid`), never guessed. **Live state 2026-11-25 (read-only): the bridge reports ONE group, `AutoSpareFinder — עדכונים מערכת` (`120363428683447639@g.us`, size 2) but `owner:updates_group_jid` is UNSET (Redis + env), so the composer answers 409 until the owner either sends `קבוצת עדכונים 1` (this also moves routine alerts to that group) or sets `WA_COMPOSER_GROUP_JID` (composer only).** Participant names could not be read live: the running bridge does not yet have the new participants endpoint. Inbound (needs `WA_GROUP_INBOUND_ENABLED=1`): only messages that mention
+THIS account are forwarded; the backend answers only the owner's JID, once per message id, routes `נועה/noa ...` to NOA else AVI via the existing console,
+and **refuses approval/consequential verbs from a group** (a mention is a routing signal, never an approval); the bridge drops our own messages (no loops).
+Keyboard: arrows/Enter/Tab/Escape, combobox/listbox ARIA, 44px rows, RTL.
+
+### 12.5 Notification policy
+Unchanged: routine alerts -> the one 09:30 digest; owner decision requests are immediate - **fixed in this mission**: before it, `notify_owner` digested every non-critical alert including those with `choices`, so a decision would have waited for 09:30. With `WA_INTERACTIVE_ENABLED=1` an alert with `choices` skips the digest and goes to the owner 1:1 (buttons/polls are honoured only there, even when an updates group exists) through `_wa_send_quiet` (quiet hours still queue it to 09:00). Flag off = unchanged. Test: `tests/test_owner_interactive_digest_coexistence.py`; critical set and
+09:00-21:00 quiet hours untouched; no polls reintroduced as the new path; FlareSolverr untouched.
+
+### 12.6 Deploy (separate owner approval) and rollback
+1. `pre_restart.sh` SAFE preflight + guarded restart rules (CLAUDE.md section 2). 2. PII `alembic upgrade 0043_owner_interactions` (additive). 3. Bridge restart
+(reconnects WhatsApp; separate approval). 4. Set `WA_INTERACTIVE_ENABLED=1` ONLY AFTER the owner confirms on a real phone that a test button renders and returns
+the id (the one missing evidence). 5. Optional `WA_GROUP_INBOUND_ENABLED=1`, `WA_GROUP_COMPOSER_ENABLED=1`; frontend rebuild for the composer.
+Rollback: unset the flags (instant: back to text+poll, no restart needed for the backend flag read per call; the bridge reads its flag at start), then
+`alembic downgrade 0042_supplier_lifecycle` (drops only the two new tables).
+
+### 12.7 Real-device verification (the one missing evidence) - `maintenance/wa_interactive_selftest.py`
+Dry run by default (prints the 3 actions אישור/דחייה/שינוי, sends nothing). Sending needs `--send --owner-approved <ref>`, `WA_INTERACTIVE_ENABLED=1`, migration 0043 and the new bridge build. The
+commands are inert (`בדיקתאישור|בדיקתדחייה|בדיקתשינוי <ref>` answer with a fixed acknowledgement, no LLM, no agent action). After the owner taps one button: `--verify <interaction_id>` prints the audit trail
+(created -> response, consumed action, WhatsApp message id). Pass = the right action id is recorded once and a second tap is refused.
+**Known limits:** a follow-up (`change`/`edit` without a registered command) binds the owner's next text to the interaction and hands the revised request to the console agent; there is no generic "resume task" API, so the originating agent continues only through its existing typed commands.

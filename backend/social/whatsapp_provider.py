@@ -113,7 +113,7 @@ async def _post_send(payload: dict, timeout: float) -> dict:
         delay = min(delay * 2, 5.0)
 
 
-async def send_message(to: str, text: str, reply_jid: str = "", client_msg_id: str = "") -> dict:
+async def send_message(to: str, text: str, reply_jid: str = "", client_msg_id: str = "", mentions: "list | None" = None) -> dict:
     """Send WhatsApp message via Baileys bridge. `client_msg_id` makes the send idempotent: the bridge journal returns the
     original result for an id it already accepted instead of sending again (owner digest, 2026-11-25)."""
     # Invariant: never send an empty body. An empty message is a caller error, not a
@@ -132,9 +132,13 @@ async def send_message(to: str, text: str, reply_jid: str = "", client_msg_id: s
         payload["reply_jid"] = _route_reply_jid(reply_jid)
     if client_msg_id:
         payload["client_msg_id"] = client_msg_id
+    if mentions:
+        payload["mentions"] = [str(m) for m in mentions]
     try:
         data = await _post_send(payload, 15.0)
-        if data.get("ok") and _poll and _owner_poll.is_owner_target(to):
+        if data.get("ok") and _poll and _owner_poll.is_owner_target(to) and await _send_interactive(to, text, _poll):
+            pass  # buttons sent in addition to the text (which carries the typed commands); the poll is not repeated
+        elif data.get("ok") and _poll and _owner_poll.is_owner_target(to):
             # Best effort: the text already carries the typed commands, so a poll failure never fails the alert.
             try:
                 await _post_send({"to": _normalize_bridge_phone(to), "poll": _poll}, 15.0)
@@ -146,6 +150,31 @@ async def send_message(to: str, text: str, reply_jid: str = "", client_msg_id: s
                 "deduplicated": bool(data.get("deduplicated"))}
     except Exception as exc:
         return {"ok": False, "error": str(exc), "key": None}
+
+
+async def _send_interactive(to: str, text: str, poll: dict) -> bool:
+    """Owner decision buttons (owner_interactions.py). False = not sent (flag off / bridge refused / error) so the caller
+    falls back to the poll. The plain text already went out first, so a client that cannot render buttons loses nothing."""
+    import owner_interactions as _oi
+    if not _oi.enabled():
+        return False
+    try:
+        from BACKEND_DATABASE_MODELS import pii_session_factory
+        from owner_interactions_store import PgStore
+        store = PgStore(pii_session_factory)
+        ix = await _oi.create_from_choices(store, list(zip(poll["values"], poll["commands"])))
+        if ix is None:
+            return False
+        data = await _post_send({"to": _normalize_bridge_phone(to), "interactive": _oi.bridge_payload(ix, "בחר פעולה:")}, 15.0)
+        if not data.get("ok"):
+            return False
+        mid = (data.get("key") or {}).get("id")
+        if mid:
+            await store.set_wa_message_id(ix.id, mid)
+        return True
+    except Exception as exc:  # never fail the alert because buttons failed
+        print(f"[owner_interactions] send failed, falling back to poll: {exc}", flush=True)
+        return False
 
 
 async def delete_message(key: dict) -> dict:
