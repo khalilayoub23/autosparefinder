@@ -162,7 +162,7 @@ remove **that payload** (`_WA_QUIET_REMOVE_LUA`) or update its attempts only whi
 
 ## 9. Verified inventory of owner-notification call sites (2026-11-24, #152)
 
-Counted with an AST scan (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
+Counted with an AST scan (2026-11-25 update: **73 call sites** - three direct `_wa_send_update` report sends became digest events, see §11; the table below shows the 2026-11-24 count of 76 before that change) (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
 `resolve_owner_alert`, `_notify`, `_notify_res`, `_wa_send_update`, and the injected `notify` callable) over production
 code (tests/devtests/legacy excluded). The earlier "57 sites" and the audit's "69 call lines" were both stale/partial:
 the true number is **76 call sites in 12 files**. `tests/test_owner_alert_quality_2026_11.py::test_notification_source_inventory_is_complete`
@@ -220,3 +220,52 @@ A crash between send and removal cannot double-send (a per-item marker, cleared 
 
 **Delivery semantics unchanged and stated honestly:** "accepted by WhatsApp" (bridge `Sent OK`) is the strongest signal; delivery
 and read receipts are not recorded, no message or log line says otherwise.
+
+
+## 11. ONE consolidated morning digest (mission 3, 2026-11-25) - `backend/owner_digest.py`
+
+**Rule.** Every ROUTINE owner notification is recorded as a durable event and delivered once a day in a single Hebrew message.
+Only `severity="critical"` keeps its immediate path (`_wa_send_update(critical=True)`, quiet-hours bypass, retry queue) - the
+exception list is unchanged: nothing was added or removed. Kill switch: `OWNER_DIGEST_ENABLED=0` restores the previous per-alert
+path; Redis unavailable -> the alert is sent directly (never lost).
+
+**Reconciliation of the counts (VERIFIED by AST scan).** The old "57 sites" (§8) and the audit's "69 lines" were stale. The
+2026-11-24 scan found 76; after this change **73** (the daily-status, problem, job-queue and weekly-harvest report sends became
+digest events). Funnel: all 73 owner-alert call sites reach `notify_owner` (-> digest unless critical) or `_owner_digest_report`
+(-> digest). The only non-digest owner sends left: critical alerts, the supervised-task crash alert (`critical=True`), the
+job-queue FAILED-step alerts (`critical=True`), opt-in admin copies, owner-console replies (conversation), and the customer /
+transactional paths of §2 (not owner notifications). Guarded by `tests/test_owner_digest.py::test_no_routine_direct_update_send_outside_the_digest`
+and `test_owner_notification_changes.py` (allowlists).
+
+**Schedule.** Health-monitor pass (every 5 min) -> `_owner_digest_pass` -> `Store.deliver`: sends only inside 09:00-21:00 IL and
+not before `OWNER_DIGEST_TIME_IL` (default 09:30; the 09:00 status report is generated before it and is a digest event). One
+digest per day; an event arriving after it waits for the next morning. Empty store = no message. A digest id is `D<YYYYMMDD>`
+(`-2` for a second delivery the same day).
+
+**Event lifecycle** (Redis `autospare:digest:*`, AOF-persistent, no schema change): identity = `alert_key`, else a hash of
+category+title with digits removed; `event_keys` aliases (`mail:<ref>`, `thread:<hash>`) join the same event across producers
+(Email Agent + BOAZ). Record outcomes: `recorded` / `merged` (same fingerprint: repeat counter only) / `replaced` (different
+fingerprint: newest version, state "changed" if already delivered) / `suppressed_unchanged` (delivered within 72 h with the same
+fingerprint) / reminder (`state=reminder`, only when `notify_owner` decided it is due) / `resolved` (opened+resolved before
+delivery = one "נפתח ונפתר" line; resolution of a delivered event = one done line; nothing open = dropped). Fingerprint = the
+caller's, else title/body first line with digits and spacing removed (a counter is never a change).
+
+**Delivery and recovery.** `deliver` claims all pending events under a lock into a FROZEN record (id, rendered parts, attempts),
+sends outside the lock (events recorded meanwhile stay pending), and only after every part was accepted writes the per-identity
+"seen" memory and the checkpoint `autospare:digest:last`, exactly once. Failure (bridge down, logged out, timeout, a queued
+result) keeps the frozen digest, `attempts+1`, exponential backoff 5-60 min, retry of the SAME text resuming at the first unsent
+part; a frozen digest that never left and is older than a day is dissolved back into pending so the next one is complete. A crash
+after the last part was accepted does not resend (`sent_parts` persisted); a crash inside the single send->persist window can
+repeat the SAME digest id once (at-least-once, stated). An outage is never reported through the broken channel: the channel state
+(`<queue key>:channel`) is recorded and the first delivered digest carries "WhatsApp היה מנותק מ-…". Events older than
+`DIGEST_EVENT_MAX_AGE_S` (14 d) move to the dead list (visible, replayable, no alert).
+
+**Format.** Header (id, count, coverage-since, verdict "N דורשים את פעולתך" or "אין משהו שדורש אותך"), then sections in order:
+critical · health · suppliers · mail/NIR/BOAZ · import/prices/catalog · orders · NOA/agents · done/resolved · requires action.
+Item = title + first body line (+ typed reply command `▶` and `#ref` for decisions). No traces/SQL/commands (sanitised upstream).
+Over 3,500 chars: compact (shorter lines, then 6/4/2 items per section with "ועוד N") before any split; a split is numbered
+"חלק i/n" with the shared id.
+
+**Inspect / recover (read-only except replay).** `docker exec -w /app autospare_backend python3 /app/maintenance/owner_digest_cli.py status|pending|dead|preview`;
+`replay-dead --yes` re-queues expired events. Metrics: `autospare:digest:stats` (recorded, merged_duplicate, replaced_version,
+suppressed_unchanged, resolved_pending, delivery_failed, digests_delivered). A stuck digest = `status.frozen` with `attempts` and `last_error`.

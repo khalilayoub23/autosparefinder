@@ -13,18 +13,18 @@ export default function Refund() {
     >
 
         {/* Business Info */}
-        <section className="bg-brand-50 border border-brand-200 rounded-xl p-5 text-sm text-gray-700 space-y-1">
+        <section className="bg-brand-50 border border-brand-200 rounded-xl p-5 text-sm text-slate-200 space-y-1">
           <p><strong>עוסק מורשה:</strong> פרטי רישום זמינים על גבי חשבונית מס/קבלה.</p>
           <p><strong>כתובת:</strong> הרצל 55, עכו</p>
             <p><strong>אתר:</strong> <a href="https://www.autosparefinder.co.il" className="text-brand-600 underline" target="_blank" rel="noreferrer">www.autosparefinder.co.il</a></p>
           <p><strong>דוא&quot;ל שירות:</strong> <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></p>
           <p><strong>טלפון:</strong> <PhoneDisplay value="972-53-242-6920" /> · א׳-ה׳ 9:00-18:00</p>
-            <p className="text-xs text-gray-600">החזרים כספיים מחושבים לפי סכום העסקה ששולם בפועל. בעסקאות מקומיות החייבות במע"מ בישראל, ההחזר יכלול מע"מ בשיעור 18% רק אם נגבה בפועל; בעסקאות מול ספק מחו"ל שאינן חייבות במע"מ בישראל, ההחזר לא יכלול מע"מ ישראלי (ייתכנו חיובי מכס/מסי יבוא לפי הדין).</p>
+            <p className="text-xs text-slate-300">החזרים כספיים מחושבים לפי סכום העסקה ששולם בפועל. בעסקאות מקומיות החייבות במע"מ בישראל, ההחזר יכלול מע"מ בשיעור 18% רק אם נגבה בפועל; בעסקאות מול ספק מחו"ל שאינן חייבות במע"מ בישראל, ההחזר לא יכלול מע"מ ישראלי (ייתכנו חיובי מכס/מסי יבוא לפי הדין).</p>
         </section>
 
         {/* TOC */}
-        <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-brand-navy mb-3">תוכן עניינים</h2>
+        <section className="bg-brand-200 rounded-xl p-6 shadow-sm">
+          <h2 className="text-base font-bold text-slate-100 mb-3">תוכן עניינים</h2>
           <ol className="list-decimal list-inside space-y-1 text-sm text-brand-600">
             {['ביטול לפני משלוח','ביטול אחרי משלוח (החזרת מוצר)','סוגי החזרים וסכומים',
               'אופן הגשת בקשה','תהליך טיפול','זמני זיכוי','מוצרים שאינם ניתנים להחזרה',
@@ -35,8 +35,8 @@ export default function Refund() {
         </section>
 
         {/* Quick Summary */}
-        <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-brand-navy mb-4 border-b border-brand-100 pb-2">סיכום מהיר</h2>
+        <section className="bg-brand-200 rounded-xl p-6 shadow-sm">
+          <h2 className="text-base font-bold text-slate-100 mb-4 border-b border-brand-100 pb-2">סיכום מהיר</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               ['ביטול לפני משלוח','החזר מלא 100%','green'],
@@ -44,21 +44,21 @@ export default function Refund() {
               ['שינוי דעה / אחר','החזר 90% ממחיר החלק\n(10% דמי טיפול על החלק בלבד)\nמשלוח חזרה — לקוח משלם','yellow'],
             ].map(([title, desc, color], i) => (
               <div key={i} className={`rounded-xl p-4 text-center border-2 ${
-                color === 'green' ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
+                color === 'green' ? 'bg-green-500/15 border-green-500/30' : 'bg-yellow-500/15 border-yellow-500/30'
               }`}>
-                <p className={`font-bold text-sm mb-1 ${color === 'green' ? 'text-green-800' : 'text-yellow-800'}`}>{title}</p>
-                <p className={`text-xs whitespace-pre-line ${color === 'green' ? 'text-green-700' : 'text-yellow-700'}`}>{desc}</p>
+                <p className={`font-bold text-sm mb-1 ${color === 'green' ? 'text-green-300' : 'text-yellow-300'}`}>{title}</p>
+                <p className={`text-xs whitespace-pre-line ${color === 'green' ? 'text-green-300' : 'text-yellow-300'}`}>{desc}</p>
               </div>
             ))}
           </div>
         </section>
 
         <S id="r1" title="1. ביטול לפני משלוח">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <p>ניתן לבטל הזמנה כל עוד הסטטוס הוא <strong>טרם שולמה, שולמה, או בעיבוד</strong> — כלומר לפני שהספק שלח את המוצר.</p>
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="font-bold text-green-800 mb-2">✅ ביטול לפני משלוח — החזר מלא 100%</p>
-              <ul className="space-y-1 text-green-700 text-xs">
+            <div className="bg-green-500/15 border border-green-500/30 rounded-lg p-4">
+              <p className="font-bold text-green-300 mb-2">✅ ביטול לפני משלוח — החזר מלא 100%</p>
+              <ul className="space-y-1 text-green-300 text-xs">
                 <li>• החזר כספי מלא כולל מע&quot;מ ועלות משלוח</li>
                 <li>• זיכוי אוטומטי דרך Stripe לכרטיס האשראי המקורי</li>
                 <li>• ללא עמלות ביטול</li>
@@ -66,7 +66,7 @@ export default function Refund() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">כיצד לבטל?</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">כיצד לבטל?</h3>
               <ol className="list-decimal list-inside space-y-1 text-sm">
                 <li>כנס ל<Link to="/orders" className="text-brand-600 underline">עמוד ההזמנות</Link></li>
                 <li>לחץ על ההזמנה הרצויה</li>
@@ -74,17 +74,17 @@ export default function Refund() {
                 <li>אשר את הביטול</li>
               </ol>
             </div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-yellow-800 text-xs">
+            <div className="bg-yellow-500/15 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs">
               <strong>⚠️ שים לב:</strong> לאחר שהספק שלח את המוצר (סטטוס &quot;נשלח&quot; / &quot;נמסר&quot;) לא ניתן לבטל — יש להגיש בקשת החזרה.
             </div>
           </div>
         </S>
 
         <S id="r2" title="2. ביטול אחרי משלוח — החזרת מוצר">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <p>בהתאם ל<strong>חוק הגנת הצרכן, התשמ&quot;א-1981</strong>, יש לך זכות להחזיר מוצר תוך <strong>14 יום</strong> מיום קבלתו.</p>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">תנאים להחזרה:</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">תנאים להחזרה:</h3>
               <ul className="space-y-1">
                 <li>✅ תוך 14 יום מיום קבלת המשלוח</li>
                 <li>✅ מוצר לא נפתח / לא נפגם / לא הותקן</li>
@@ -94,7 +94,7 @@ export default function Refund() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">כיצד לפתוח בקשת החזרה?</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">כיצד לפתוח בקשת החזרה?</h3>
               <ol className="list-decimal list-inside space-y-1">
                 <li>כנס ל<Link to="/orders" className="text-brand-600 underline">עמוד ההזמנות</Link></li>
                 <li>בחר את ההזמנה → לחץ &quot;החזרה&quot;</li>
@@ -107,15 +107,15 @@ export default function Refund() {
         </S>
 
         <S id="r3" title="3. סוגי החזרים וסכומים">
-          <div className="space-y-4 text-sm text-gray-700">
+          <div className="space-y-4 text-sm text-slate-200">
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
                   <tr className="bg-brand-50 text-brand-700">
-                    <th className="p-2 border border-gray-200">סיבת החזרה</th>
-                    <th className="p-2 border border-gray-200">% החזר</th>
-                    <th className="p-2 border border-gray-200">משלוח מקורי</th>
-                    <th className="p-2 border border-gray-200">עלות החזרה</th>
+                    <th className="p-2 border border-brand-border">סיבת החזרה</th>
+                    <th className="p-2 border border-brand-border">% החזר</th>
+                    <th className="p-2 border border-brand-border">משלוח מקורי</th>
+                    <th className="p-2 border border-brand-border">עלות החזרה</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -126,49 +126,49 @@ export default function Refund() {
                     ['שינוי דעה (changed_mind)','90%','לא מוחזר','לקוח משלם','yellow'],
                     ['אחר (other)','90%','לא מוחזר','לקוח משלם','yellow'],
                   ].map(([reason, pct, ship, ret, color], i) => (
-                    <tr key={i} className={color === 'green' ? 'bg-green-50' : 'bg-yellow-50'}>
-                      <td className="p-2 border border-gray-200 font-medium">{reason}</td>
-                      <td className={`p-2 border border-gray-200 font-bold ${color === 'green' ? 'text-green-700' : 'text-yellow-700'}`}>{pct}</td>
-                      <td className="p-2 border border-gray-200">{ship}</td>
-                      <td className="p-2 border border-gray-200">{ret}</td>
+                    <tr key={i} className={color === 'green' ? 'bg-green-500/15' : 'bg-yellow-500/15'}>
+                      <td className="p-2 border border-brand-border font-medium">{reason}</td>
+                      <td className={`p-2 border border-brand-border font-bold ${color === 'green' ? 'text-green-300' : 'text-yellow-300'}`}>{pct}</td>
+                      <td className="p-2 border border-brand-border">{ship}</td>
+                      <td className="p-2 border border-brand-border">{ret}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <p className="text-xs text-gray-500">* דמי הטיפול (10%) מחושבים על <strong>מחיר החלק בלבד</strong> — ללא עלות המשלוח המקורי. עלות משלוח ההחזרה (שינוי דעה / אחר) באחריות הלקוח.</p>
+            <p className="text-xs text-slate-400">* דמי הטיפול (10%) מחושבים על <strong>מחיר החלק בלבד</strong> — ללא עלות המשלוח המקורי. עלות משלוח ההחזרה (שינוי דעה / אחר) באחריות הלקוח.</p>
 
-            <div className="bg-gray-100 rounded-lg p-4 font-mono text-xs space-y-2">
-              <p className="font-bold text-gray-700 not-italic mb-2">דוגמת חישוב — שינוי דעה:</p>
+            <div className="bg-brand-100 rounded-lg p-4 font-mono text-xs space-y-2">
+              <p className="font-bold text-slate-200 not-italic mb-2">דוגמת חישוב — שינוי דעה:</p>
               <div className="space-y-1">
                 <p>סכום ששולם:                          ₪676</p>
-                <p className="text-gray-500">  מתוכם — מחיר חלק:              ₪585</p>
-                <p className="text-gray-500">  מתוכם — משלוח מקורי:           ₪91</p>
+                <p className="text-slate-400">  מתוכם — מחיר חלק:              ₪585</p>
+                <p className="text-slate-400">  מתוכם — משלוח מקורי:           ₪91</p>
                 <p>דמי טיפול (10% ממחיר החלק בלבד):   ₪58.50</p>
                 <p>משלוח מקורי:                        ₪91 (לא מוחזר)</p>
                 <p>דמי משלוח החזרה:                    ₪91 (לקוח משלם)</p>
-                <p className="border-t border-gray-300 pt-1 font-bold">זיכוי ללקוח:                        ₪435.50</p>
+                <p className="border-t border-brand-border pt-1 font-bold">זיכוי ללקוח:                        ₪435.50</p>
               </div>
-              <p className="text-gray-400 not-italic text-[10px] mt-1">* דמי הטיפול מחושבים על מחיר החלק בלבד — ללא דמי המשלוח</p>
+              <p className="text-slate-400 not-italic text-[10px] mt-1">* דמי הטיפול מחושבים על מחיר החלק בלבד — ללא דמי המשלוח</p>
             </div>
 
-            <div className="bg-gray-100 rounded-lg p-4 font-mono text-xs space-y-2">
-              <p className="font-bold text-gray-700 not-italic mb-2">דוגמת חישוב — פגם ייצור:</p>
+            <div className="bg-brand-100 rounded-lg p-4 font-mono text-xs space-y-2">
+              <p className="font-bold text-slate-200 not-italic mb-2">דוגמת חישוב — פגם ייצור:</p>
               <div className="space-y-1">
                 <p>סכום ששולם:          ₪676</p>
                 <p>דמי טיפול:           ₪0</p>
                 <p>משלוח מקורי:         מוחזר</p>
-                <p className="border-t border-gray-300 pt-1 font-bold">זיכוי ללקוח:         ₪676 (מלא)</p>
+                <p className="border-t border-brand-border pt-1 font-bold">זיכוי ללקוח:         ₪676 (מלא)</p>
               </div>
             </div>
           </div>
         </S>
 
         <S id="r4" title="4. אופן הגשת בקשה">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">ערוץ מועדף — דרך האתר:</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">ערוץ מועדף — דרך האתר:</h3>
               <ol className="list-decimal list-inside space-y-1">
                 <li>התחבר לחשבון</li>
                 <li>עמוד ההזמנות → בחר הזמנה → לחץ &quot;החזרה&quot;</li>
@@ -177,7 +177,7 @@ export default function Refund() {
               </ol>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">ערוץ חלופי — דוא&quot;ל:</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">ערוץ חלופי — דוא&quot;ל:</h3>
               <p>שלח ל-<a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a> עם:</p>
               <ul className="space-y-1 mt-1">
                 <li>• מספר הזמנה</li>
@@ -190,7 +190,7 @@ export default function Refund() {
         </S>
 
         <S id="r5" title="5. תהליך הטיפול">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div className="space-y-2">
               {[
                 ['⏱️ תוך 24 שעות','אישור קבלת הבקשה + מספר RET'],
@@ -198,14 +198,14 @@ export default function Refund() {
                 ['📦 תוך 3-5 ימים','קבלת הוראות החזרה + תיאום איסוף (אם נדרש)'],
                 ['✅ תוך 7-14 ימי עסקים מאיסוף','העברת הזיכוי חזרה לכרטיס האשראי'],
               ].map(([time, action], i) => (
-                <div key={i} className="flex gap-3 bg-gray-50 rounded-lg p-3 items-start">
+                <div key={i} className="flex gap-3 bg-brand-100 rounded-lg p-3 items-start">
                   <span className="text-brand-600 font-bold text-xs whitespace-nowrap min-w-fit">{time}</span>
-                  <span className="text-xs text-gray-600">{action}</span>
+                  <span className="text-xs text-slate-300">{action}</span>
                 </div>
               ))}
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">סטטוסי הבקשה:</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">סטטוסי הבקשה:</h3>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {[
                   ['pending','ממתין לבדיקה','yellow'],
@@ -214,10 +214,10 @@ export default function Refund() {
                   ['rejected','נדחה (ראה סיבה)','red'],
                 ].map(([status, label, color], i) => (
                   <div key={i} className={`rounded-lg p-2 text-center ${
-                    color==='yellow'?'bg-yellow-50 text-yellow-800':
-                    color==='blue'?'bg-blue-50 text-blue-800':
-                    color==='green'?'bg-green-50 text-green-800':
-                    'bg-red-50 text-red-800'}`}>
+                    color==='yellow'?'bg-yellow-500/15 text-yellow-300':
+                    color==='blue'?'bg-blue-500/15 text-blue-300':
+                    color==='green'?'bg-green-500/15 text-green-300':
+                    'bg-red-500/15 text-red-300'}`}>
                     <p className="font-mono font-bold">{status}</p>
                     <p>{label}</p>
                   </div>
@@ -228,13 +228,13 @@ export default function Refund() {
         </S>
 
         <S id="r6" title="6. זמני זיכוי">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
                   <tr className="bg-brand-50 text-brand-700">
-                    <th className="p-2 border border-gray-200">סוג ביטול/החזרה</th>
-                    <th className="p-2 border border-gray-200">זמן זיכוי</th>
+                    <th className="p-2 border border-brand-border">סוג ביטול/החזרה</th>
+                    <th className="p-2 border border-brand-border">זמן זיכוי</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -243,24 +243,24 @@ export default function Refund() {
                     ['החזרה — פגם/נזק/חלק שגוי','7-14 ימי עסקים ממועד איסוף'],
                     ['החזרה — שינוי דעה','7-14 ימי עסקים ממועד איסוף'],
                   ].map(([type, time], i) => (
-                    <tr key={i} className={i%2===1?'bg-gray-50':''}>
-                      <td className="p-2 border border-gray-200">{type}</td>
-                      <td className="p-2 border border-gray-200 font-medium text-brand-700">{time}</td>
+                    <tr key={i} className={i%2===1?'bg-brand-100':''}>
+                      <td className="p-2 border border-brand-border">{type}</td>
+                      <td className="p-2 border border-brand-border font-medium text-brand-700">{time}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 text-xs">
+            <div className="bg-blue-500/15 border border-blue-500/30 rounded-lg p-3 text-blue-300 text-xs">
               <p className="font-semibold mb-1">💳 כיצד מגיע הזיכוי?</p>
               <p>הזיכוי מועבר אוטומטית דרך <strong>Stripe</strong> לכרטיס האשראי/חיוב המקורי שבו שולמה ההזמנה. לא ניתן להעביר לחשבון בנק שונה או קרדיט אחר.</p>
             </div>
-            <p className="text-xs text-gray-500">⚠️ זמני הזיכוי תלויים גם בחברת כרטיס האשראי ועשויים להשתנות.</p>
+            <p className="text-xs text-slate-400">⚠️ זמני הזיכוי תלויים גם בחברת כרטיס האשראי ועשויים להשתנות.</p>
           </div>
         </S>
 
         <S id="r7" title="7. מוצרים שאינם ניתנים להחזרה">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <ul className="space-y-2">
               <li className="flex gap-2"><span className="text-red-500 font-bold">❌</span><span><strong>מוצרים שהותקנו</strong> — לאחר התקנה ברכב, לא ניתן להחזיר (אלא אם כן מדובר בפגם ייצור)</span></li>
               <li className="flex gap-2"><span className="text-red-500 font-bold">❌</span><span><strong>הזמנה מיוחדת (Special Order)</strong> — חלקים שהוזמנו במיוחד עבורך ואינם מהמלאי הסטנדרטי</span></li>
@@ -268,16 +268,16 @@ export default function Refund() {
               <li className="flex gap-2"><span className="text-red-500 font-bold">❌</span><span><strong>אריזה פגומה</strong> — מוצר שהגיע ללא אריזה מקורית שלמה (אלא אם כן נזק שילוח)</span></li>
               <li className="flex gap-2"><span className="text-red-500 font-bold">❌</span><span><strong>מעל 14 יום</strong> — בקשות שהוגשו אחרי 14 יום מקבלת המשלוח (למעט פגמים)</span></li>
             </ul>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-yellow-800 text-xs">
+            <div className="bg-yellow-500/15 border border-yellow-500/30 rounded-lg p-3 text-yellow-300 text-xs">
               <strong>⚠️ חשוב:</strong> בדוק תמיד שהחלק מתאים לרכב שלך לפני ההתקנה. אחרי ההתקנה לא ניתן לטעון &quot;לא מתאים&quot;.
             </div>
           </div>
         </S>
 
         <S id="r8" title="8. פגמי ייצור ונזק בשילוח">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">פגם ייצור</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">פגם ייצור</h3>
               <ul className="space-y-1">
                 <li>✅ <strong>החזר מלא 100%</strong> — כולל משלוח מקורי</li>
                 <li>✅ אנחנו מסדרים ומממנים את החזרת המוצר</li>
@@ -286,7 +286,7 @@ export default function Refund() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">נזק בשילוח</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">נזק בשילוח</h3>
               <ul className="space-y-1">
                 <li>✅ <strong>החזר מלא 100%</strong> — כולל משלוח מקורי</li>
                 <li>✅ אנחנו מגישים תביעה לחברת השילוח</li>
@@ -296,38 +296,38 @@ export default function Refund() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">חלק שגוי נשלח</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">חלק שגוי נשלח</h3>
               <ul className="space-y-1">
                 <li>✅ <strong>החזר מלא 100%</strong> — כולל משלוח מקורי</li>
                 <li>✅ אנחנו שולחים חלק נכון ללא עלות נוספת</li>
                 <li>✅ אנחנו מסדרים ומממנים את החזרת החלק השגוי</li>
               </ul>
             </div>
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-red-800 text-xs">
+            <div className="bg-red-500/15 border border-red-500/30 rounded-lg p-3 text-red-300 text-xs">
               <strong>⚠️ שים לב:</strong> &quot;לא מתאים לרכב שלי&quot; אינו נחשב פגם ייצור — יש לוודא תאימות לפני הרכישה.
             </div>
           </div>
         </S>
 
         <S id="r9" title="9. יצירת קשר">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="font-semibold text-gray-800 mb-2">פתיחת בקשת החזרה</p>
-                <Link to="/orders" className="inline-block bg-brand-600 hover:bg-brand-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors">
+              <div className="bg-brand-100 rounded-lg p-4">
+                <p className="font-semibold text-slate-200 mb-2">פתיחת בקשת החזרה</p>
+                <Link to="/orders" className="inline-block bg-brand-600 hover:bg-brand-700 text-[#0F1218] text-xs font-bold px-4 py-2 rounded-lg transition-colors">
                   עמוד ההזמנות שלי ←
                 </Link>
               </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="font-semibold text-gray-800 mb-2">שאלות ועזרה</p>
+              <div className="bg-brand-100 rounded-lg p-4">
+                <p className="font-semibold text-slate-200 mb-2">שאלות ועזרה</p>
                 <ul className="space-y-1 text-xs">
                   <li>📧 <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></li>
                   <li>📱 <PhoneDisplay value="972-53-242-6920" /></li>
-                  <li className="text-gray-500">א׳-ה׳ 9:00-18:00</li>
+                  <li className="text-slate-400">א׳-ה׳ 9:00-18:00</li>
                 </ul>
               </div>
             </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 text-xs">
+            <div className="bg-blue-500/15 border border-blue-500/30 rounded-lg p-3 text-blue-300 text-xs">
               <p className="font-semibold mb-1">💬 שירות לקוחות AI 24/7</p>
               <p>ניתן לפתוח בקשת החזרה ולקבל עדכונים גם דרך <Link to="/chat" className="underline font-semibold">צ׳אט ה-AI</Link> בכל שעה.</p>
             </div>
@@ -335,8 +335,8 @@ export default function Refund() {
         </S>
 
         {/* Related links */}
-        <section className="bg-white rounded-xl p-5 shadow-sm">
-          <p className="text-sm text-gray-600 mb-3 font-semibold">מסמכים קשורים:</p>
+        <section className="bg-brand-200 rounded-xl p-5 shadow-sm">
+          <p className="text-sm text-slate-300 mb-3 font-semibold">מסמכים קשורים:</p>
           <div className="flex flex-wrap gap-3 text-sm">
             <Link to="/terms" className="text-brand-600 underline hover:text-brand-700">תקנון שימוש</Link>
             <span className="text-gray-300">|</span>
@@ -344,7 +344,7 @@ export default function Refund() {
           </div>
         </section>
 
-        <p className="text-center text-xs text-gray-400 pb-4">
+        <p className="text-center text-xs text-slate-400 pb-4">
           תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0<br />
           © 2026 Auto Spare. כל הזכויות שמורות.
         </p>
@@ -354,8 +354,8 @@ export default function Refund() {
 
 function S({ id, title, children }) {
   return (
-    <section id={id} className="bg-white rounded-xl p-6 shadow-sm scroll-mt-4">
-      <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">
+    <section id={id} className="bg-brand-200 rounded-xl p-6 shadow-sm scroll-mt-4">
+      <h2 className="text-base font-bold text-slate-100 mb-3 border-b border-brand-100 pb-2">
         {title}
       </h2>
       {children}

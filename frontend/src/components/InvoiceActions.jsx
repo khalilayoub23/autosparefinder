@@ -131,7 +131,7 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
       style={{ position: 'absolute', top: dropPos.top, left: dropPos.left, minWidth: dropPos.width, zIndex: 9999 }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <div className="bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden">
+      <div className="bg-brand-200 rounded-xl shadow-2xl border border-brand-border overflow-hidden">
         <div className="flex items-center gap-2 px-4 py-2.5 bg-brand-50 border-b border-brand-100">
           <FileText className="w-4 h-4 text-brand-600" />
           <span className="text-xs font-semibold text-brand-700 tracking-wide">{isReturn ? 'הודעת זיכוי' : 'חשבונית מס / קבלה'}</span>
@@ -141,7 +141,7 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
             key={a.key}
             onClick={a.onClick}
             disabled={isLoading}
-            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-brand-50 hover:text-brand-700 transition-colors disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-brand-50 hover:text-brand-700 transition-colors disabled:opacity-50"
           >
             {loading === a.key ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : a.icon}
             {a.label}
@@ -175,27 +175,27 @@ export default function InvoiceActions({ orderId, orderNumber, returnId, returnN
           onClick={closePreview}
         >
           <div
-            className="relative bg-white rounded-2xl shadow-2xl flex flex-col"
+            className="relative bg-brand-200 rounded-2xl shadow-2xl flex flex-col"
             style={{ width: 'min(900px, 95vw)', height: 'min(1100px, 90vh)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-brand-border">
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-brand-600" />
-                <span className="font-semibold text-gray-800">חשבונית — {orderNumber}</span>
+                <span className="font-semibold text-slate-200">חשבונית — {orderNumber}</span>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={handlePrint} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
+                <button onClick={handlePrint} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-brand-border hover:bg-brand-100 text-slate-200 transition-colors disabled:opacity-50">
                   {loading === 'print' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} הדפס
                 </button>
-                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand bg-brand-700 hover:bg-brand-800 text-white transition-colors disabled:opacity-50">
+                <button onClick={handleDownload} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand bg-brand-700 hover:bg-brand-800 text-[#0F1218] transition-colors disabled:opacity-50">
                   {loading === 'download' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} הורד
                 </button>
-                <button onClick={handleShare} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-gray-200 hover:bg-gray-50 text-gray-700 transition-colors disabled:opacity-50">
+                <button onClick={handleShare} disabled={isLoading} className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-brand border border-brand-border hover:bg-brand-100 text-slate-200 transition-colors disabled:opacity-50">
                   {loading === 'share' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Share2 className="w-3.5 h-3.5" />}
                   {copied ? 'הועתק!' : 'שתף'}
                 </button>
-                <button onClick={closePreview} className="p-1.5 rounded-brand hover:bg-gray-100 text-gray-500 transition-colors">
+                <button onClick={closePreview} className="p-1.5 rounded-brand hover:bg-brand-100 text-slate-400 transition-colors">
                   <X className="w-5 h-5" />
                 </button>
               </div>

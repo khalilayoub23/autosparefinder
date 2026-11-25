@@ -52,7 +52,7 @@ export default function ResetPassword() {
     <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <AuthBrandHeader
-          title={<span className="text-brand-navy">איפוס סיסמה</span>}
+          title={<span className="text-slate-100">איפוס סיסמה</span>}
           subtitle="התחברות מאובטחת עם שחזור סיסמה מהיר"
         />
 
@@ -64,13 +64,13 @@ export default function ResetPassword() {
                   <KeyRound className="w-5 h-5 text-brand-600" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-brand-navy">שכחת סיסמה?</h2>
-                  <p className="text-sm text-gray-500">נשלח לך קישור לאיפוס</p>
+                  <h2 className="text-xl font-bold text-slate-100">שכחת סיסמה?</h2>
+                  <p className="text-sm text-slate-400">נשלח לך קישור לאיפוס</p>
                 </div>
               </div>
               <form onSubmit={handleRequest} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">כתובת אימייל</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">כתובת אימייל</label>
                   <input
                     type="email"
                     className="input-field"
@@ -96,8 +96,8 @@ export default function ResetPassword() {
           {step === 'sent' && (
             <div className="text-center py-4">
               <Mail className="w-14 h-14 text-brand-600 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-brand-navy mb-2">בדוק את האימייל שלך</h2>
-              <p className="text-gray-500 text-sm mb-6">
+              <h2 className="text-xl font-bold text-slate-100 mb-2">בדוק את האימייל שלך</h2>
+              <p className="text-slate-400 text-sm mb-6">
                 אם הכתובת קיימת במערכת, תקבל קישור לאיפוס הסיסמה תוך מספר דקות.
               </p>
               <button
@@ -116,13 +116,13 @@ export default function ResetPassword() {
                   <KeyRound className="w-5 h-5 text-brand-600" />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-brand-navy">איפוס סיסמה</h2>
-                  <p className="text-sm text-gray-500">הזן את הקוד מהאימייל וסיסמה חדשה</p>
+                  <h2 className="text-xl font-bold text-slate-100">איפוס סיסמה</h2>
+                  <p className="text-sm text-slate-400">הזן את הקוד מהאימייל וסיסמה חדשה</p>
                 </div>
               </div>
               <form onSubmit={handleReset} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">קוד איפוס</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">קוד איפוס</label>
                   <input
                     type="text"
                     className="input-field"
@@ -134,7 +134,7 @@ export default function ResetPassword() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה חדשה</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">סיסמה חדשה</label>
                   <input
                     type="password"
                     className="input-field"
@@ -146,7 +146,7 @@ export default function ResetPassword() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">אישור סיסמה</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">אישור סיסמה</label>
                   <input
                     type="password"
                     className="input-field"
@@ -172,8 +172,8 @@ export default function ResetPassword() {
           {step === 'done' && (
             <div className="text-center py-4">
               <CheckCircle2 className="w-14 h-14 text-green-500 mx-auto mb-4" />
-              <h2 className="text-xl font-bold text-brand-navy mb-2">הסיסמה שונתה בהצלחה!</h2>
-              <p className="text-gray-500 text-sm mb-6">כעת תוכל להתחבר עם הסיסמה החדשה שלך.</p>
+              <h2 className="text-xl font-bold text-slate-100 mb-2">הסיסמה שונתה בהצלחה!</h2>
+              <p className="text-slate-400 text-sm mb-6">כעת תוכל להתחבר עם הסיסמה החדשה שלך.</p>
               <button onClick={() => navigate('/login')} className="btn-primary w-full">
                 לדף ההתחברות
               </button>
@@ -181,7 +181,7 @@ export default function ResetPassword() {
           )}
 
           {step !== 'done' && (
-            <p className="text-center text-sm text-gray-500 mt-6">
+            <p className="text-center text-sm text-slate-400 mt-6">
               נזכרת?{' '}
               <Link to="/login" className="text-brand-600 hover:text-brand-700 font-semibold">
                 חזור להתחברות

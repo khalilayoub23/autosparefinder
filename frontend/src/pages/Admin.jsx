@@ -70,38 +70,38 @@ const normalizeHandoffTeamSettings = (raw = {}) => {
 }
 
 const STATUS_HE = {
-  pending_payment: { label: 'ממתין לתשלום', cls: 'bg-amber-100 text-amber-700' },
-  paid:            { label: 'שולם',          cls: 'bg-green-100 text-green-700' },
-  processing:      { label: 'בטיפול',        cls: 'bg-blue-100 text-blue-700'  },
+  pending_payment: { label: 'ממתין לתשלום', cls: 'bg-amber-500/15 text-amber-300' },
+  paid:            { label: 'שולם',          cls: 'bg-green-500/15 text-green-300' },
+  processing:      { label: 'בטיפול',        cls: 'bg-blue-500/15 text-blue-300'  },
   shipped:         { label: 'נשלח',          cls: 'bg-brand-100 text-brand-700' },
-  delivered:       { label: 'נמסר',          cls: 'bg-gray-100 text-gray-700'  },
-  cancelled:       { label: 'בוטל',          cls: 'bg-red-100 text-red-600'    },
+  delivered:       { label: 'נמסר',          cls: 'bg-brand-100 text-slate-200'  },
+  cancelled:       { label: 'בוטל',          cls: 'bg-red-500/15 text-red-300'    },
 }
 
 const HANDOFF_TIMELINE_STYLE = {
   requested: {
     label: 'נפתחה בקשה',
-    chip: 'bg-rose-100 text-rose-700 border-rose-200',
+    chip: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
     dot: 'bg-rose-500',
   },
   accepted: {
     label: 'טיפול אנושי',
-    chip: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    chip: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
     dot: 'bg-emerald-500',
   },
   released: {
     label: 'שחרור טיפול',
-    chip: 'bg-amber-100 text-amber-700 border-amber-200',
+    chip: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
     dot: 'bg-amber-500',
   },
   feedback_received: {
     label: 'משוב לקוח',
-    chip: 'bg-violet-100 text-violet-700 border-violet-200',
+    chip: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
     dot: 'bg-violet-500',
   },
   default: {
     label: 'אירוע',
-    chip: 'bg-gray-100 text-gray-700 border-gray-200',
+    chip: 'bg-brand-100 text-slate-200 border-brand-border',
     dot: 'bg-gray-500',
   },
 }
@@ -125,7 +125,7 @@ function ChannelLogo({ channel, size = 'sm' }) {
 
   if (channel === 'telegram') {
     return (
-      <span title="Telegram" className={`${baseCls} border-sky-200 bg-sky-100 text-sky-700`}>
+      <span title="Telegram" className={`${baseCls} border-sky-500/30 bg-sky-500/15 text-sky-300`}>
         <FaTelegramPlane className={iconCls} />
       </span>
     )
@@ -133,14 +133,14 @@ function ChannelLogo({ channel, size = 'sm' }) {
 
   if (channel === 'whatsapp') {
     return (
-      <span title="WhatsApp" className={`${baseCls} border-emerald-200 bg-emerald-100 text-emerald-700`}>
+      <span title="WhatsApp" className={`${baseCls} border-emerald-500/30 bg-emerald-500/15 text-emerald-300`}>
         <FaWhatsapp className={iconCls} />
       </span>
     )
   }
 
   return (
-    <span title="Web" className={`${baseCls} border-gray-200 bg-gray-100 text-gray-700`}>
+    <span title="Web" className={`${baseCls} border-brand-border bg-brand-100 text-slate-200`}>
       <Globe className={iconCls} />
     </span>
   )
@@ -149,13 +149,13 @@ function ChannelLogo({ channel, size = 'sm' }) {
 function StatCard({ label, value, icon: Icon, color: _color = 'brand', sub }) {
   return (
     <div className="card p-5 flex items-center gap-4">
-      <div className="w-12 h-12 rounded-xl border border-cyan-300 bg-cyan-50 text-[#1B2228] flex items-center justify-center shrink-0 shadow-[0_0_0_1px_rgba(0,204,255,0.08)]">
+      <div className="w-12 h-12 rounded-xl border border-cyan-500/30 bg-cyan-500/15 text-[#E2E8F0] flex items-center justify-center shrink-0 shadow-[0_0_0_1px_rgba(0,204,255,0.08)]">
         <Icon className="w-5 h-5" />
       </div>
       <div>
-        <p className="text-sm text-slate-500">{label}</p>
-        <p className="text-2xl font-black text-[#1B2228]">{value ?? <span className="skeleton w-16 h-6 inline-block" />}</p>
-        {sub && <p className="text-xs text-slate-500 mt-0.5">{sub}</p>}
+        <p className="text-sm text-slate-400">{label}</p>
+        <p className="text-2xl font-black text-[#E2E8F0]">{value ?? <span className="skeleton w-16 h-6 inline-block" />}</p>
+        {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
       </div>
     </div>
   )
@@ -201,30 +201,30 @@ function SupplierFormFields({ f, setF, isCreate }) {
   return (
     <>
       <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">פרטים בסיסיים</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">פרטים בסיסיים</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">שם ספק <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">שם ספק <span className="text-red-500">*</span></label>
             <input className="input-field w-full" value={f.name} onChange={(e) => setF('name', e.target.value)} placeholder="AutoParts Pro" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">מדינה <span className="text-red-500">*</span></label>
+              <label className="block text-sm font-medium text-slate-200 mb-1">מדינה <span className="text-red-500">*</span></label>
               <input className="input-field w-full" value={f.country} onChange={(e) => setF('country', e.target.value)} placeholder="Israel" dir="ltr" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">עדיפות</label>
+              <label className="block text-sm font-medium text-slate-200 mb-1">עדיפות</label>
               <input type="number" className="input-field w-full" value={f.priority} onChange={(e) => setF('priority', Number(e.target.value))} min={0} max={100} dir="ltr" />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">אמינות (0–10)</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">אמינות (0–10)</label>
             <input type="number" step="0.1" min="0" max="10" className="input-field w-full" value={f.reliability_score} onChange={(e) => setF('reliability_score', Number(e.target.value))} dir="ltr" />
           </div>
           {!isCreate && (
             <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-gray-700">פעיל</label>
-              <button onClick={() => setF('is_active', !f.is_active)} className={`badge cursor-pointer hover:opacity-80 ${f.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+              <label className="text-sm font-medium text-slate-200">פעיל</label>
+              <button onClick={() => setF('is_active', !f.is_active)} className={`badge cursor-pointer hover:opacity-80 ${f.is_active ? 'bg-green-500/15 text-green-300' : 'bg-red-500/15 text-red-300'}`}>
                 {f.is_active ? '✓ פעיל' : '✗ לא פעיל'}
               </button>
             </div>
@@ -232,34 +232,34 @@ function SupplierFormFields({ f, setF, isCreate }) {
         </div>
       </div>
       <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">פרטי קשר</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">פרטי קשר</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">אימייל קשר</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">אימייל קשר</label>
             <input className="input-field w-full" type="email" value={f.contact_email} onChange={(e) => setF('contact_email', e.target.value)} placeholder="supplier@example.com" dir="ltr" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">טלפון קשר</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">טלפון קשר</label>
             <input className="input-field w-full" type="tel" value={f.contact_phone} onChange={(e) => setF('contact_phone', e.target.value)} placeholder="972-5X-XXXXXXX" dir="ltr" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">אתר אינטרנט</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">אתר אינטרנט</label>
             <input className="input-field w-full" type="url" value={f.website} onChange={(e) => setF('website', e.target.value)} placeholder="https://supplier.com" dir="ltr" />
           </div>
         </div>
       </div>
       <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">API</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">API</p>
         <div className="space-y-3">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">כתובת API</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">כתובת API</label>
             <input className="input-field w-full" value={f.api_endpoint} onChange={(e) => setF('api_endpoint', e.target.value)} placeholder="https://api.supplier.com/v1" dir="ltr" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{isCreate ? 'מפתח API' : 'מפתח API חדש (ריק = ללא שינוי)'}</label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">{isCreate ? 'מפתח API' : 'מפתח API חדש (ריק = ללא שינוי)'}</label>
             <div className="relative">
               <input className="input-field w-full pl-10" type={showApiKey ? 'text' : 'password'} value={f.api_key} onChange={(e) => setF('api_key', e.target.value)} placeholder="sk-..." dir="ltr" />
-              <button type="button" onClick={() => setShowApiKey((v) => !v)} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+              <button type="button" onClick={() => setShowApiKey((v) => !v)} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300">
                 {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
@@ -267,21 +267,21 @@ function SupplierFormFields({ f, setF, isCreate }) {
         </div>
       </div>
       <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">משלוח</p>
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">משלוח</p>
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <button onClick={() => setF('supports_express', !f.supports_express)} className={`badge cursor-pointer hover:opacity-80 ${f.supports_express ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+            <button onClick={() => setF('supports_express', !f.supports_express)} className={`badge cursor-pointer hover:opacity-80 ${f.supports_express ? 'bg-blue-500/15 text-blue-300' : 'bg-brand-100 text-slate-400'}`}>
               {f.supports_express ? '⚡ אקספרס — פעיל' : 'אקספרס — לא נתמך'}
             </button>
           </div>
           {f.supports_express && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">מוביל</label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">מוביל</label>
                 <input className="input-field w-full" value={f.express_carrier} onChange={(e) => setF('express_carrier', e.target.value)} placeholder="DHL Express" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">עלות בסיס ($)</label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">עלות בסיס ($)</label>
                 <input type="number" step="0.01" min="0" className="input-field w-full" value={f.express_base_cost_usd} onChange={(e) => setF('express_base_cost_usd', e.target.value)} placeholder="15.00" dir="ltr" />
               </div>
             </div>
@@ -418,13 +418,13 @@ function PdfImportTab() {
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-xl bg-brand-50"><Upload className="w-5 h-5 text-brand-600" /></div>
           <div>
-            <h3 className="font-bold text-brand-navy">ייבוא קטלוג ספק מ-PDF</h3>
-            <p className="text-xs text-gray-400 mt-0.5">העלה קובץ PDF ובחר יצרן לעדכון הקטלוג</p>
+            <h3 className="font-bold text-slate-100">ייבוא קטלוג ספק מ-PDF</h3>
+            <p className="text-xs text-slate-400 mt-0.5">העלה קובץ PDF ובחר יצרן לעדכון הקטלוג</p>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">יצרן <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">יצרן <span className="text-red-500">*</span></label>
             <input
               className="input-field w-full"
               placeholder="לדוגמה: ORA, FEBEST, BOSCH"
@@ -433,19 +433,19 @@ function PdfImportTab() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">קובץ PDF <span className="text-red-500">*</span></label>
+            <label className="block text-sm font-medium text-slate-200 mb-1">קובץ PDF <span className="text-red-500">*</span></label>
             <div
-              className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center cursor-pointer hover:border-brand-400 transition-colors"
+              className="border-2 border-dashed border-brand-border rounded-xl p-6 text-center cursor-pointer hover:border-brand-400 transition-colors"
               onClick={() => fileRef.current?.click()}
             >
               {file ? (
                 <div className="flex items-center justify-center gap-2 text-brand-600">
                   <FileSpreadsheet className="w-5 h-5" />
                   <span className="font-medium text-sm">{file.name}</span>
-                  <span className="text-gray-400 text-xs">({(file.size/1024).toFixed(1)} KB)</span>
+                  <span className="text-slate-400 text-xs">({(file.size/1024).toFixed(1)} KB)</span>
                 </div>
               ) : (
-                <div className="text-gray-400 text-sm">
+                <div className="text-slate-400 text-sm">
                   <Upload className="w-6 h-6 mx-auto mb-2 opacity-50" />
                   לחץ לבחירת קובץ PDF (עד 50 MB)
                 </div>
@@ -453,7 +453,7 @@ function PdfImportTab() {
             </div>
             <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files[0] || null)} />
           </div>
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-yellow-50 border border-yellow-200">
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-yellow-500/15 border border-yellow-500/30">
             <input
               type="checkbox"
               id="apply-toggle"
@@ -461,7 +461,7 @@ function PdfImportTab() {
               onChange={e => setApply(e.target.checked)}
               className="w-4 h-4 accent-brand-600"
             />
-            <label htmlFor="apply-toggle" className="text-sm font-medium text-yellow-800 cursor-pointer">
+            <label htmlFor="apply-toggle" className="text-sm font-medium text-yellow-300 cursor-pointer">
               Apply (שמור לDB) — בטל לסימולציה בלבד
             </label>
           </div>
@@ -479,17 +479,17 @@ function PdfImportTab() {
       {(progress > 0 || result) && (
         <div className="card p-4 space-y-2">
           <div className="flex items-center justify-between text-sm mb-1">
-            <span className="font-medium text-gray-700">{progressLabel || 'מעבד...'}</span>
-            <span className="text-gray-500 font-mono">{Math.round(progress)}%</span>
+            <span className="font-medium text-slate-200">{progressLabel || 'מעבד...'}</span>
+            <span className="text-slate-400 font-mono">{Math.round(progress)}%</span>
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+          <div className="w-full bg-brand-50 rounded-full h-3 overflow-hidden">
             <div
               className={`h-3 rounded-full transition-all duration-700 ${jobDone && progressLabel.includes('❌') ? 'bg-red-500' : progress === 100 ? 'bg-green-500' : 'bg-brand-600'}`}
               style={{ width: `${progress}%` }}
             />
           </div>
           {result && !jobDone && (
-            <p className="text-xs text-gray-400 flex items-center gap-1">
+            <p className="text-xs text-slate-400 flex items-center gap-1">
               <Loader2 className="w-3 h-3 animate-spin" /> מעבד ברקע...
             </p>
           )}
@@ -498,48 +498,48 @@ function PdfImportTab() {
 
       {jobDone && reportData && (
         <div className="card p-4 space-y-3">
-          <h4 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
             {reportData.dry_run ? '🔍 תוצאות Dry-run' : '✅ דוח ייבוא'} — {reportData.manufacturer}
           </h4>
           <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="bg-gray-50 rounded-lg p-2">
-              <p className="text-xs text-gray-500 mb-0.5">שורות PDF</p>
-              <p className="font-bold text-gray-800">{reportData.pdf_valid_keys?.toLocaleString()}</p>
+            <div className="bg-brand-100 rounded-lg p-2">
+              <p className="text-xs text-slate-400 mb-0.5">שורות PDF</p>
+              <p className="font-bold text-slate-200">{reportData.pdf_valid_keys?.toLocaleString()}</p>
             </div>
-            <div className="bg-blue-50 rounded-lg p-2">
-              <p className="text-xs text-blue-600 mb-0.5">מחיר עודכן</p>
-              <p className="font-bold text-blue-700">{reportData.updated_price?.toLocaleString()}</p>
+            <div className="bg-blue-500/15 rounded-lg p-2">
+              <p className="text-xs text-blue-300 mb-0.5">מחיר עודכן</p>
+              <p className="font-bold text-blue-300">{reportData.updated_price?.toLocaleString()}</p>
             </div>
-            <div className="bg-purple-50 rounded-lg p-2">
-              <p className="text-xs text-purple-600 mb-0.5">שם עודכן</p>
-              <p className="font-bold text-purple-700">{reportData.updated_name?.toLocaleString()}</p>
+            <div className="bg-purple-500/15 rounded-lg p-2">
+              <p className="text-xs text-purple-300 mb-0.5">שם עודכן</p>
+              <p className="font-bold text-purple-300">{reportData.updated_name?.toLocaleString()}</p>
             </div>
-            <div className="bg-green-50 rounded-lg p-2">
-              <p className="text-xs text-green-600 mb-0.5">נוספו חדשים</p>
-              <p className="font-bold text-green-700">{reportData.inserted?.toLocaleString()}</p>
+            <div className="bg-green-500/15 rounded-lg p-2">
+              <p className="text-xs text-green-300 mb-0.5">נוספו חדשים</p>
+              <p className="font-bold text-green-300">{reportData.inserted?.toLocaleString()}</p>
             </div>
-            <div className="bg-yellow-50 rounded-lg p-2">
-              <p className="text-xs text-yellow-600 mb-0.5">הופעל מחדש</p>
-              <p className="font-bold text-yellow-700">{reportData.reactivated?.toLocaleString()}</p>
+            <div className="bg-yellow-500/15 rounded-lg p-2">
+              <p className="text-xs text-yellow-300 mb-0.5">הופעל מחדש</p>
+              <p className="font-bold text-yellow-300">{reportData.reactivated?.toLocaleString()}</p>
             </div>
-            <div className="bg-red-50 rounded-lg p-2">
-              <p className="text-xs text-red-600 mb-0.5">הושבת (לא זמין)</p>
-              <p className="font-bold text-red-700">{reportData.deactivated_unavailable?.toLocaleString()}</p>
+            <div className="bg-red-500/15 rounded-lg p-2">
+              <p className="text-xs text-red-300 mb-0.5">הושבת (לא זמין)</p>
+              <p className="font-bold text-red-300">{reportData.deactivated_unavailable?.toLocaleString()}</p>
             </div>
           </div>
           {reportData.category_counts && Object.keys(reportData.category_counts).length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-gray-600 mb-1">קטגוריות (חדשים)</p>
+              <p className="text-xs font-semibold text-slate-300 mb-1">קטגוריות (חדשים)</p>
               <div className="flex flex-wrap gap-1">
                 {Object.entries(reportData.category_counts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([cat,cnt]) => (
-                  <span key={cat} className="text-xs bg-gray-100 text-gray-700 rounded px-2 py-0.5">{cat} ({cnt})</span>
+                  <span key={cat} className="text-xs bg-brand-100 text-slate-200 rounded px-2 py-0.5">{cat} ({cnt})</span>
                 ))}
               </div>
             </div>
           )}
-          <div className="flex items-center justify-between text-xs text-gray-500 border-t pt-2">
+          <div className="flex items-center justify-between text-xs text-slate-400 border-t pt-2">
             <span>DB פעיל: <strong>{reportData.db_active_after?.toLocaleString()}</strong></span>
-            <span>Meili: <strong className={reportData.meili_synced ? 'text-green-600' : 'text-gray-400'}>{reportData.meili_synced ? 'מסונכרן ✓' : 'לא—'}</strong></span>
+            <span>Meili: <strong className={reportData.meili_synced ? 'text-green-300' : 'text-slate-400'}>{reportData.meili_synced ? 'מסונכרן ✓' : 'לא—'}</strong></span>
             <span>{reportData.elapsed_s}s</span>
           </div>
         </div>
@@ -547,10 +547,10 @@ function PdfImportTab() {
 
       {log && (
         <div className="card p-4">
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">פלט</h4>
-          <pre className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap">{log}</pre>
+          <h4 className="text-sm font-semibold text-slate-200 mb-2">פלט</h4>
+          <pre className="text-xs text-slate-300 bg-brand-100 border border-brand-border rounded-lg p-3 whitespace-pre-wrap">{log}</pre>
           {result && (
-            <p className="text-xs text-gray-400 mt-2">בדוק לוגים: <code>docker logs autospare_backend --tail 100 | grep {result.job_id?.slice(0,8)}</code></p>
+            <p className="text-xs text-slate-400 mt-2">בדוק לוגים: <code>docker logs autospare_backend --tail 100 | grep {result.job_id?.slice(0,8)}</code></p>
           )}
         </div>
       )}
@@ -1098,8 +1098,8 @@ export default function Admin() {
             const item = newItems[0]
             toast((t) => (
               <div className="text-sm">
-                <p className="font-semibold text-brand-navy">בקשת נציג חדשה</p>
-                <p className="text-gray-600">{item.display_name || item.display_contact || 'לקוח'} • {item.channel}</p>
+                <p className="font-semibold text-slate-100">בקשת נציג חדשה</p>
+                <p className="text-slate-300">{item.display_name || item.display_contact || 'לקוח'} • {item.channel}</p>
               </div>
             ), { duration: 4500, id: `handoff-${newItems[0].conversation_id}` })
           } else {
@@ -1616,11 +1616,11 @@ export default function Admin() {
     <div className="space-y-6">
       <div>
         <h1 className="section-title">לוח ניהול</h1>
-        <p className="text-gray-500 mt-1">Auto Spare</p>
+        <p className="text-slate-400 mt-1">Auto Spare</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto overflow-y-hidden lg:overflow-x-visible">
+      <div className="flex gap-1 border-b border-brand-border overflow-x-auto overflow-y-hidden lg:overflow-x-visible">
         {TABS.map(({ id, label, icon: Icon, badge }) => (
           (() => {
             const badgeCount = id === 'chats'
@@ -1633,7 +1633,7 @@ export default function Admin() {
             key={id}
             onClick={() => setTab(id)}
             className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors
-              ${tab === id ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              ${tab === id ? 'border-brand-600 text-brand-600' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
           >
             <Icon className="w-4 h-4" /> {label}
             {badge && badgeCount > 0 && (
@@ -1688,38 +1688,38 @@ export default function Admin() {
           {stats && (
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
               <div className="card p-4">
-                <p className="text-xs text-gray-500 mb-1">הכנסות ברוטו</p>
-                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.gross_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-slate-400 mb-1">הכנסות ברוטו</p>
+                <p className="text-xl font-black text-[#E2E8F0]">₪{Number(stats.gross_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
               <div className="card p-4">
-                <p className="text-xs text-gray-500 mb-1">החזרות כספיות</p>
-                <p className="text-xl font-black text-[#1B2228]">{stats.refunds_total > 0 ? `-₪${Number(stats.refunds_total).toLocaleString('he-IL', {minimumFractionDigits: 2})}` : '₪0'}</p>
+                <p className="text-xs text-slate-400 mb-1">החזרות כספיות</p>
+                <p className="text-xl font-black text-[#E2E8F0]">{stats.refunds_total > 0 ? `-₪${Number(stats.refunds_total).toLocaleString('he-IL', {minimumFractionDigits: 2})}` : '₪0'}</p>
               </div>
               <div className="card p-4">
-                <p className="text-xs text-gray-500 mb-1">הכנסות נטו (כולל מע״מ)</p>
-                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-slate-400 mb-1">הכנסות נטו (כולל מע״מ)</p>
+                <p className="text-xl font-black text-[#E2E8F0]">₪{Number(stats.total_revenue || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
               </div>
               <div className="card p-4">
-                <p className="text-xs text-gray-500 mb-1">מע״מ 18%</p>
-                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
-                <p className="text-xs text-gray-400 mt-1">הכנסות נטו − ₪{Number(stats.net_revenue_ex_vat || 0).toLocaleString('he-IL', {minimumFractionDigits: 0})}</p>
+                <p className="text-xs text-slate-400 mb-1">מע״מ 18%</p>
+                <p className="text-xl font-black text-[#E2E8F0]">₪{Number(stats.vat_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-slate-400 mt-1">הכנסות נטו − ₪{Number(stats.net_revenue_ex_vat || 0).toLocaleString('he-IL', {minimumFractionDigits: 0})}</p>
               </div>
               <div className="card p-4">
-                <p className="text-xs text-gray-500 mb-1">רווח גולמי</p>
-                <p className="text-xl font-black text-[#1B2228]">₪{Number(stats.profit_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
-                <p className="text-xs text-gray-400 mt-1">הכנסות לפני מע״מ פחות עלות ספק</p>
+                <p className="text-xs text-slate-400 mb-1">רווח גולמי</p>
+                <p className="text-xl font-black text-[#E2E8F0]">₪{Number(stats.profit_total || 0).toLocaleString('he-IL', {minimumFractionDigits: 2})}</p>
+                <p className="text-xs text-slate-400 mt-1">הכנסות לפני מע״מ פחות עלות ספק</p>
               </div>
             </div>
           )}
           <div className="card p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-brand-navy flex items-center gap-2"><BarChart2 className="w-5 h-5 text-brand-600" /> הכנסות יומיות</h3>
+              <h3 className="font-bold text-slate-100 flex items-center gap-2"><BarChart2 className="w-5 h-5 text-brand-600" /> הכנסות יומיות</h3>
               <button onClick={loadDashboard} className="btn-ghost text-sm flex items-center gap-1">
                 <RefreshCw className="w-4 h-4" /> רענן
               </button>
             </div>
             {salesData.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-6">אין נתוני מכירות עדיין</p>
+              <p className="text-sm text-slate-400 text-center py-6">אין נתוני מכירות עדיין</p>
             ) : (() => {
               const maxRev = Math.max(...salesData.map((d) => d.revenue || 0), 1)
               const totalOrders = salesData.reduce((a, d) => a + (d.orders || 0), 0)
@@ -1751,15 +1751,15 @@ export default function Admin() {
                     })}
                   </div>
                   {/* x-axis labels */}
-                  <div className="flex justify-between mt-1 text-[10px] text-gray-400">
+                  <div className="flex justify-between mt-1 text-[10px] text-slate-400">
                     <span>{salesData[0]?.date?.slice(5)}</span>
                     <span>{salesData[salesData.length - 1]?.date?.slice(5)}</span>
                   </div>
                   {/* summary */}
-                  <div className="mt-3 flex gap-6 text-xs text-gray-500">
-                    <span>סה״כ הזמנות: <strong className="text-gray-700">{totalOrders}</strong></span>
-                    <span>סה״כ הכנסות: <strong className="text-gray-700">₪{totalRev.toLocaleString('he-IL', {minimumFractionDigits: 2})}</strong></span>
-                    <span>ממוצע יומי: <strong className="text-gray-700">₪{(totalRev / salesData.length).toLocaleString('he-IL', {minimumFractionDigits: 0})}</strong></span>
+                  <div className="mt-3 flex gap-6 text-xs text-slate-400">
+                    <span>סה״כ הזמנות: <strong className="text-slate-200">{totalOrders}</strong></span>
+                    <span>סה״כ הכנסות: <strong className="text-slate-200">₪{totalRev.toLocaleString('he-IL', {minimumFractionDigits: 2})}</strong></span>
+                    <span>ממוצע יומי: <strong className="text-slate-200">₪{(totalRev / salesData.length).toLocaleString('he-IL', {minimumFractionDigits: 0})}</strong></span>
                   </div>
                 </div>
               )
@@ -1782,7 +1782,7 @@ export default function Admin() {
             const total = entries.reduce((s, [, c]) => s + c, 0)
             return (
               <div className="card p-6">
-                <h3 className="font-bold text-brand-navy flex items-center gap-2 mb-4">
+                <h3 className="font-bold text-slate-100 flex items-center gap-2 mb-4">
                   <ShoppingBag className="w-5 h-5 text-brand-600" /> סטטוס הזמנות
                 </h3>
                 {/* Stacked bar */}
@@ -1791,7 +1791,7 @@ export default function Admin() {
                     <div
                       key={status}
                       title={`${STATUS_LABELS[status]?.label || status}: ${count}`}
-                      className={`${STATUS_LABELS[status]?.color || 'bg-gray-200'} transition-all`}
+                      className={`${STATUS_LABELS[status]?.color || 'bg-brand-50'} transition-all`}
                       style={{ width: `${(count / total) * 100}%` }}
                     />
                   ))}
@@ -1800,8 +1800,8 @@ export default function Admin() {
                   {entries.map(([status, count]) => (
                     <div key={status} className="flex items-center gap-2">
                       <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_LABELS[status]?.color || 'bg-gray-300'}`} />
-                      <span className="text-xs text-gray-600 truncate">{STATUS_LABELS[status]?.label || status}</span>
-                      <span className="text-xs font-black text-[#1B2228] mr-auto">{count}</span>
+                      <span className="text-xs text-slate-300 truncate">{STATUS_LABELS[status]?.label || status}</span>
+                      <span className="text-xs font-black text-[#E2E8F0] mr-auto">{count}</span>
                     </div>
                   ))}
                 </div>
@@ -1812,7 +1812,7 @@ export default function Admin() {
           {/* Category distribution */}
           {categoryStats.length > 0 && (
             <div className="card p-6">
-              <h3 className="font-bold text-brand-navy flex items-center gap-2 mb-4">
+              <h3 className="font-bold text-slate-100 flex items-center gap-2 mb-4">
                 <Package className="w-5 h-5 text-brand-600" /> התפלגות קטגוריות ({categoryStats.length})
               </h3>
               <div className="space-y-2">
@@ -1820,19 +1820,19 @@ export default function Admin() {
                   const maxCount = Math.max(...categoryStats.map(([, c]) => c), 1)
                   return categoryStats.map(([cat, count]) => (
                     <div key={cat} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-600 w-36 shrink-0 truncate text-right">{cat}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                      <span className="text-xs text-slate-300 w-36 shrink-0 truncate text-right">{cat}</span>
+                      <div className="flex-1 bg-brand-100 rounded-full h-2.5 overflow-hidden">
                         <div
                           className="h-full bg-brand-400 rounded-full transition-all"
                           style={{ width: `${(count / maxCount) * 100}%` }}
                         />
                       </div>
-                      <span className="text-xs text-gray-500 w-16 shrink-0 text-left font-mono">{count.toLocaleString()}</span>
+                      <span className="text-xs text-slate-400 w-16 shrink-0 text-left font-mono">{count.toLocaleString()}</span>
                     </div>
                   ))
                 })()}
               </div>
-              <p className="text-xs text-gray-400 mt-3">
+              <p className="text-xs text-slate-400 mt-3">
                 סה״כ: {categoryStats.reduce((s, [, c]) => s + c, 0).toLocaleString()} חלקים פעילים
               </p>
             </div>
@@ -1863,13 +1863,13 @@ export default function Admin() {
         const anyFilter = Object.values(uf).some(Boolean)
         return (
         <div className="card overflow-hidden">
-          <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-            <h3 className="font-bold text-brand-navy">
+          <div className="p-4 border-b border-brand-border flex items-center justify-between">
+            <h3 className="font-bold text-slate-100">
               משתמשים{anyFilter ? ` (${filteredUsers.length}/${users.length})` : ` (${users.length})`}
             </h3>
             <div className="flex items-center gap-2">
               {anyFilter && (
-                <button onClick={() => setUserFilters({ name: '', email: '', verified: '', role: '', status: '', date: '' })} className="text-xs text-gray-400 hover:text-red-500 transition-colors flex items-center gap-1">
+                <button onClick={() => setUserFilters({ name: '', email: '', verified: '', role: '', status: '', date: '' })} className="text-xs text-slate-400 hover:text-red-500 transition-colors flex items-center gap-1">
                   <X className="w-3 h-3" /> נקה סינון
                 </button>
               )}
@@ -1882,90 +1882,90 @@ export default function Admin() {
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
             <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50">
+                <thead className="bg-brand-100">
                   <tr>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">שם</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">אימייל</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">מאומת</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">תפקיד</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">סטטוס</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">תאריך הצטרפות</th>
-                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500">פעולות</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">שם</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">אימייל</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">מאומת</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">תפקיד</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">סטטוס</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">תאריך הצטרפות</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-slate-400">פעולות</th>
                   </tr>
                   {/* Filter row */}
-                  <tr className="border-t border-gray-100">
+                  <tr className="border-t border-brand-border">
                     <th className="px-2 py-2">
-                      <input className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-400" placeholder="חיפוש שם..." value={uf.name} onChange={(e) => setUF('name', e.target.value)} />
+                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:border-brand-400" placeholder="חיפוש שם..." value={uf.name} onChange={(e) => setUF('name', e.target.value)} />
                     </th>
                     <th className="px-2 py-2">
-                      <input className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-400" placeholder="חיפוש אימייל..." value={uf.email} onChange={(e) => setUF('email', e.target.value)} dir="ltr" />
+                      <input className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:border-brand-400" placeholder="חיפוש אימייל..." value={uf.email} onChange={(e) => setUF('email', e.target.value)} dir="ltr" />
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none" value={uf.verified} onChange={(e) => setUF('verified', e.target.value)}>
+                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.verified} onChange={(e) => setUF('verified', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="yes">מאומת</option>
                         <option value="no">לא מאומת</option>
                       </select>
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none" value={uf.role} onChange={(e) => setUF('role', e.target.value)}>
+                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.role} onChange={(e) => setUF('role', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="admin">אדמין</option>
                         <option value="customer">משתמש</option>
                       </select>
                     </th>
                     <th className="px-2 py-2">
-                      <select className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none" value={uf.status} onChange={(e) => setUF('status', e.target.value)}>
+                      <select className="w-full text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none" value={uf.status} onChange={(e) => setUF('status', e.target.value)}>
                         <option value="">הכל</option>
                         <option value="active">פעיל</option>
                         <option value="blocked">חסום</option>
                       </select>
                     </th>
                     <th className="px-2 py-2">
-                      <input type="datetime-local" className="w-full text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white focus:outline-none focus:border-brand-400" title="תאריך ושעה" value={uf.date} onChange={(e) => setUF('date', e.target.value)} />
+                      <input type="datetime-local" className="w-full text-xs border border-brand-border rounded-lg px-1.5 py-1 bg-brand-200 focus:outline-none focus:border-brand-400" title="תאריך ושעה" value={uf.date} onChange={(e) => setUF('date', e.target.value)} />
                     </th>
                     <th className="px-2 py-2" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-brand-border">
                   {filteredUsers.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center text-gray-400 py-8 text-sm">לא נמצאו משתמשים</td></tr>
+                    <tr><td colSpan={7} className="text-center text-slate-400 py-8 text-sm">לא נמצאו משתמשים</td></tr>
                   ) : filteredUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-brand-navy">{u.full_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600" dir="ltr">{u.email}</td>
+                    <tr key={u.id} className="hover:bg-brand-100">
+                      <td className="px-4 py-3 font-medium text-slate-100">{u.full_name || '—'}</td>
+                      <td className="px-4 py-3 text-slate-300" dir="ltr">{u.email}</td>
                       <td className="px-4 py-3">
-                        <span className={`badge ${u.is_verified ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{u.is_verified ? '✓' : '–'}</span>
+                        <span className={`badge ${u.is_verified ? 'bg-green-500/15 text-green-300' : 'bg-brand-100 text-slate-400'}`}>{u.is_verified ? '✓' : '–'}</span>
                       </td>
                       <td className="px-4 py-3">
                         <button
                           onClick={() => toggleAdminRole(u)}
                           title={u.is_admin ? 'הסר הרשאת אדמין' : 'הפוך לאדמין'}
-                          className={`badge cursor-pointer hover:opacity-80 transition-opacity ${u.is_admin ? 'bg-brand-100 text-brand-700' : 'bg-gray-100 text-gray-600'}`}
+                          className={`badge cursor-pointer hover:opacity-80 transition-opacity ${u.is_admin ? 'bg-brand-100 text-brand-700' : 'bg-brand-100 text-slate-300'}`}
                         >
                           {u.is_admin ? '👑 אדמין' : 'משתמש'}
                         </button>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`badge ${u.is_active !== false ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                        <span className={`badge ${u.is_active !== false ? 'bg-green-500/15 text-green-300' : 'bg-red-500/15 text-red-300'}`}>
                           {u.is_active !== false ? 'פעיל' : 'חסום'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
                         {u.created_at ? (
                           <>
                             <div>{new Date(u.created_at).toLocaleDateString('he-IL')}</div>
-                            <div className="text-gray-400">{new Date(u.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</div>
+                            <div className="text-slate-400">{new Date(u.created_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</div>
                           </>
                         ) : '—'}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => openEditUser(u)} title="עדכן פרטים" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={() => toggleUser(u.id, u.is_active !== false)} title={u.is_active !== false ? 'חסום משתמש' : 'בטל חסימה'} className={`p-1.5 rounded transition-colors ${u.is_active !== false ? 'hover:bg-brand-50 text-brand-400 hover:text-brand-600' : 'hover:bg-green-50 text-green-500 hover:text-green-700'}`}>
+                          <button onClick={() => openEditUser(u)} title="עדכן פרטים" className="p-1.5 rounded hover:bg-blue-500/15 text-blue-500 hover:text-blue-300 transition-colors"><Pencil className="w-4 h-4" /></button>
+                          <button onClick={() => toggleUser(u.id, u.is_active !== false)} title={u.is_active !== false ? 'חסום משתמש' : 'בטל חסימה'} className={`p-1.5 rounded transition-colors ${u.is_active !== false ? 'hover:bg-brand-50 text-brand-400 hover:text-brand-600' : 'hover:bg-green-500/15 text-green-500 hover:text-green-300'}`}>
                             {u.is_active !== false ? <Ban className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4" />}
                           </button>
-                          <button onClick={() => deleteUser(u.id, u.full_name || u.email)} title="מחק משתמש" className="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => deleteUser(u.id, u.full_name || u.email)} title="מחק משתמש" className="p-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 transition-colors"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </tr>
@@ -1996,7 +1996,7 @@ export default function Admin() {
           <div className="space-y-4">
             <div className="card p-4 flex flex-col lg:flex-row lg:items-end gap-3">
               <div className="w-full lg:w-72">
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">טבלה</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טבלה</label>
                 <select
                   className="input-field w-full"
                   value={dbViewDataset}
@@ -2019,7 +2019,7 @@ export default function Admin() {
                 </select>
               </div>
               <div className="w-full lg:flex-1">
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">חיפוש</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">חיפוש</label>
                 <input
                   className="input-field w-full"
                   value={dbViewSearch}
@@ -2034,7 +2034,7 @@ export default function Admin() {
                 />
               </div>
               <div className="w-full lg:w-36">
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">תוצאות לעמוד</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תוצאות לעמוד</label>
                 <select
                   className="input-field w-full"
                   value={dbViewLimit}
@@ -2073,25 +2073,25 @@ export default function Admin() {
                 <>
                   <div className="overflow-x-auto overflow-y-hidden">
                     <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
+                      <thead className="bg-brand-100">
                         <tr>
                           {dbViewColumns.map((col) => (
-                            <th key={col.key} className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">{col.label || col.key}</th>
+                            <th key={col.key} className="px-3 py-3 text-right text-xs font-medium text-slate-400 whitespace-nowrap">{col.label || col.key}</th>
                           ))}
-                          <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">JSON</th>
+                          <th className="px-3 py-3 text-right text-xs font-medium text-slate-400 whitespace-nowrap">JSON</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-gray-100">
+                      <tbody className="divide-y divide-brand-border">
                         {dbViewRows.length === 0 ? (
                           <tr>
-                            <td colSpan={Math.max(1, dbViewColumns.length + 1)} className="text-center text-gray-400 py-8 text-sm">אין נתונים להצגה</td>
+                            <td colSpan={Math.max(1, dbViewColumns.length + 1)} className="text-center text-slate-400 py-8 text-sm">אין נתונים להצגה</td>
                           </tr>
                         ) : dbViewRows.map((row, idx) => (
-                          <tr key={row.id || `${dbViewDataset}-${dbViewOffset + idx}`} className="hover:bg-gray-50">
+                          <tr key={row.id || `${dbViewDataset}-${dbViewOffset + idx}`} className="hover:bg-brand-100">
                             {dbViewColumns.map((col) => {
                               const val = formatDbCellValue(row[col.key])
                               return (
-                                <td key={`${row.id || idx}-${col.key}`} className="px-3 py-3 text-xs text-gray-700 max-w-[260px] truncate" title={val}>
+                                <td key={`${row.id || idx}-${col.key}`} className="px-3 py-3 text-xs text-slate-200 max-w-[260px] truncate" title={val}>
                                   {val}
                                 </td>
                               )
@@ -2112,8 +2112,8 @@ export default function Admin() {
                     </table>
                   </div>
 
-                  <div className="px-4 py-3 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <p className="text-gray-500">סה״כ {dbViewTotal.toLocaleString('he-IL')} רשומות • עמוד {currentPage} מתוך {totalPages}</p>
+                  <div className="px-4 py-3 border-t border-brand-border flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <p className="text-slate-400">סה״כ {dbViewTotal.toLocaleString('he-IL')} רשומות • עמוד {currentPage} מתוך {totalPages}</p>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
@@ -2199,24 +2199,24 @@ export default function Admin() {
             >
               נקה
             </button>
-            <span className="text-xs text-gray-400 mr-auto">תוצאות: {chatTotal}</span>
+            <span className="text-xs text-slate-400 mr-auto">תוצאות: {chatTotal}</span>
           </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="card p-4 border border-amber-200 bg-amber-50/50">
-              <h4 className="font-bold text-amber-900 text-sm">תור נציג אנושי</h4>
-              <p className="text-2xl font-bold text-amber-700 mt-1">{handoffSummary.pending_count || 0}</p>
-              <p className="text-xs text-amber-700 mt-1">בקשות פתוחות כרגע</p>
+            <div className="card p-4 border border-amber-500/30 bg-amber-500/15/50">
+              <h4 className="font-bold text-amber-300 text-sm">תור נציג אנושי</h4>
+              <p className="text-2xl font-bold text-amber-300 mt-1">{handoffSummary.pending_count || 0}</p>
+              <p className="text-xs text-amber-300 mt-1">בקשות פתוחות כרגע</p>
             </div>
-            <div className="card p-4 border border-red-200 bg-red-50/40">
-              <h4 className="font-bold text-red-900 text-sm">בקשות דחופות</h4>
-              <p className="text-2xl font-bold text-red-700 mt-1">{handoffSummary.urgent_count || 0}</p>
-              <p className="text-xs text-red-700 mt-1">קדימות גבוהה</p>
+            <div className="card p-4 border border-red-500/30 bg-red-500/15/40">
+              <h4 className="font-bold text-red-300 text-sm">בקשות דחופות</h4>
+              <p className="text-2xl font-bold text-red-300 mt-1">{handoffSummary.urgent_count || 0}</p>
+              <p className="text-xs text-red-300 mt-1">קדימות גבוהה</p>
             </div>
-            <div className="card p-4 border border-sky-200 bg-sky-50/40">
-              <h4 className="font-bold text-sky-900 text-sm">זמן המתנה ממוצע</h4>
-              <p className="text-2xl font-bold text-sky-700 mt-1">{Math.round((handoffSummary.avg_wait_seconds || 0) / 60)} דק׳</p>
-              <p className="text-xs text-sky-700 mt-1">יעד SLA: {Math.round((handoffSummary.sla_target_seconds || 300) / 60)} דק׳</p>
+            <div className="card p-4 border border-sky-500/30 bg-sky-500/15/40">
+              <h4 className="font-bold text-sky-300 text-sm">זמן המתנה ממוצע</h4>
+              <p className="text-2xl font-bold text-sky-300 mt-1">{Math.round((handoffSummary.avg_wait_seconds || 0) / 60)} דק׳</p>
+              <p className="text-xs text-sky-300 mt-1">יעד SLA: {Math.round((handoffSummary.sla_target_seconds || 300) / 60)} דק׳</p>
             </div>
           </div>
 
@@ -2224,13 +2224,13 @@ export default function Admin() {
             <div className="relative mb-3">
                 <button
                   onClick={openRepresentativeCreateModal}
-                  className="mb-2 inline-flex items-center gap-2 rounded-brand border border-cyan-300 bg-gradient-to-r from-cyan-500 to-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-[0_10px_24px_rgba(8,145,178,0.28)] transition hover:from-cyan-600 hover:to-brand-700 hover:shadow-[0_14px_30px_rgba(8,145,178,0.34)] md:absolute md:right-0 md:top-0 md:mb-0"
+                  className="mb-2 inline-flex items-center gap-2 rounded-brand border border-cyan-500/30 bg-gradient-to-r from-cyan-500 to-brand-600 px-3.5 py-2 text-xs font-bold text-white shadow-[0_10px_24px_rgba(8,145,178,0.28)] transition hover:from-cyan-600 hover:to-brand-700 hover:shadow-[0_14px_30px_rgba(8,145,178,0.34)] md:absolute md:right-0 md:top-0 md:mb-0"
                 >
                   <PlusCircle className="w-4 h-4" />
                   צור נציג חדש
                 </button>
                 <div className="flex items-center justify-between gap-2 md:pr-44">
-                  <h4 className="font-bold text-brand-navy text-sm">הגדרות צוות נציגים</h4>
+                  <h4 className="font-bold text-slate-100 text-sm">הגדרות צוות נציגים</h4>
                   <div className="flex items-center gap-2">
                     <button onClick={loadHandoffTeamSettings} className="btn-ghost text-xs" disabled={loadingHandoffTeamSettings}>
                       {loadingHandoffTeamSettings ? 'טוען...' : 'רענן'}
@@ -2243,7 +2243,7 @@ export default function Admin() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              <label className="text-xs text-gray-600">
+              <label className="text-xs text-slate-300">
                 יעד SLA (שניות)
                 <input
                   type="number"
@@ -2255,7 +2255,7 @@ export default function Admin() {
                 />
               </label>
 
-              <label className="text-xs text-gray-600">
+              <label className="text-xs text-slate-300">
                 זמן טיפול ממוצע (דקות)
                 <input
                   type="number"
@@ -2267,7 +2267,7 @@ export default function Admin() {
                 />
               </label>
 
-              <label className="text-xs text-gray-600">
+              <label className="text-xs text-slate-300">
                 הסלמה אוטומטית אחרי (שניות)
                 <input
                   type="number"
@@ -2279,7 +2279,7 @@ export default function Admin() {
                 />
               </label>
 
-              <label className="text-xs text-gray-600">
+              <label className="text-xs text-slate-300">
                 רצפת ETA בתור (שניות)
                 <input
                   type="number"
@@ -2291,7 +2291,7 @@ export default function Admin() {
                 />
               </label>
 
-              <label className="text-xs text-gray-600 md:col-span-2 xl:col-span-1">
+              <label className="text-xs text-slate-300 md:col-span-2 xl:col-span-1">
                 קירור תזכורת בערוצים (שניות)
                 <input
                   type="number"
@@ -2303,7 +2303,7 @@ export default function Admin() {
                 />
               </label>
 
-              <label className="text-xs text-gray-700 flex items-center gap-2 md:col-span-2 xl:col-span-1">
+              <label className="text-xs text-slate-200 flex items-center gap-2 md:col-span-2 xl:col-span-1">
                 <input
                   type="checkbox"
                   checked={!!handoffTeamSettings.ai_lock_during_handoff}
@@ -2312,7 +2312,7 @@ export default function Admin() {
                 הקפאת תגובות בוט בזמן המתנה לנציג
               </label>
 
-              <label className="text-xs text-gray-700 flex items-center gap-2 md:col-span-2 xl:col-span-1">
+              <label className="text-xs text-slate-200 flex items-center gap-2 md:col-span-2 xl:col-span-1">
                 <input
                   type="checkbox"
                   checked={!!handoffTeamSettings.feedback_required_on_resolve}
@@ -2325,14 +2325,14 @@ export default function Admin() {
 
           <div className="card p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="font-bold text-brand-navy text-sm">בקשות ממתינות לנציג</h4>
+              <h4 className="font-bold text-slate-100 text-sm">בקשות ממתינות לנציג</h4>
               <button onClick={() => loadHandoffQueue(false)} className="btn-ghost text-xs">רענן</button>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <button
                 onClick={() => setHandoffAlertSoundEnabled((v) => !v)}
-                className={`text-xs px-2 py-1 rounded-lg border flex items-center gap-1 ${handoffAlertSoundEnabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                className={`text-xs px-2 py-1 rounded-lg border flex items-center gap-1 ${handoffAlertSoundEnabled ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-brand-100 text-slate-300 border-brand-border'}`}
               >
                 {handoffAlertSoundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
                 {handoffAlertSoundEnabled ? 'צליל פעיל' : 'צליל כבוי'}
@@ -2341,12 +2341,12 @@ export default function Admin() {
               <button
                 onClick={() => setHandoffAlertUrgentOnly((v) => !v)}
                 disabled={!handoffAlertSoundEnabled}
-                className={`text-xs px-2 py-1 rounded-lg border disabled:opacity-60 ${handoffAlertUrgentOnly ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-gray-50 text-gray-600 border-gray-200'}`}
+                className={`text-xs px-2 py-1 rounded-lg border disabled:opacity-60 ${handoffAlertUrgentOnly ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-brand-100 text-slate-300 border-brand-border'}`}
               >
                 {handoffAlertUrgentOnly ? 'צליל: דחוף בלבד' : 'צליל: כל בקשה חדשה'}
               </button>
 
-              <label className="text-xs text-gray-600 flex items-center gap-2">
+              <label className="text-xs text-slate-300 flex items-center gap-2">
                 עוצמה
                 <input
                   type="range"
@@ -2370,14 +2370,14 @@ export default function Admin() {
             </div>
 
             {handoffQueue.length === 0 ? (
-              <p className="text-sm text-gray-400">אין כרגע בקשות ממתינות.</p>
+              <p className="text-sm text-slate-400">אין כרגע בקשות ממתינות.</p>
             ) : (
               <div className="space-y-2">
                 {handoffQueue.slice(0, 6).map((q) => (
-                  <div key={q.conversation_id} className="rounded-xl border border-gray-200 px-3 py-2 flex items-center justify-between gap-2">
+                  <div key={q.conversation_id} className="rounded-xl border border-brand-border px-3 py-2 flex items-center justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm font-semibold text-brand-navy truncate">{q.display_name || q.display_contact || 'לקוח'}</p>
-                      <p className="text-xs text-gray-500 truncate">
+                      <p className="text-sm font-semibold text-slate-100 truncate">{q.display_name || q.display_contact || 'לקוח'}</p>
+                      <p className="text-xs text-slate-400 truncate">
                         {q.channel} • המתנה {Math.max(1, Math.round((q.wait_seconds || 0) / 60))} דק׳ • עדיפות {q.priority_label}
                       </p>
                     </div>
@@ -2398,33 +2398,33 @@ export default function Admin() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <div className="card p-4">
-              <h4 className="font-bold text-brand-navy text-sm mb-3">התפלגות ערוצים (30 יום)</h4>
+              <h4 className="font-bold text-slate-100 text-sm mb-3">התפלגות ערוצים (30 יום)</h4>
               <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-sky-700">Telegram</span>
+                  <span className="text-sky-300">Telegram</span>
                   <span className="font-semibold">{chatUsage?.summary?.by_channel?.telegram ?? 0}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-emerald-700">WhatsApp</span>
+                  <span className="text-emerald-300">WhatsApp</span>
                   <span className="font-semibold">{chatUsage?.summary?.by_channel?.whatsapp ?? 0}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-gray-700">Web</span>
+                  <span className="text-slate-200">Web</span>
                   <span className="font-semibold">{chatUsage?.summary?.by_channel?.web ?? 0}</span>
                 </div>
               </div>
             </div>
 
             <div className="card p-4">
-              <h4 className="font-bold text-brand-navy text-sm mb-3">היסטוריית שימוש יומית</h4>
-              <div className="max-h-36 overflow-y-auto divide-y divide-gray-100">
+              <h4 className="font-bold text-slate-100 text-sm mb-3">היסטוריית שימוש יומית</h4>
+              <div className="max-h-36 overflow-y-auto divide-y divide-brand-border">
                 {(chatUsage?.daily || []).length === 0 ? (
-                  <p className="text-sm text-gray-400 py-2">אין נתונים עדיין</p>
+                  <p className="text-sm text-slate-400 py-2">אין נתונים עדיין</p>
                 ) : (chatUsage.daily || []).slice(-10).reverse().map((d) => (
                   <div key={d.date} className="py-1.5 flex items-center justify-between text-xs">
-                    <span className="text-gray-500">{d.date}</span>
-                    <span className="text-gray-700">{d.messages} הודעות</span>
-                    <span className="text-gray-400">{d.user_messages} לקוח / {d.assistant_messages} בוט</span>
+                    <span className="text-slate-400">{d.date}</span>
+                    <span className="text-slate-200">{d.messages} הודעות</span>
+                    <span className="text-slate-400">{d.user_messages} לקוח / {d.assistant_messages} בוט</span>
                   </div>
                 ))}
               </div>
@@ -2432,32 +2432,32 @@ export default function Admin() {
           </div>
             <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
             <div className="xl:col-span-4 card overflow-hidden">
-              <div className="p-3 border-b border-gray-100 flex items-center justify-between">
-                <h4 className="font-bold text-brand-navy text-sm">שיחות ערוצים</h4>
+              <div className="p-3 border-b border-brand-border flex items-center justify-between">
+                <h4 className="font-bold text-slate-100 text-sm">שיחות ערוצים</h4>
                 <button onClick={() => loadAdminChats(chatFilters)} className="btn-ghost text-xs">רענן</button>
               </div>
-              <div className="max-h-[640px] overflow-y-auto divide-y divide-gray-100">
+              <div className="max-h-[640px] overflow-y-auto divide-y divide-brand-border">
                 {chatConversations.length === 0 ? (
-                  <p className="text-sm text-gray-400 p-4 text-center">אין שיחות להצגה</p>
+                  <p className="text-sm text-slate-400 p-4 text-center">אין שיחות להצגה</p>
                 ) : chatConversations.map((c) => {
                   const isSelected = selectedChat?.id === c.id
                   return (
                     <button
                       key={c.id}
                       onClick={() => loadChatMessages(c.id)}
-                      className={`w-full text-right p-3 transition-colors ${isSelected ? 'bg-brand-50/50 border-r-2 border-brand-500' : 'hover:bg-gray-50'}`}
+                      className={`w-full text-right p-3 transition-colors ${isSelected ? 'bg-brand-50/50 border-r-2 border-brand-500' : 'hover:bg-brand-100'}`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold text-brand-navy truncate">{c.display_name || c.user?.full_name || c.external_id || 'לקוח'}</p>
+                        <p className="text-sm font-semibold text-slate-100 truncate">{c.display_name || c.user?.full_name || c.external_id || 'לקוח'}</p>
                         <div className="flex items-center gap-1.5">
-                          {c.human_handoff_status === 'requested' && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-red-100 text-red-700 border-red-200">ממתין לנציג</span>}
+                          {c.human_handoff_status === 'requested' && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-red-500/15 text-red-300 border-red-500/30">ממתין לנציג</span>}
                           {c.admin_takeover_active && <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-brand-100 text-brand-700 border-brand-200">ידני</span>}
                           <ChannelLogo channel={c.channel} size="lg" />
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500 mt-0.5 truncate">{c.display_contact || c.external_id || c.user?.email || c.user?.phone || '—'}</p>
-                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">{c.preview || 'ללא הודעות'}</p>
-                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-gray-400">
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">{c.display_contact || c.external_id || c.user?.email || c.user?.phone || '—'}</p>
+                      <p className="text-xs text-slate-400 mt-1 line-clamp-2">{c.preview || 'ללא הודעות'}</p>
+                      <div className="mt-1.5 flex items-center justify-between text-[11px] text-slate-400">
                         <span>{new Date(c.last_message_at).toLocaleString('he-IL')}</span>
                         <span>{c.message_count || 0} הודעות</span>
                       </div>
@@ -2469,7 +2469,7 @@ export default function Admin() {
 
             <div className="xl:col-span-8 card overflow-hidden">
               {!selectedChat ? (
-                <div className="p-10 text-center text-gray-400">
+                <div className="p-10 text-center text-slate-400">
                   <MessageSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
                   <p>בחר שיחה כדי לצפות ולהגיב</p>
                 </div>
@@ -2477,8 +2477,8 @@ export default function Admin() {
                 <>
                   {Array.isArray(selectedChat.human_handoff_timeline) && selectedChat.human_handoff_timeline.length > 0 && (
                     <div className="px-4 pt-4">
-                      <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 px-3 py-3">
-                        <h5 className="text-xs font-bold text-indigo-900 mb-2">ציר טיפול נציג אנושי</h5>
+                      <div className="rounded-xl border border-indigo-500/30 bg-indigo-500/15/50 px-3 py-3">
+                        <h5 className="text-xs font-bold text-indigo-300 mb-2">ציר טיפול נציג אנושי</h5>
                         <div className="space-y-2">
                           {selectedChat.human_handoff_timeline.map((event, idx) => {
                             const style = HANDOFF_TIMELINE_STYLE[event.type] || HANDOFF_TIMELINE_STYLE.default
@@ -2487,10 +2487,10 @@ export default function Admin() {
                               <span className={`mt-1 w-2 h-2 rounded-full ${style.dot}`} />
                               <div className="min-w-0 w-full">
                                 <div className="flex items-center justify-between gap-2">
-                                  <p className="text-xs font-semibold text-indigo-900">{event.title}</p>
+                                  <p className="text-xs font-semibold text-indigo-300">{event.title}</p>
                                   <span className={`text-[10px] px-1.5 py-0.5 rounded-md border whitespace-nowrap ${style.chip}`}>{style.label}</span>
                                 </div>
-                                {event.detail && <p className="text-[11px] text-indigo-700">{event.detail}</p>}
+                                {event.detail && <p className="text-[11px] text-indigo-300">{event.detail}</p>}
                                 <p className="text-[10px] text-indigo-500">{event.at ? new Date(event.at).toLocaleString('he-IL') : ''}</p>
                               </div>
                             </div>
@@ -2501,24 +2501,24 @@ export default function Admin() {
                     </div>
                   )}
 
-                  <div className="p-4 border-b border-gray-100 space-y-3">
+                  <div className="p-4 border-b border-brand-border space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <h4 className="font-bold text-brand-navy">{selectedChat.display_name || selectedChat.user?.full_name || selectedChat.external_id || 'לקוח'}</h4>
-                        <p className="text-xs text-gray-500 mt-0.5">{selectedChat.display_contact || selectedChat.user?.email || selectedChat.user?.phone || selectedChat.external_id || '—'}</p>
+                        <h4 className="font-bold text-slate-100">{selectedChat.display_name || selectedChat.user?.full_name || selectedChat.external_id || 'לקוח'}</h4>
+                        <p className="text-xs text-slate-400 mt-0.5">{selectedChat.display_contact || selectedChat.user?.email || selectedChat.user?.phone || selectedChat.external_id || '—'}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.channel === 'telegram' ? 'bg-sky-100 text-sky-700 border-sky-200' : selectedChat.channel === 'whatsapp' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-100 text-gray-700 border-gray-200'}`}>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.channel === 'telegram' ? 'bg-sky-500/15 text-sky-300 border-sky-500/30' : selectedChat.channel === 'whatsapp' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' : 'bg-brand-100 text-slate-200 border-brand-border'}`}>
                           {selectedChat.channel}
                         </span>
-                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.is_active ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.is_active ? 'bg-green-500/15 text-green-300 border-green-500/30' : 'bg-red-500/15 text-red-300 border-red-500/30'}`}>
                           {selectedChat.is_active ? 'פעילה' : 'סגורה'}
                         </span>
-                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.admin_takeover_active ? 'bg-brand-100 text-brand-700 border-brand-200' : 'bg-gray-100 text-gray-600 border-gray-200'}`}>
+                        <span className={`text-xs px-2 py-1 rounded-md border ${selectedChat.admin_takeover_active ? 'bg-brand-100 text-brand-700 border-brand-200' : 'bg-brand-100 text-slate-300 border-brand-border'}`}>
                           {selectedChat.admin_takeover_active ? 'השתלטות ידנית פעילה' : 'שליטת בוט'}
                         </span>
                         {selectedChat.human_handoff_status === 'requested' && (
-                          <span className="text-xs px-2 py-1 rounded-md border bg-red-100 text-red-700 border-red-200">בקשת נציג ממתינה</span>
+                          <span className="text-xs px-2 py-1 rounded-md border bg-red-500/15 text-red-300 border-red-500/30">בקשת נציג ממתינה</span>
                         )}
                       </div>
                     </div>
@@ -2551,7 +2551,7 @@ export default function Admin() {
                       >
                         {editingChatTitle ? 'ביטול עריכה' : 'ערוך שיחה'}
                       </button>
-                      <button onClick={deleteSelectedChat} disabled={deletingChat} className="btn-ghost text-xs text-red-600 hover:text-red-700 disabled:opacity-60">
+                      <button onClick={deleteSelectedChat} disabled={deletingChat} className="btn-ghost text-xs text-red-300 hover:text-red-300 disabled:opacity-60">
                         {deletingChat ? 'מוחק...' : 'מחק שיחה'}
                       </button>
                     </div>
@@ -2570,40 +2570,40 @@ export default function Admin() {
                       )}
                     </div>
 
-                    <div className="max-h-[460px] overflow-y-auto p-4 space-y-2 bg-gray-50">
+                    <div className="max-h-[460px] overflow-y-auto p-4 space-y-2 bg-brand-100">
                       {chatMessages.length === 0 ? (
-                        <p className="text-sm text-gray-400 text-center py-6">אין הודעות בשיחה</p>
+                        <p className="text-sm text-slate-400 text-center py-6">אין הודעות בשיחה</p>
                       ) : chatMessages.map((m) => (
                         <div
                           key={m.id}
-                          className={`max-w-[92%] rounded-xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-white border border-gray-200 ml-auto' : 'bg-brand-50 border border-brand-100'}`}
+                          className={`max-w-[92%] rounded-xl px-3 py-2 text-sm ${m.role === 'user' ? 'bg-brand-200 border border-brand-border ml-auto' : 'bg-brand-50 border border-brand-100'}`}
                         >
                           <div className="flex items-center justify-between gap-2 mb-0.5">
-                            <span className="text-[11px] text-gray-500">{m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')}</span>
-                            <span className="text-[10px] text-gray-400">{new Date(m.created_at).toLocaleString('he-IL')}</span>
+                            <span className="text-[11px] text-slate-400">{m.role === 'user' ? 'לקוח' : (m.agent_name || 'assistant')}</span>
+                            <span className="text-[10px] text-slate-400">{new Date(m.created_at).toLocaleString('he-IL')}</span>
                           </div>
                           {m.content_type === 'image' && m.image_data_url && (
                             <img
                               src={m.image_data_url}
                               alt="attachment"
-                              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-gray-200"
+                              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-brand-border"
                             />
                           )}
-                          {m.content && <p className="whitespace-pre-wrap text-gray-800">{m.content}</p>}
+                          {m.content && <p className="whitespace-pre-wrap text-slate-200">{m.content}</p>}
                         </div>
                       ))}
                     </div>
 
-                    <div className="p-4 border-t border-gray-100">
+                    <div className="p-4 border-t border-brand-border">
                       {selectedChat.channel === 'telegram' || selectedChat.channel === 'whatsapp' || selectedChat.channel === 'web' ? (
                         <div className="space-y-2">
                           {chatReplyImagePreview && (
-                            <div className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5">
+                            <div className="flex items-center justify-between gap-2 rounded-lg border border-brand-border bg-brand-100 px-2 py-1.5">
                               <div className="flex items-center gap-2 min-w-0">
-                                <img src={chatReplyImagePreview} alt="preview" className="h-10 w-10 rounded-md object-cover border border-gray-200" />
-                                <p className="text-xs text-gray-600 truncate">{chatReplyImage?.name || 'תמונה מצורפת'}</p>
+                                <img src={chatReplyImagePreview} alt="preview" className="h-10 w-10 rounded-md object-cover border border-brand-border" />
+                                <p className="text-xs text-slate-300 truncate">{chatReplyImage?.name || 'תמונה מצורפת'}</p>
                               </div>
-                              <button onClick={clearChatReplyImage} className="btn-ghost text-xs text-red-600 hover:text-red-700">הסר</button>
+                              <button onClick={clearChatReplyImage} className="btn-ghost text-xs text-red-300 hover:text-red-300">הסר</button>
                             </div>
                           )}
 
@@ -2611,7 +2611,7 @@ export default function Admin() {
                             <button
                               onClick={() => setShowChatEmojiPicker((v) => !v)}
                               disabled={!selectedChat.admin_takeover_active || sendingChatReply}
-                              className="btn-ghost rounded-brand border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              className="btn-ghost rounded-brand border border-brand-border bg-brand-200 p-2.5 text-slate-400 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
                               title="אימוג׳ים"
                             >
                               <Smile className="w-5 h-5" />
@@ -2619,7 +2619,7 @@ export default function Admin() {
                             <button
                               onClick={() => chatReplyFileRef.current?.click()}
                               disabled={!selectedChat.admin_takeover_active || sendingChatReply}
-                              className="btn-ghost rounded-brand border border-gray-200 bg-white p-2.5 text-gray-500 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
+                              className="btn-ghost rounded-brand border border-brand-border bg-brand-200 p-2.5 text-slate-400 hover:border-brand-200 hover:text-brand-600 disabled:opacity-50"
                               title="צרף תמונה"
                             >
                               <Image className="w-5 h-5" />
@@ -2657,13 +2657,13 @@ export default function Admin() {
                           </div>
 
                           {showChatEmojiPicker && (
-                            <div className="rounded-lg border border-gray-200 bg-white px-2 py-2">
+                            <div className="rounded-lg border border-brand-border bg-brand-200 px-2 py-2">
                               <div className="flex flex-wrap gap-1">
                                 {CHAT_QUICK_EMOJIS.map((emoji) => (
                                   <button
                                     key={emoji}
                                     onClick={() => appendEmojiToReply(emoji)}
-                                    className="px-2 py-1 rounded-md hover:bg-gray-100 text-2xl leading-none"
+                                    className="px-2 py-1 rounded-md hover:bg-brand-100 text-2xl leading-none"
                                     title={`הוסף ${emoji}`}
                                   >
                                     {emoji}
@@ -2674,7 +2674,7 @@ export default function Admin() {
                           )}
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-400">שליחה ידנית נתמכת כרגע רק ל-Telegram, WhatsApp ו-Web.</p>
+                        <p className="text-xs text-slate-400">שליחה ידנית נתמכת כרגע רק ל-Telegram, WhatsApp ו-Web.</p>
                       )}
                     </div>
                   </>
@@ -2686,8 +2686,8 @@ export default function Admin() {
         {/* Orders */}
       {tab === 'orders' && (
         <div className="card overflow-hidden">
-          <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-bold text-brand-navy">כל ההזמנות ({orders.length})</h3>
+          <div className="p-4 border-b border-brand-border flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-bold text-slate-100">כל ההזמנות ({orders.length})</h3>
             <div className="flex items-center gap-2 flex-wrap">
               <select
                 className="input-field text-sm py-1.5 w-44"
@@ -2710,26 +2710,26 @@ export default function Admin() {
           {loading ? <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div> : (
             <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50">
+                <thead className="bg-brand-100">
                   <tr>
                     {['מס׳ הזמנה', 'לקוח', 'סטטוס', 'עדכן סטטוס', 'סכום', 'תאריך'].map((h) => (
-                      <th key={h} className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">{h}</th>
+                      <th key={h} className="px-3 py-3 text-right text-xs font-medium text-slate-400 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-brand-border">
                   {orders.length === 0 && (
-                    <tr><td colSpan={6} className="text-center py-8 text-gray-400">אין הזמנות</td></tr>
+                    <tr><td colSpan={6} className="text-center py-8 text-slate-400">אין הזמנות</td></tr>
                   )}
                   {orders.map((o) => {
-                    const st = STATUS_HE[o.status] || { label: o.status, cls: 'bg-gray-100 text-gray-700' }
+                    const st = STATUS_HE[o.status] || { label: o.status, cls: 'bg-brand-100 text-slate-200' }
                     return (
-                      <tr key={o.id} className="hover:bg-gray-50">
-                        <td className="px-3 py-3 font-medium text-brand-navy font-mono text-xs" dir="ltr">{o.order_number}</td>
+                      <tr key={o.id} className="hover:bg-brand-100">
+                        <td className="px-3 py-3 font-medium text-slate-100 font-mono text-xs" dir="ltr">{o.order_number}</td>
                         <td className="px-3 py-3">
                           <div className="text-xs">
-                            <p className="font-medium text-gray-800">{o.user_name}</p>
-                            <p className="text-gray-400" dir="ltr">{o.user_email}</p>
+                            <p className="font-medium text-slate-200">{o.user_name}</p>
+                            <p className="text-slate-400" dir="ltr">{o.user_email}</p>
                           </div>
                         </td>
                         <td className="px-3 py-3">
@@ -2741,7 +2741,7 @@ export default function Admin() {
                               defaultValue={o.status}
                               disabled={updatingStatus === o.id}
                               onChange={(e) => updateOrderStatus(o.id, e.target.value)}
-                              className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-brand-400"
+                              className="text-xs border border-brand-border rounded-lg px-2 py-1 bg-brand-200 focus:outline-none focus:ring-1 focus:ring-brand-400"
                             >
                               {Object.entries(STATUS_HE).map(([k, v]) => (
                                 <option key={k} value={k}>{v.label}</option>
@@ -2751,7 +2751,7 @@ export default function Admin() {
                           </div>
                         </td>
                         <td className="px-3 py-3 font-semibold text-brand-600 whitespace-nowrap">₪{Number(o.total).toFixed(2)}</td>
-                        <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">{o.created_at ? new Date(o.created_at).toLocaleDateString('he-IL') : ''}</td>
+                        <td className="px-3 py-3 text-slate-400 text-xs whitespace-nowrap">{o.created_at ? new Date(o.created_at).toLocaleDateString('he-IL') : ''}</td>
                       </tr>
                     )
                   })}
@@ -2768,15 +2768,15 @@ export default function Admin() {
 
           {/* Supplier list */}
           <div className="card overflow-hidden">
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+            <div className="p-4 border-b border-brand-border flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 rounded-lg bg-brand-50">
                   <Zap className="w-4 h-4 text-brand-600" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-brand-navy">ספקים ({suppliers.length})</h3>
+                  <h3 className="font-bold text-slate-100">ספקים ({suppliers.length})</h3>
                   {syncStatus && (
-                    <p className="text-xs text-gray-400 mt-0.5 leading-tight">
+                    <p className="text-xs text-slate-400 mt-0.5 leading-tight">
                       {syncStatus.last_sync
                         ? <>עדכון: {new Date(syncStatus.last_sync).toLocaleString('he-IL')} · הבא בעוד {syncStatus.next_sync_in_h}h</>
                         : 'טרם סונכרן'}
@@ -2801,7 +2801,7 @@ export default function Admin() {
               </div>
             </div>
             {/* Filter bar */}
-            <div className="px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <div className="px-4 py-2 border-b border-brand-border bg-brand-100">
               <div className="flex gap-4 items-center">
                 <input
                   className="input-field text-sm py-1.5 w-1/4"
@@ -2826,7 +2826,7 @@ export default function Admin() {
                   <option value="inactive">לא פעילים</option>
                 </select>
                 {Object.values(supplierFilters).some(Boolean) && (
-                  <button onClick={() => setSupplierFilters({ name: '', country: '', status: '' })} className="text-gray-400 hover:text-red-500 shrink-0">
+                  <button onClick={() => setSupplierFilters({ name: '', country: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -2841,50 +2841,50 @@ export default function Admin() {
                 return true
               })
               return (
-                <div className="divide-y divide-gray-100">
-                  {filteredSuppliers.length === 0 && <p className="text-center text-gray-400 text-sm py-8">לא נמצאו ספקים</p>}
+                <div className="divide-y divide-brand-border">
+                  {filteredSuppliers.length === 0 && <p className="text-center text-slate-400 text-sm py-8">לא נמצאו ספקים</p>}
                   {filteredSuppliers.map((s, idx) => {
                     const isExpanded = expandedSupplier?.id === s.id
                     return (
                       <div key={s.id}>
                         {/* Row */}
-                        <div className="flex items-center justify-between p-4 hover:bg-gray-50 cursor-pointer" onClick={() => setExpandedSupplier(isExpanded ? null : s)}>
+                        <div className="flex items-center justify-between p-4 hover:bg-brand-100 cursor-pointer" onClick={() => setExpandedSupplier(isExpanded ? null : s)}>
                           <div className="flex items-center gap-3">
-                            <span className="text-xs font-mono text-gray-400 w-5 text-center select-none shrink-0">{idx + 1}</span>
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${s.is_active ? 'bg-brand-50' : 'bg-gray-100'}`}>
-                              <Truck className={`w-5 h-5 ${s.is_active ? 'text-brand-600' : 'text-gray-400'}`} />
+                            <span className="text-xs font-mono text-slate-400 w-5 text-center select-none shrink-0">{idx + 1}</span>
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${s.is_active ? 'bg-brand-50' : 'bg-brand-100'}`}>
+                              <Truck className={`w-5 h-5 ${s.is_active ? 'text-brand-600' : 'text-slate-400'}`} />
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
-                                <p className="font-medium text-brand-navy">{s.name}</p>
-                                <ChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                                {!s.is_active && <span className="badge bg-red-100 text-red-600 text-[10px]">בוטל</span>}
-                                {s.supports_express && <span className="badge bg-blue-100 text-blue-600 text-[10px]">אקספרס</span>}
+                                <p className="font-medium text-slate-100">{s.name}</p>
+                                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                                {!s.is_active && <span className="badge bg-red-500/15 text-red-300 text-[10px]">בוטל</span>}
+                                {s.supports_express && <span className="badge bg-blue-500/15 text-blue-300 text-[10px]">אקספרס</span>}
                               </div>
-                              <p className="text-xs text-gray-400">עדיפות {s.priority} · ★ {Number(s.reliability_score).toFixed(1)}</p>
+                              <p className="text-xs text-slate-400">עדיפות {s.priority} · ★ {Number(s.reliability_score).toFixed(1)}</p>
                                 {s.country && (
-                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 ml-1">
+                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-100 border border-brand-border ml-1">
                                     {countryFlag(s.country)}
-                                    <span className="text-[10px] font-bold text-gray-500 tracking-wide leading-none">{countryISO(s.country)}</span>
+                                    <span className="text-[10px] font-bold text-slate-400 tracking-wide leading-none">{countryISO(s.country)}</span>
                                   </div>
                                 )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             <button onClick={() => syncSupplier(s.id)} className="btn-secondary text-xs px-3 py-1.5">סנכרן</button>
-                            <button onClick={() => { openEditSupplier(s); }} title="ערוך" className="p-1.5 rounded hover:bg-blue-50 text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>
-                            <button onClick={() => deleteSupplierById(s.id, s.name)} title="מחק" className="p-1.5 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                            <button onClick={() => { openEditSupplier(s); }} title="ערוך" className="p-1.5 rounded hover:bg-blue-500/15 text-blue-500 hover:text-blue-300 transition-colors"><Pencil className="w-4 h-4" /></button>
+                            <button onClick={() => deleteSupplierById(s.id, s.name)} title="מחק" className="p-1.5 rounded hover:bg-red-500/15 text-red-400 hover:text-red-300 transition-colors"><Trash2 className="w-4 h-4" /></button>
                             <button onClick={() => toggleSupplier(s.id, s.is_active)}>
-                              {s.is_active ? <ToggleRight className="w-6 h-6 text-green-500" /> : <ToggleLeft className="w-6 h-6 text-gray-400" />}
+                              {s.is_active ? <ToggleRight className="w-6 h-6 text-green-500" /> : <ToggleLeft className="w-6 h-6 text-slate-400" />}
                             </button>
                           </div>
                         </div>
                         {/* Expanded detail */}
                         {isExpanded && (
-                          <div className="bg-gray-50 border-t border-gray-100 px-6 py-4">
+                          <div className="bg-brand-100 border-t border-brand-border px-6 py-4">
                             {/* Header strip with flag */}
                             {s.country && (
-                              <div className="flex items-center gap-3 mb-4 pb-3 border-b border-gray-200">
+                              <div className="flex items-center gap-3 mb-4 pb-3 border-b border-brand-border">
                                 <img
                                   src={`https://flagcdn.com/32x24/${(COUNTRY_ISO[s.country.toLowerCase().trim()] || '').toLowerCase()}.png`}
                                   alt={s.country}
@@ -2893,8 +2893,8 @@ export default function Admin() {
                                   onError={(e) => { e.target.style.display = 'none' }}
                                 />
                                 <div>
-                                  <p className="font-semibold text-gray-800 text-sm">{s.name}</p>
-                                  <p className="text-xs text-gray-400">{s.country} · {countryISO(s.country)}</p>
+                                  <p className="font-semibold text-slate-200 text-sm">{s.name}</p>
+                                  <p className="text-xs text-slate-400">{s.country} · {countryISO(s.country)}</p>
                                 </div>
                                 {s.priority > 0 && <span className="ml-auto text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded-full">עדיפות {s.priority}</span>}
                               </div>
@@ -2902,31 +2902,31 @@ export default function Admin() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                               {/* Contact */}
                               <div className="space-y-2">
-                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">פרטי קשר</p>
-                                {s.contact_email && <div className="flex items-center gap-2 text-gray-700"><Mail className="w-3.5 h-3.5 text-gray-400" />{s.contact_email}</div>}
-                                {s.contact_phone && <div className="flex items-center gap-2 text-gray-700"><Phone className="w-3.5 h-3.5 text-gray-400" /><PhoneDisplay value={s.contact_phone} /></div>}
-                                {s.website && <div className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-gray-400" /><a href={s.website} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-xs" dir="ltr">{s.website}</a></div>}
-                                {!s.contact_email && !s.contact_phone && !s.website && <p className="text-gray-400 text-xs">לא הוזן פרטי קשר</p>}
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">פרטי קשר</p>
+                                {s.contact_email && <div className="flex items-center gap-2 text-slate-200"><Mail className="w-3.5 h-3.5 text-slate-400" />{s.contact_email}</div>}
+                                {s.contact_phone && <div className="flex items-center gap-2 text-slate-200"><Phone className="w-3.5 h-3.5 text-slate-400" /><PhoneDisplay value={s.contact_phone} /></div>}
+                                {s.website && <div className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-slate-400" /><a href={s.website} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline text-xs" dir="ltr">{s.website}</a></div>}
+                                {!s.contact_email && !s.contact_phone && !s.website && <p className="text-slate-400 text-xs">לא הוזן פרטי קשר</p>}
                               </div>
                               {/* API */}
                               <div className="space-y-2">
-                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">API</p>
-                                {s.api_endpoint ? <div className="flex items-center gap-2"><Key className="w-3.5 h-3.5 text-gray-400" /><span className="font-mono text-xs text-gray-600 break-all" dir="ltr">{s.api_endpoint}</span></div> : <p className="text-gray-400 text-xs">לא נקבע</p>}
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">API</p>
+                                {s.api_endpoint ? <div className="flex items-center gap-2"><Key className="w-3.5 h-3.5 text-slate-400" /><span className="font-mono text-xs text-slate-300 break-all" dir="ltr">{s.api_endpoint}</span></div> : <p className="text-slate-400 text-xs">לא נקבע</p>}
                               </div>
                               {/* Shipping */}
                               <div className="space-y-2">
-                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">משלוח</p>
-                                {s.supports_express && <div className="flex items-center gap-2"><Zap className="w-3.5 h-3.5 text-blue-400" /><span className="text-gray-700">{s.express_carrier || 'שירות אקספרס'}{s.express_base_cost_usd ? ` · $${s.express_base_cost_usd}` : ''}</span></div>}
-                                {s.avg_delivery_days_actual && <div className="flex items-center gap-2"><Clock className="w-3.5 h-3.5 text-gray-400" /><span className="text-gray-700">זמן משלוח ממוצע: {s.avg_delivery_days_actual} ימים</span></div>}
-                                {Object.keys(s.shipping_info || {}).length > 0 && <pre className="text-xs bg-white rounded p-2 border border-gray-200 max-h-20 overflow-auto">{JSON.stringify(s.shipping_info, null, 2)}</pre>}
-                                {!s.supports_express && !s.avg_delivery_days_actual && Object.keys(s.shipping_info || {}).length === 0 && <p className="text-gray-400 text-xs">לא הוזן פרטי משלוח</p>}
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">משלוח</p>
+                                {s.supports_express && <div className="flex items-center gap-2"><Zap className="w-3.5 h-3.5 text-blue-400" /><span className="text-slate-200">{s.express_carrier || 'שירות אקספרס'}{s.express_base_cost_usd ? ` · $${s.express_base_cost_usd}` : ''}</span></div>}
+                                {s.avg_delivery_days_actual && <div className="flex items-center gap-2"><Clock className="w-3.5 h-3.5 text-slate-400" /><span className="text-slate-200">זמן משלוח ממוצע: {s.avg_delivery_days_actual} ימים</span></div>}
+                                {Object.keys(s.shipping_info || {}).length > 0 && <pre className="text-xs bg-brand-200 rounded p-2 border border-brand-border max-h-20 overflow-auto">{JSON.stringify(s.shipping_info, null, 2)}</pre>}
+                                {!s.supports_express && !s.avg_delivery_days_actual && Object.keys(s.shipping_info || {}).length === 0 && <p className="text-slate-400 text-xs">לא הוזן פרטי משלוח</p>}
                               </div>
                               {/* Stats */}
                               <div className="space-y-2">
-                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">נתונים</p>
-                                <div className="flex items-center gap-2"><Star className="w-3.5 h-3.5 text-amber-400" /><span className="text-gray-700">אמינות: {Number(s.reliability_score).toFixed(1)}/10</span></div>
-                                <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-gray-400" /><span className="text-gray-700 flex items-center gap-1.5">{countryFlag(s.country)}<span>{s.country}</span><span className="text-xs text-gray-400 font-bold">{countryISO(s.country)}</span></span></div>
-                                {s.created_at && <p className="text-xs text-gray-400">נוצר: {new Date(s.created_at).toLocaleDateString('he-IL')}</p>}
+                                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">נתונים</p>
+                                <div className="flex items-center gap-2"><Star className="w-3.5 h-3.5 text-amber-400" /><span className="text-slate-200">אמינות: {Number(s.reliability_score).toFixed(1)}/10</span></div>
+                                <div className="flex items-center gap-2"><MapPin className="w-3.5 h-3.5 text-slate-400" /><span className="text-slate-200 flex items-center gap-1.5">{countryFlag(s.country)}<span>{s.country}</span><span className="text-xs text-slate-400 font-bold">{countryISO(s.country)}</span></span></div>
+                                {s.created_at && <p className="text-xs text-slate-400">נוצר: {new Date(s.created_at).toLocaleDateString('he-IL')}</p>}
                               </div>
                             </div>
                           </div>
@@ -2940,18 +2940,18 @@ export default function Admin() {
           </div>
           {/* Supplier purchase tasks */}
           <div className="card overflow-hidden">
-            <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="font-bold text-brand-navy flex items-center gap-2">
+            <div className="p-4 border-b border-brand-border flex items-center justify-between">
+              <h3 className="font-bold text-slate-100 flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-brand-600" />
                 יומן הזמנות ספקים (סוכן אוטומטי)
                 {supplierOrdersPending > 0 && (
-                  <span className="badge bg-amber-100 text-amber-700">{supplierOrdersPending} דורשות בדיקה</span>
+                  <span className="badge bg-amber-500/15 text-amber-300">{supplierOrdersPending} דורשות בדיקה</span>
                 )}
               </h3>
               <button onClick={loadSupplierOrders} className="btn-ghost text-sm flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
             </div>
             {/* Order log filter bar */}
-            <div className="px-4 py-2 border-b border-gray-100 bg-gray-50">
+            <div className="px-4 py-2 border-b border-brand-border bg-brand-100">
               <div className="flex gap-4 items-center">
                 <input
                   className="input-field text-sm py-1.5 w-1/4"
@@ -2969,14 +2969,14 @@ export default function Admin() {
                   <option value="done">בוצע</option>
                 </select>
                 {Object.values(orderLogFilters).some(Boolean) && (
-                  <button onClick={() => setOrderLogFilters({ search: '', status: '' })} className="text-gray-400 hover:text-red-500 shrink-0">
+                  <button onClick={() => setOrderLogFilters({ search: '', status: '' })} className="text-slate-400 hover:text-red-500 shrink-0">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
             </div>
             {supplierOrders.length === 0 ? (
-              <div className="text-center py-8 text-gray-400">
+              <div className="text-center py-8 text-slate-400">
                 <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-400" />
                 <p className="text-sm">אין רשומות הזמנה עדיין</p>
               </div>
@@ -2993,24 +2993,24 @@ export default function Admin() {
                 return true
               })
               return filteredOrders.length === 0
-                ? <p className="text-center text-gray-400 text-sm py-8">לא נמצאו רשומות</p>
+                ? <p className="text-center text-slate-400 text-sm py-8">לא נמצאו רשומות</p>
                 : (
-              <div className="divide-y divide-gray-100">
+              <div className="divide-y divide-brand-border">
                 {filteredOrders.map((so) => {
                   const d = so.data || {}
                   const isMissing = !d.supplier_name
                   return (
-                    <div key={so.id} className={`p-4 ${!so.is_done ? 'bg-amber-50 border-l-4 border-amber-400' : 'bg-white'}`}>
+                    <div key={so.id} className={`p-4 ${!so.is_done ? 'bg-amber-500/15 border-l-4 border-amber-400' : 'bg-brand-200'}`}>
                       <div className="flex items-start gap-3">
                         <div className="mt-0.5 flex-shrink-0">
                           {so.is_done
-                            ? <span className="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full"><CheckCircle className="w-3.5 h-3.5" /> בוצע ע״י הסוכן</span>
-                            : <span className="inline-flex items-center gap-1 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full"><AlertCircle className="w-3.5 h-3.5 animate-pulse" /> דורש בדיקה ידנית</span>
+                            ? <span className="inline-flex items-center gap-1 text-xs bg-green-500/15 text-green-300 px-2 py-0.5 rounded-full"><CheckCircle className="w-3.5 h-3.5" /> בוצע ע״י הסוכן</span>
+                            : <span className="inline-flex items-center gap-1 text-xs bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded-full"><AlertCircle className="w-3.5 h-3.5 animate-pulse" /> דורש בדיקה ידנית</span>
                           }
                         </div>
                         <div className="flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <p className="font-semibold text-brand-navy text-sm">{so.title}</p>
+                            <p className="font-semibold text-slate-100 text-sm">{so.title}</p>
                             {d.supplier_name && (() => {
                               let sup = suppliers.find((s) => s.name?.toLowerCase() === d.supplier_name?.toLowerCase())
                               if (!sup) {
@@ -3027,15 +3027,15 @@ export default function Admin() {
                               )
                             })()}
                           </div>
-                          <p className="text-xs text-gray-400 mt-0.5">
+                          <p className="text-xs text-slate-400 mt-0.5">
                             {new Date(so.created_at).toLocaleString('he-IL')}
                             {so.done_at && ` · טופל ${new Date(so.done_at).toLocaleString('he-IL')}`}
                           </p>
                           {/* Tracking badge (agent-assigned) */}
                           {d.tracking_number && (
                             <div className="mt-2 flex items-center gap-2">
-                              <Truck className="w-4 h-4 text-cyan-600" />
-                              <span className="text-xs font-mono bg-cyan-50 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded">{d.carrier} · {d.tracking_number}</span>
+                              <Truck className="w-4 h-4 text-cyan-300" />
+                              <span className="text-xs font-mono bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 px-2 py-0.5 rounded">{d.carrier} · {d.tracking_number}</span>
                               {(() => {
                                 const n = d.tracking_number || ''
                                 const rawUrl = d.tracking_url
@@ -3056,30 +3056,30 @@ export default function Admin() {
                           )}
                             {/* Items table */}
                             {d.items && d.items.length > 0 && (
-                              <div className="mt-3 rounded-lg border border-gray-100 overflow-hidden">
+                              <div className="mt-3 rounded-lg border border-brand-border overflow-hidden">
                                 <table className="w-full text-xs">
-                                  <thead className="bg-gray-50">
+                                  <thead className="bg-brand-100">
                                     <tr>
                                       {['חלק', 'SKU ספק', 'כמות', 'עלות יחידא', 'עלות ישירה', 'סה״כ'].map((h) => (
-                                        <th key={h} className="px-3 py-2 text-right font-medium text-gray-500">{h}</th>
+                                        <th key={h} className="px-3 py-2 text-right font-medium text-slate-400">{h}</th>
                                       ))}
                                     </tr>
                                   </thead>
-                                  <tbody className="divide-y divide-gray-50">
+                                  <tbody className="divide-y divide-brand-border">
                                     {d.items.map((it, i) => (
-                                      <tr key={i} className="hover:bg-gray-50">
-                                        <td className="px-3 py-2 font-medium text-gray-800">{it.part_name}</td>
-                                        <td className="px-3 py-2 text-gray-500 font-mono">{it.supplier_sku || it.part_sku || '—'}</td>
+                                      <tr key={i} className="hover:bg-brand-100">
+                                        <td className="px-3 py-2 font-medium text-slate-200">{it.part_name}</td>
+                                        <td className="px-3 py-2 text-slate-400 font-mono">{it.supplier_sku || it.part_sku || '—'}</td>
                                         <td className="px-3 py-2 text-center font-bold">{it.quantity}</td>
-                                        <td className="px-3 py-2 text-gray-600">₪{it.unit_cost_ils?.toFixed(2)}</td>
-                                        <td className="px-3 py-2 text-gray-600">₪{it.shipping_ils?.toFixed(2)}</td>
+                                        <td className="px-3 py-2 text-slate-300">₪{it.unit_cost_ils?.toFixed(2)}</td>
+                                        <td className="px-3 py-2 text-slate-300">₪{it.shipping_ils?.toFixed(2)}</td>
                                         <td className="px-3 py-2 font-semibold text-brand-600">₪{it.item_total_ils?.toFixed(2)}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
-                                <div className="px-3 py-2 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
-                                  <span className="text-xs text-gray-500">עלות ספק סה״כ:</span>
+                                <div className="px-3 py-2 bg-brand-100 border-t border-brand-border flex justify-between items-center">
+                                  <span className="text-xs text-slate-400">עלות ספק סה״כ:</span>
                                   <span className="font-bold text-brand-700">₪{Number(d.total_cost_ils || 0).toFixed(2)}</span>
                                 </div>
                               </div>
@@ -3110,19 +3110,19 @@ export default function Admin() {
       {tab === 'parts' && (
         <div className="space-y-4">
           <div className="card p-6">
-            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
+            <h3 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
               <FileSpreadsheet className="w-5 h-5 text-brand-600" />
               ייבוא קטלוג חלקים מ-Excel
             </h3>
-            <p className="text-sm text-gray-400 mb-5">
-              הקובץ חייב לכלול עמודות: <span className="font-mono text-xs bg-gray-100 px-1 rounded">sku / pin</span> ו-<span className="font-mono text-xs bg-gray-100 px-1 rounded">name</span> (שם חלק).
+            <p className="text-sm text-slate-400 mb-5">
+              הקובץ חייב לכלול עמודות: <span className="font-mono text-xs bg-brand-100 px-1 rounded">sku / pin</span> ו-<span className="font-mono text-xs bg-brand-100 px-1 rounded">name</span> (שם חלק).
               אפשר גם: category, manufacturer, part_type, description, price (מחיר צרכן/ייחוס — נשמר כמחיר ייחוס ואינו קובע עלות או מחיר בסיס), compatible_vehicles.
             </p>
 
             {/* Drop zone */}
             <label
               className={`flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-10 cursor-pointer transition-colors ${
-                importFile ? 'border-brand-400 bg-brand-50' : 'border-gray-300 hover:border-brand-400 hover:bg-gray-50'
+                importFile ? 'border-brand-400 bg-brand-50' : 'border-brand-border hover:border-brand-400 hover:bg-brand-100'
               }`}
             >
               <input
@@ -3135,7 +3135,7 @@ export default function Admin() {
                 <>
                   <FileSpreadsheet className="w-10 h-10 text-brand-500 mb-2" />
                   <p className="text-sm font-medium text-brand-700">{importFile.name}</p>
-                  <p className="text-xs text-gray-400 mt-1">{(importFile.size / 1024).toFixed(1)} KB</p>
+                  <p className="text-xs text-slate-400 mt-1">{(importFile.size / 1024).toFixed(1)} KB</p>
                   <button
                     type="button"
                     onClick={(e) => { e.preventDefault(); setImportFile(null); setImportResult(null) }}
@@ -3146,9 +3146,9 @@ export default function Admin() {
                 </>
               ) : (
                 <>
-                  <Upload className="w-10 h-10 text-gray-400 mb-2" />
-                  <p className="text-sm text-gray-600">גרור קובץ Excel לכאן או לחץ לבחירה</p>
-                  <p className="text-xs text-gray-400 mt-1">.xlsx / .xls</p>
+                  <Upload className="w-10 h-10 text-slate-400 mb-2" />
+                  <p className="text-sm text-slate-300">גרור קובץ Excel לכאן או לחץ לבחירה</p>
+                  <p className="text-xs text-slate-400 mt-1">.xlsx / .xls</p>
                 </>
               )}
             </label>
@@ -3184,28 +3184,28 @@ export default function Admin() {
 
             {importResult && (
               <div className={`mt-4 rounded-xl p-4 text-sm ${
-                importResult.ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                importResult.ok ? 'bg-green-500/15 border border-green-500/30' : 'bg-red-500/15 border border-red-500/30'
               }`}>
                 {importResult.ok ? (
                   <>
-                    <p className="font-semibold text-green-700 mb-2">✅ הייבוא הושלם בהצלחה</p>
+                    <p className="font-semibold text-green-300 mb-2">✅ הייבוא הושלם בהצלחה</p>
                     <div className="grid grid-cols-3 gap-3 text-center">
-                      <div className="bg-white rounded-lg p-3">
-                        <p className="text-2xl font-bold text-green-600">{importResult.created}</p>
-                        <p className="text-xs text-gray-500">חלקים חדשים</p>
+                      <div className="bg-brand-200 rounded-lg p-3">
+                        <p className="text-2xl font-bold text-green-300">{importResult.created}</p>
+                        <p className="text-xs text-slate-400">חלקים חדשים</p>
                       </div>
-                      <div className="bg-white rounded-lg p-3">
-                        <p className="text-2xl font-bold text-blue-600">{importResult.updated}</p>
-                        <p className="text-xs text-gray-500">עודכנו</p>
+                      <div className="bg-brand-200 rounded-lg p-3">
+                        <p className="text-2xl font-bold text-blue-300">{importResult.updated}</p>
+                        <p className="text-xs text-slate-400">עודכנו</p>
                       </div>
-                      <div className="bg-white rounded-lg p-3">
-                        <p className="text-2xl font-bold text-gray-400">{importResult.skipped}</p>
-                        <p className="text-xs text-gray-500">דולגו</p>
+                      <div className="bg-brand-200 rounded-lg p-3">
+                        <p className="text-2xl font-bold text-slate-400">{importResult.skipped}</p>
+                        <p className="text-xs text-slate-400">דולגו</p>
                       </div>
                     </div>
                     {importResult.errors?.length > 0 && (
                       <div className="mt-3">
-                        <p className="text-xs font-medium text-red-600 mb-1">שגיאות ({importResult.errors.length}):</p>
+                        <p className="text-xs font-medium text-red-300 mb-1">שגיאות ({importResult.errors.length}):</p>
                         <ul className="text-xs text-red-500 list-disc list-inside space-y-0.5">
                           {importResult.errors.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
                         </ul>
@@ -3213,18 +3213,18 @@ export default function Admin() {
                     )}
                   </>
                 ) : (
-                  <p className="text-red-700">❌ {importResult.msg}</p>
+                  <p className="text-red-300">❌ {importResult.msg}</p>
                 )}
               </div>
             )}
           </div>
 
           <div className="card p-6">
-            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
+            <h3 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
               <CheckSquare className="w-5 h-5 text-brand-600" />
               התאמת תאימות מדויקת מהרשומות ב-Excel
             </h3>
-            <p className="text-sm text-gray-400 mb-5">
+            <p className="text-sm text-slate-400 mb-5">
               מריץ את משימת השרת שמחברת שורות מהקובץ לחלקים בקטלוג וכותבת התאמת רכב מדויקת ל- compatible_vehicles.
             </p>
             <button
@@ -3237,35 +3237,35 @@ export default function Admin() {
             </button>
 
             {fitmentBackfillResult && (
-              <div className={`mt-4 rounded-xl p-4 text-sm ${fitmentBackfillResult.ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+              <div className={`mt-4 rounded-xl p-4 text-sm ${fitmentBackfillResult.ok ? 'bg-green-500/15 border border-green-500/30' : 'bg-red-500/15 border border-red-500/30'}`}>
                 {fitmentBackfillResult.ok ? (
                   <div className="grid grid-cols-3 gap-3 text-center">
-                    <div className="bg-white rounded-lg p-3">
-                      <p className="text-2xl font-bold text-green-600">{fitmentBackfillResult.matched_rows || 0}</p>
-                      <p className="text-xs text-gray-500">שורות מותאמות</p>
+                    <div className="bg-brand-200 rounded-lg p-3">
+                      <p className="text-2xl font-bold text-green-300">{fitmentBackfillResult.matched_rows || 0}</p>
+                      <p className="text-xs text-slate-400">שורות מותאמות</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3">
-                      <p className="text-2xl font-bold text-blue-600">{fitmentBackfillResult.updated_parts || 0}</p>
-                      <p className="text-xs text-gray-500">חלקים שעודכנו</p>
+                    <div className="bg-brand-200 rounded-lg p-3">
+                      <p className="text-2xl font-bold text-blue-300">{fitmentBackfillResult.updated_parts || 0}</p>
+                      <p className="text-xs text-slate-400">חלקים שעודכנו</p>
                     </div>
-                    <div className="bg-white rounded-lg p-3">
+                    <div className="bg-brand-200 rounded-lg p-3">
                       <p className="text-2xl font-bold text-brand-600">{fitmentBackfillResult.fitment_rows || 0}</p>
-                      <p className="text-xs text-gray-500">רשומות תאימות</p>
+                      <p className="text-xs text-slate-400">רשומות תאימות</p>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-red-700">{fitmentBackfillResult.msg}</p>
+                  <p className="text-red-300">{fitmentBackfillResult.msg}</p>
                 )}
               </div>
             )}
           </div>
 
           <div className="card p-6">
-            <h3 className="font-bold text-brand-navy mb-1 flex items-center gap-2">
+            <h3 className="font-bold text-slate-100 mb-1 flex items-center gap-2">
               <Database className="w-5 h-5 text-brand-600" />
               DB Agent - ניקוי ונרמול
             </h3>
-            <p className="text-sm text-gray-400 mb-5">
+            <p className="text-sm text-slate-400 mb-5">
               משימות ניקוי לפי REX. חוברו במיוחד: Task 6 + Task 7, כולל הרצת ניקוי שמות חלקים עכשיו.
             </p>
 
@@ -3284,7 +3284,7 @@ export default function Admin() {
               <button
                 onClick={() => runDbAgentTask('flag_fake_skus', 'Task 6 - סימון SKU חשודים')}
                 disabled={!!dbAgentTaskRunning}
-                className="btn-secondary border border-gray-300 rounded-brand px-4 py-2 flex items-center justify-center gap-2"
+                className="btn-secondary border border-brand-border rounded-brand px-4 py-2 flex items-center justify-center gap-2"
               >
                 {dbAgentTaskRunning === 'flag_fake_skus'
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -3295,7 +3295,7 @@ export default function Admin() {
               <button
                 onClick={() => runDbAgentTask('fill_car_brands', 'Task 7 - השלמת מותגי רכב')}
                 disabled={!!dbAgentTaskRunning}
-                className="btn-secondary border border-gray-300 rounded-brand px-4 py-2 flex items-center justify-center gap-2"
+                className="btn-secondary border border-brand-border rounded-brand px-4 py-2 flex items-center justify-center gap-2"
               >
                 {dbAgentTaskRunning === 'fill_car_brands'
                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -3304,8 +3304,8 @@ export default function Admin() {
               </button>
             </div>
 
-            <div className="mt-4 flex items-center gap-3 text-xs text-gray-500">
-              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${dbAgentStatus?.running ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+            <div className="mt-4 flex items-center gap-3 text-xs text-slate-400">
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 ${dbAgentStatus?.running ? 'bg-amber-500/15 text-amber-300' : 'bg-green-500/15 text-green-300'}`}>
                 {dbAgentStatus?.running ? 'רץ כרגע' : 'מוכן להרצה'}
               </span>
               <span>משימות זמינות: {Array.isArray(dbAgentStatus?.available_tasks) ? dbAgentStatus.available_tasks.length : 0}</span>
@@ -3318,31 +3318,31 @@ export default function Admin() {
             </div>
 
             {dbAgentTaskResult && (
-              <div className={`mt-4 rounded-xl p-4 text-sm ${dbAgentTaskResult.ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+              <div className={`mt-4 rounded-xl p-4 text-sm ${dbAgentTaskResult.ok ? 'bg-green-500/15 border border-green-500/30' : 'bg-red-500/15 border border-red-500/30'}`}>
                 {dbAgentTaskResult.ok ? (
                   <>
-                    <p className="text-green-700 font-semibold">✅ {dbAgentTaskResult.label} הושלמה</p>
+                    <p className="text-green-300 font-semibold">✅ {dbAgentTaskResult.label} הושלמה</p>
                     <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <div className="bg-white rounded-lg p-3 text-center">
-                        <p className="text-xs text-gray-500">Task</p>
-                        <p className="text-sm font-semibold text-gray-800">{dbAgentTaskResult.taskName || '—'}</p>
+                      <div className="bg-brand-200 rounded-lg p-3 text-center">
+                        <p className="text-xs text-slate-400">Task</p>
+                        <p className="text-sm font-semibold text-slate-200">{dbAgentTaskResult.taskName || '—'}</p>
                       </div>
-                      <div className="bg-white rounded-lg p-3 text-center">
-                        <p className="text-xs text-gray-500">Rows Checked</p>
+                      <div className="bg-brand-200 rounded-lg p-3 text-center">
+                        <p className="text-xs text-slate-400">Rows Checked</p>
                         <p className="text-lg font-bold text-brand-700">{dbAgentTaskResult?.data?.rows_checked ?? '—'}</p>
                       </div>
-                      <div className="bg-white rounded-lg p-3 text-center">
-                        <p className="text-xs text-gray-500">Rows Updated</p>
-                        <p className="text-lg font-bold text-green-700">{dbAgentTaskResult?.data?.rows_updated ?? '—'}</p>
+                      <div className="bg-brand-200 rounded-lg p-3 text-center">
+                        <p className="text-xs text-slate-400">Rows Updated</p>
+                        <p className="text-lg font-bold text-green-300">{dbAgentTaskResult?.data?.rows_updated ?? '—'}</p>
                       </div>
-                      <div className="bg-white rounded-lg p-3 text-center">
-                        <p className="text-xs text-gray-500">Elapsed (s)</p>
-                        <p className="text-lg font-bold text-blue-700">{dbAgentTaskResult?.data?.elapsed_s ?? '—'}</p>
+                      <div className="bg-brand-200 rounded-lg p-3 text-center">
+                        <p className="text-xs text-slate-400">Elapsed (s)</p>
+                        <p className="text-lg font-bold text-blue-300">{dbAgentTaskResult?.data?.elapsed_s ?? '—'}</p>
                       </div>
                     </div>
                   </>
                 ) : (
-                  <p className="text-red-700">❌ {dbAgentTaskResult.msg}</p>
+                  <p className="text-red-300">❌ {dbAgentTaskResult.msg}</p>
                 )}
               </div>
             )}
@@ -3350,23 +3350,23 @@ export default function Admin() {
 
           {/* Format guide */}
           <div className="card p-5">
-            <h4 className="text-sm font-semibold text-gray-700 mb-3">מבנה קובץ Excel לדוגמה</h4>
-            <p className="text-xs text-gray-500 mb-2" data-testid="admin-upload-price-hint">
+            <h4 className="text-sm font-semibold text-slate-200 mb-3">מבנה קובץ Excel לדוגמה</h4>
+            <p className="text-xs text-slate-400 mb-2" data-testid="admin-upload-price-hint">
               <span className="font-mono">max_price_ils</span> — מחיר קמעונאי / מחיר ייחוס (לא עלות רכש מספק). הכותרת הישנה <span className="font-mono">base_price</span> עדיין מתקבלת.
             </p>
             <div className="overflow-x-auto overflow-y-hidden">
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-gray-100">
+                  <tr className="bg-brand-100">
                     {['sku / pin', 'name', 'category', 'manufacturer', 'part_type', 'max_price_ils', 'compatible_vehicles'].map(h => (
-                      <th key={h} className="text-left p-2 border border-gray-200 font-mono whitespace-nowrap">{h}</th>
+                      <th key={h} className="text-left p-2 border border-brand-border font-mono whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
                     {['BOS-BP-001', 'רפידות בלם קדמיות', 'בלמים', 'Bosch', 'Aftermarket', '185', 'Toyota Corolla 2018, Honda Civic 2019'].map((v, i) => (
-                      <td key={i} className="p-2 border border-gray-200 text-gray-600 whitespace-nowrap">{v}</td>
+                      <td key={i} className="p-2 border border-brand-border text-slate-300 whitespace-nowrap">{v}</td>
                     ))}
                   </tr>
                 </tbody>
@@ -3380,7 +3380,7 @@ export default function Admin() {
       {tab === 'social' && (
         <div className="space-y-4">
           <div className="card p-6">
-            <h3 className="font-bold text-brand-navy mb-4">יצירת תוכן AI לרשתות חברתיות</h3>
+            <h3 className="font-bold text-slate-100 mb-4">יצירת תוכן AI לרשתות חברתיות</h3>
             <div className="space-y-4">
               <div className="flex gap-3">
                 <input className="input-field flex-1" placeholder="נושא הפוסט... (מבצע על בלמים, טיפ לחורף...)" value={genTopic} onChange={(e) => setGenTopic(e.target.value)} />
@@ -3397,10 +3397,10 @@ export default function Admin() {
               </div>
               {socialContent && (
                 <div className="space-y-3">
-                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                  <div className="bg-brand-100 border border-brand-border rounded-xl p-4">
                     <p className="text-xs text-brand-600 font-medium mb-2">⚠ ממתין לאישורך לפני פרסום</p>
                     <textarea
-                      className="w-full bg-transparent text-sm text-gray-800 resize-none outline-none leading-relaxed"
+                      className="w-full bg-transparent text-sm text-slate-200 resize-none outline-none leading-relaxed"
                       rows={6}
                       value={socialContent}
                       onChange={(e) => setSocialContent(e.target.value)}
@@ -3413,7 +3413,7 @@ export default function Admin() {
                 </div>
               )}
               {!socialContent && (
-                <p className="text-sm text-gray-400 text-center py-4">כל תוכן מופק על ידי AI ודורש אישור מנהל לפני פרסום</p>
+                <p className="text-sm text-slate-400 text-center py-4">כל תוכן מופק על ידי AI ודורש אישור מנהל לפני פרסום</p>
               )}
             </div>
           </div>
@@ -3428,19 +3428,19 @@ export default function Admin() {
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-brand-50"><Bot className="w-5 h-5 text-brand-600" /></div>
               <div>
-                <h3 className="font-bold text-brand-navy">סוכני AI ({agents.length})</h3>
+                <h3 className="font-bold text-slate-100">סוכני AI ({agents.length})</h3>
                 {agentsAiStatus && (
-                  <p className="text-xs text-gray-400 mt-0.5">
+                  <p className="text-xs text-slate-400 mt-0.5">
                     {agentsAiStatus.github_token_set
-                      ? <span className="text-green-600">✔ GITHUB_TOKEN פעיל — תגובות AI אמיתיות</span>
-                      : <span className="text-amber-600">⚠ אין GITHUB_TOKEN — מצב Mock</span>}
+                      ? <span className="text-green-300">✔ GITHUB_TOKEN פעיל — תגובות AI אמיתיות</span>
+                      : <span className="text-amber-300">⚠ אין GITHUB_TOKEN — מצב Mock</span>}
                   </p>
                 )}
               </div>
             </div>
             <div className="flex gap-2">
               <div className="hidden sm:flex gap-2">
-                {[{k:'customer',label:'לקוח',cls:'bg-blue-50 text-blue-600 border-blue-200'},{k:'admin',label:'ניהול',cls:'bg-brand-50 text-brand-600 border-brand-200'},{k:'internal',label:'פנימי',cls:'bg-gray-50 text-gray-600 border-gray-200'}].map(t => (
+                {[{k:'customer',label:'לקוח',cls:'bg-blue-500/15 text-blue-300 border-blue-500/30'},{k:'admin',label:'ניהול',cls:'bg-brand-50 text-brand-600 border-brand-200'},{k:'internal',label:'פנימי',cls:'bg-brand-100 text-slate-300 border-brand-border'}].map(t => (
                   <span key={t.k} className={`text-xs px-2 py-1 rounded-lg border ${t.cls}`}>{t.label}</span>
                 ))}
               </div>
@@ -3450,7 +3450,7 @@ export default function Admin() {
 
           {/* Test message bar */}
           <div className="card p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">בדיקת סוכן</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">בדיקת סוכן</p>
             <div className="flex gap-2">
               <input
                 className="input-field flex-1 text-sm"
@@ -3460,7 +3460,7 @@ export default function Admin() {
               />
             </div>
             {testResult && (
-              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-cyan-50 border border-cyan-200 text-slate-700' : 'bg-slate-100 border border-slate-300 text-slate-700'}`}>
+              <div className={`mt-3 p-3 rounded-xl text-sm ${testResult.status === 'ok' ? 'bg-cyan-500/15 border border-cyan-500/30 text-slate-200' : 'bg-brand-100 border border-brand-border text-slate-200'}`}>
                 <p className="text-xs font-semibold mb-1 opacity-60">תגובת הסוכן ({testResult.agent})</p>
                 <p className="whitespace-pre-wrap">{testResult.response}</p>
               </div>
@@ -3470,8 +3470,8 @@ export default function Admin() {
           {/* Agent cards grid */}
           {(() => {
             const COLOR_BORDER = { gray:'border-t-2 border-t-cyan-400', blue:'border-t-2 border-t-cyan-400', green:'border-t-2 border-t-cyan-400', orange:'border-t-2 border-t-cyan-400', yellow:'border-t-2 border-t-cyan-400', pink:'border-t-2 border-t-cyan-400', red:'border-t-2 border-t-cyan-400', purple:'border-t-2 border-t-cyan-400', indigo:'border-t-2 border-t-cyan-400', teal:'border-t-2 border-t-cyan-400' }
-            const COLOR_ICON = { gray:'bg-cyan-50 text-[#1B2228] border border-cyan-200', blue:'bg-cyan-50 text-[#1B2228] border border-cyan-200', green:'bg-cyan-50 text-[#1B2228] border border-cyan-200', orange:'bg-cyan-50 text-[#1B2228] border border-cyan-200', yellow:'bg-cyan-50 text-[#1B2228] border border-cyan-200', pink:'bg-cyan-50 text-[#1B2228] border border-cyan-200', red:'bg-cyan-50 text-[#1B2228] border border-cyan-200', purple:'bg-cyan-50 text-[#1B2228] border border-cyan-200', indigo:'bg-cyan-50 text-[#1B2228] border border-cyan-200', teal:'bg-cyan-50 text-[#1B2228] border border-cyan-200' }
-            const TYPE_BADGE = { customer:'bg-cyan-50 text-slate-700 border-cyan-200', admin:'bg-slate-100 text-slate-700 border-slate-300', internal:'bg-slate-100 text-slate-600 border-slate-300' }
+            const COLOR_ICON = { gray:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', blue:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', green:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', orange:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', yellow:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', pink:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', red:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', purple:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', indigo:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30', teal:'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30' }
+            const TYPE_BADGE = { customer:'bg-cyan-500/15 text-slate-200 border-cyan-500/30', admin:'bg-brand-100 text-slate-200 border-brand-border', internal:'bg-brand-100 text-slate-300 border-brand-border' }
             const TYPE_HE = { customer:'לקוח', admin:'ניהול', internal:'פנימי' }
             return (
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -3479,21 +3479,21 @@ export default function Admin() {
                   <div key={a.name} className={`card p-4 ${COLOR_BORDER[a.color] || 'border-t-2 border-t-cyan-400'} flex flex-col gap-3`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${COLOR_ICON[a.color] || 'bg-cyan-50 text-[#1B2228] border border-cyan-200'}`}>
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${COLOR_ICON[a.color] || 'bg-cyan-500/15 text-[#E2E8F0] border border-cyan-500/30'}`}>
                           <Bot className="w-4.5 h-4.5" />
                         </div>
                         <div>
                           <div className="flex items-center gap-1.5">
-                            <p className="font-bold text-brand-navy text-sm">{a.persona}</p>
+                            <p className="font-bold text-slate-100 text-sm">{a.persona}</p>
                             <span className={`text-xs px-1.5 py-0.5 rounded-md border ${TYPE_BADGE[a.type] || TYPE_BADGE.internal}`}>{TYPE_HE[a.type] || a.type}</span>
                           </div>
-                          <p className="text-xs text-gray-500 mt-0.5">{a.name_he}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{a.name_he}</p>
                         </div>
                       </div>
-                      {a.enabled === false && <span className="text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded-md border border-slate-300">מושבת</span>}
+                      {a.enabled === false && <span className="text-xs bg-brand-100 text-slate-200 px-1.5 py-0.5 rounded-md border border-brand-border">מושבת</span>}
                     </div>
-                    <p className="text-xs text-gray-500 leading-relaxed">{a.description_he || a.description}</p>
-                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <p className="text-xs text-slate-400 leading-relaxed">{a.description_he || a.description}</p>
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
                       <Cpu className="w-3 h-3" />
                       <span dir="ltr">{a.model}</span>
                       <span className="mx-1">·</span>
@@ -3503,9 +3503,9 @@ export default function Admin() {
                     {a.capabilities?.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.slice(0, 3).map((c) => (
-                          <span key={c} className="text-xs bg-gray-50 border border-gray-200 text-gray-500 px-1.5 py-0.5 rounded">{c}</span>
+                          <span key={c} className="text-xs bg-brand-100 border border-brand-border text-slate-400 px-1.5 py-0.5 rounded">{c}</span>
                         ))}
-                        {a.capabilities.length > 3 && <span className="text-xs text-gray-400">+{a.capabilities.length - 3}</span>}
+                        {a.capabilities.length > 3 && <span className="text-xs text-slate-400">+{a.capabilities.length - 3}</span>}
                       </div>
                     )}
                     <div className="flex gap-2 mt-auto pt-1">
@@ -3532,8 +3532,8 @@ export default function Admin() {
                         }}
                         className={`px-2 py-1.5 rounded-lg border text-xs transition-colors ${
                           a.enabled !== false
-                            ? 'bg-cyan-50 border-cyan-200 text-slate-700 hover:bg-cyan-100'
-                            : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                            ? 'bg-cyan-500/15 border-cyan-500/30 text-slate-200 hover:bg-cyan-500/15'
+                            : 'bg-brand-100 border-brand-border text-slate-200 hover:bg-brand-50'
                         }`}
                         title={a.enabled !== false ? 'השבת סוכן' : 'הפעל סוכן'}
                       >
@@ -3555,8 +3555,8 @@ export default function Admin() {
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-brand-50"><RotateCcw className="w-5 h-5 text-brand-600" /></div>
               <div>
-                <h3 className="font-bold text-brand-navy">בקשות החזרה ({adminReturns.length})</h3>
-                <p className="text-xs text-gray-400 mt-0.5">אשר או דחה בקשות החזרה מלקוחות</p>
+                <h3 className="font-bold text-slate-100">בקשות החזרה ({adminReturns.length})</h3>
+                <p className="text-xs text-slate-400 mt-0.5">אשר או דחה בקשות החזרה מלקוחות</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -3580,7 +3580,7 @@ export default function Admin() {
           {loading ? (
             <div className="flex justify-center p-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
           ) : adminReturns.length === 0 ? (
-            <div className="card p-8 text-center text-gray-400">
+            <div className="card p-8 text-center text-slate-400">
               <RotateCcw className="w-10 h-10 mx-auto mb-3 opacity-30" />
               <p className="font-medium">אין בקשות החזרה</p>
               <p className="text-sm mt-1">כל הבקשות הטופלו</p>
@@ -3589,18 +3589,18 @@ export default function Admin() {
             <div className="card overflow-hidden">
               <div className="overflow-x-auto overflow-y-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-brand-100">
                     <tr>
                       {['מס׳ החזרה', 'לקוח', 'הזמנה', 'סיבה', 'סכום', 'סטטוס', 'תאריך', 'פעולות'].map((h) => (
-                        <th key={h} className="px-3 py-3 text-right text-xs font-medium text-gray-500 whitespace-nowrap">{h}</th>
+                        <th key={h} className="px-3 py-3 text-right text-xs font-medium text-slate-400 whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-brand-border">
                     {adminReturns.map((r) => {
                       const REASON_HE = { wrong_part: 'חלק שגוי', defective: 'פגום / לא עובד', not_as_described: 'לא תואם לתיאור', changed_mind: 'שינוי דעה', damaged_in_transit: 'נפגע בשילוח', duplicate_order: 'הזמנה כפולה' }
-                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-100 text-amber-700' }, approved: { label: 'אושר', cls: 'bg-green-100 text-green-700' }, rejected: { label: 'נדחה', cls: 'bg-red-100 text-red-600' }, cancelled: { label: 'בוטל', cls: 'bg-gray-100 text-gray-500' } }
-                      const st = ST[r.status] || { label: r.status, cls: 'bg-gray-100 text-gray-600' }
+                      const ST = { pending: { label: 'ממתין', cls: 'bg-amber-500/15 text-amber-300' }, approved: { label: 'אושר', cls: 'bg-green-500/15 text-green-300' }, rejected: { label: 'נדחה', cls: 'bg-red-500/15 text-red-300' }, cancelled: { label: 'בוטל', cls: 'bg-brand-100 text-slate-400' } }
+                      const st = ST[r.status] || { label: r.status, cls: 'bg-brand-100 text-slate-300' }
                       // Policy §3 — full-refund reasons (100%) vs partial (90%)
                       const FULL_REFUND_REASONS = ['defective', 'wrong_part', 'damaged_in_transit']
                       const isFullRefund = FULL_REFUND_REASONS.includes(r.reason)
@@ -3608,44 +3608,44 @@ export default function Admin() {
                       const suggestedRefund = ((r.original_amount || 0) * suggestedPct / 100)
                       const handlingFee = ((r.original_amount || 0) * (100 - suggestedPct) / 100)
                       return (
-                        <tr key={r.id} className="hover:bg-gray-50">
-                          <td className="px-3 py-3 font-mono text-xs font-medium text-brand-navy">{r.return_number}</td>
+                        <tr key={r.id} className="hover:bg-brand-100">
+                          <td className="px-3 py-3 font-mono text-xs font-medium text-slate-100">{r.return_number}</td>
                           <td className="px-3 py-3">
                             <div className="text-xs">
-                              <p className="font-medium text-gray-800">{r.user_name || '—'}</p>
-                              <p className="text-gray-400" dir="ltr">{r.user_email}</p>
+                              <p className="font-medium text-slate-200">{r.user_name || '—'}</p>
+                              <p className="text-slate-400" dir="ltr">{r.user_email}</p>
                             </div>
                           </td>
-                          <td className="px-3 py-3 font-mono text-xs text-gray-500">{r.order_number || '—'}</td>
-                          <td className="px-3 py-3 text-xs text-gray-600">
+                          <td className="px-3 py-3 font-mono text-xs text-slate-400">{r.order_number || '—'}</td>
+                          <td className="px-3 py-3 text-xs text-slate-300">
                             <div>
                               <p className="font-medium">{REASON_HE[r.reason] || r.reason}</p>
                               {/* Policy badge */}
                               {isFullRefund
-                                ? <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-green-100 text-green-700 border border-green-200">✅ החזר מלא — אנחנו משלמים שילוח</span>
-                                : <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 border border-yellow-200">⚠ 90% — דמי טיפול 10%</span>
+                                ? <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-green-500/15 text-green-300 border border-green-500/30">✅ החזר מלא — אנחנו משלמים שילוח</span>
+                                : <span className="inline-flex items-center gap-0.5 mt-1 text-xs px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">⚠ 90% — דמי טיפול 10%</span>
                               }
-                              {r.description && <p className="text-gray-400 mt-0.5 max-w-xs truncate">{r.description}</p>}
+                              {r.description && <p className="text-slate-400 mt-0.5 max-w-xs truncate">{r.description}</p>}
                             </div>
                           </td>
                           <td className="px-3 py-3 whitespace-nowrap">
                             <div className="text-xs space-y-0.5">
-                              <p className="text-gray-500">סה״כ: <span className="font-medium text-gray-800">₪{Number(r.original_amount || 0).toFixed(2)}</span></p>
+                              <p className="text-slate-400">סה״כ: <span className="font-medium text-slate-200">₪{Number(r.original_amount || 0).toFixed(2)}</span></p>
                               {r.status === 'pending' && (
                                 <>
-                                  <p className="text-green-600">↩ זיכוי: ₪{suggestedRefund.toFixed(2)} ({suggestedPct}%)</p>
+                                  <p className="text-green-300">↩ זיכוי: ₪{suggestedRefund.toFixed(2)} ({suggestedPct}%)</p>
                                   {handlingFee > 0 && <p className="text-brand-500">דמי טיפול: ₪{handlingFee.toFixed(2)}</p>}
                                 </>
                               )}
                               {r.refund_amount != null && r.status !== 'pending' && (
-                                <p className="text-green-600 font-medium">↩ ₪{Number(r.refund_amount).toFixed(2)} ({r.refund_percentage}%)</p>
+                                <p className="text-green-300 font-medium">↩ ₪{Number(r.refund_amount).toFixed(2)} ({r.refund_percentage}%)</p>
                               )}
                             </div>
                           </td>
                           <td className="px-3 py-3">
                             <span className={`badge text-xs ${st.cls}`}>{st.label}</span>
                           </td>
-                          <td className="px-3 py-3 text-gray-500 text-xs whitespace-nowrap">
+                          <td className="px-3 py-3 text-slate-400 text-xs whitespace-nowrap">
                             {r.requested_at ? new Date(r.requested_at).toLocaleDateString('he-IL') : ''}
                           </td>
                           <td className="px-3 py-3">
@@ -3656,8 +3656,8 @@ export default function Admin() {
                                   disabled={processingReturn === r.id}
                                   className={`flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg disabled:opacity-40 transition-colors ${
                                     isFullRefund
-                                      ? 'bg-green-50 border border-green-200 text-green-700 hover:bg-green-100'
-                                      : 'bg-yellow-50 border border-yellow-200 text-yellow-700 hover:bg-yellow-100'
+                                      ? 'bg-green-500/15 border border-green-500/30 text-green-300 hover:bg-green-500/15'
+                                      : 'bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 hover:bg-yellow-500/15'
                                   }`}
                                   title={`אשר לפי מדיניות — החזר ${suggestedPct}%`}
                                 >
@@ -3667,7 +3667,7 @@ export default function Admin() {
                                 <button
                                   onClick={() => { setShowRejectModal(r.id); setRejectReason('') }}
                                   disabled={processingReturn === r.id}
-                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 disabled:opacity-40 transition-colors"
+                                  className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-lg bg-red-500/15 border border-red-500/30 text-red-300 hover:bg-red-500/15 disabled:opacity-40 transition-colors"
                                   title="דחה בקשה"
                                 >
                                   <XCircle className="w-3 h-3" />
@@ -3695,22 +3695,22 @@ export default function Admin() {
     {/* DB Row JSON Modal */}
     {dbViewRowModal && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDbViewRowModal(null)}>
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-5 border-b border-gray-100">
+        <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-3xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-5 border-b border-brand-border">
             <div>
-              <h3 className="font-bold text-brand-navy">רשומת DB מלאה</h3>
-              <p className="text-xs text-gray-400 mt-0.5">{dbViewDataset}</p>
+              <h3 className="font-bold text-slate-100">רשומת DB מלאה</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{dbViewDataset}</p>
             </div>
-            <button onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-gray-100">
-              <X className="w-5 h-5 text-gray-500" />
+            <button onClick={() => setDbViewRowModal(null)} className="p-1.5 rounded-full hover:bg-brand-100">
+              <X className="w-5 h-5 text-slate-400" />
             </button>
           </div>
           <div className="p-5 overflow-auto">
-            <pre className="text-xs leading-5 text-gray-700 bg-gray-50 border border-gray-200 rounded-xl p-4" dir="ltr">
+            <pre className="text-xs leading-5 text-slate-200 bg-brand-100 border border-brand-border rounded-xl p-4" dir="ltr">
 {JSON.stringify(dbViewRowModal, null, 2)}
             </pre>
           </div>
-          <div className="p-5 border-t border-gray-100 flex justify-end">
+          <div className="p-5 border-t border-brand-border flex justify-end">
             <button onClick={() => setDbViewRowModal(null)} className="btn-secondary text-sm">סגור</button>
           </div>
         </div>
@@ -3720,13 +3720,13 @@ export default function Admin() {
     {/* Reject Return Modal */}
     {showRejectModal && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowRejectModal(null)}>
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-gray-100">
-            <h3 className="font-bold text-brand-navy flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
-            <button onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+        <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-brand-border">
+            <h3 className="font-bold text-slate-100 flex items-center gap-2"><XCircle className="w-5 h-5 text-red-500" /> דחיית בקשת החזרה</h3>
+            <button onClick={() => setShowRejectModal(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="p-6">
-            <label className="block text-sm font-medium text-gray-700 mb-2">סיבת הדחייה (תישלח ללקוח)</label>
+            <label className="block text-sm font-medium text-slate-200 mb-2">סיבת הדחייה (תישלח ללקוח)</label>
             <textarea
               rows={3}
               className="input-field w-full text-sm"
@@ -3735,7 +3735,7 @@ export default function Admin() {
               onChange={(e) => setRejectReason(e.target.value)}
             />
           </div>
-          <div className="flex gap-3 p-6 border-t border-gray-100">
+          <div className="flex gap-3 p-6 border-t border-brand-border">
             <button
               onClick={handleRejectReturn}
               disabled={processingReturn === showRejectModal}
@@ -3753,32 +3753,32 @@ export default function Admin() {
     {/* Edit Agent Modal */}
     {editAgent && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditAgent(null)}>
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-gray-100">
+        <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-brand-border">
             <div>
-              <h3 className="font-bold text-lg text-brand-navy">עריכת סוכן</h3>
-              <p className="text-xs text-gray-400 mt-0.5">{editAgent.name}</p>
+              <h3 className="font-bold text-lg text-slate-100">עריכת סוכן</h3>
+              <p className="text-xs text-slate-400 mt-0.5">{editAgent.name}</p>
             </div>
-            <button onClick={() => setEditAgent(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+            <button onClick={() => setEditAgent(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">שם תפקיד (עברית)</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם תפקיד (עברית)</label>
                 <input className="input-field w-full text-sm" value={editAgentForm.name_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, name_he: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">שם פרסונה</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">שם פרסונה</label>
                 <input className="input-field w-full text-sm" dir="ltr" value={editAgentForm.persona || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, persona: e.target.value }))} />
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">תיאור תפקיד</label>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">תיאור תפקיד</label>
               <textarea className="input-field w-full text-sm" rows={2} value={editAgentForm.description_he || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, description_he: e.target.value }))} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">מודל AI</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">מודל AI</label>
                 <select className="input-field w-full text-sm" dir="ltr" value={editAgentForm.model || 'gpt-4o'} onChange={(e) => setEditAgentForm((f) => ({ ...f, model: e.target.value }))}>
                   <option value="gpt-4o">gpt-4o</option>
                   <option value="gpt-4o-mini">gpt-4o-mini</option>
@@ -3786,26 +3786,26 @@ export default function Admin() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">טמפרטורה: {editAgentForm.temperature ?? 0.5}</label>
+                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">טמפרטורה: {editAgentForm.temperature ?? 0.5}</label>
                 <input type="range" min="0" max="1" step="0.05" className="w-full mt-2" value={editAgentForm.temperature ?? 0.5} onChange={(e) => setEditAgentForm((f) => ({ ...f, temperature: parseFloat(e.target.value) }))} />
-                <div className="flex justify-between text-xs text-gray-400 mt-1"><span>מדויק</span><span>יצירתי</span></div>
+                <div className="flex justify-between text-xs text-slate-400 mt-1"><span>מדויק</span><span>יצירתי</span></div>
               </div>
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">יכולות (מופרדות בפסיק)</label>
+              <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">יכולות (מופרדות בפסיק)</label>
               <input className="input-field w-full text-sm" dir="ltr" placeholder="Part search, Price comparison, ..." value={editAgentForm.capabilities || ''} onChange={(e) => setEditAgentForm((f) => ({ ...f, capabilities: e.target.value }))} />
             </div>
-            <div className="flex items-center gap-3 p-3 rounded-xl bg-gray-50 border border-gray-200">
-              <span className="text-sm text-gray-600">סוכן פעיל</span>
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-brand-100 border border-brand-border">
+              <span className="text-sm text-slate-300">סוכן פעיל</span>
               <button
                 onClick={() => setEditAgentForm((f) => ({ ...f, enabled: !f.enabled }))}
-                className={`ml-auto p-1 rounded-lg transition-colors ${editAgentForm.enabled ? 'text-green-600' : 'text-gray-400'}`}
+                className={`ml-auto p-1 rounded-lg transition-colors ${editAgentForm.enabled ? 'text-green-300' : 'text-slate-400'}`}
               >
                 {editAgentForm.enabled ? <ToggleRight className="w-6 h-6" /> : <ToggleLeft className="w-6 h-6" />}
               </button>
             </div>
           </div>
-          <div className="flex gap-3 p-6 border-t border-gray-100">
+          <div className="flex gap-3 p-6 border-t border-brand-border">
             <button onClick={saveEditAgent} disabled={savingAgent} className="btn-primary flex-1 flex items-center justify-center gap-2">
               {savingAgent ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
               שמור שינויים
@@ -3822,15 +3822,15 @@ export default function Admin() {
       const setF = (k, v) => setCreateSupplierForm((x) => ({ ...x, [k]: v }))
       return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateSupplier(false)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
-              <h3 className="font-bold text-lg text-brand-navy">ספק חדש</h3>
-              <button onClick={() => setShowCreateSupplier(false)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+          <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-brand-border">
+              <h3 className="font-bold text-lg text-slate-100">ספק חדש</h3>
+              <button onClick={() => setShowCreateSupplier(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5">
               <SupplierFormFields f={f} setF={setF} isCreate />
             </div>
-            <div className="flex gap-3 p-6 border-t border-gray-100">
+            <div className="flex gap-3 p-6 border-t border-brand-border">
               <button onClick={submitCreateSupplier} className="btn-primary flex-1 flex items-center justify-center gap-2"><PlusCircle className="w-4 h-4" />צור ספק</button>
               <button onClick={() => setShowCreateSupplier(false)} className="btn-secondary flex-1">ביטול</button>
             </div>
@@ -3845,18 +3845,18 @@ export default function Admin() {
       const setF = (k, v) => setEditSupplierForm((x) => ({ ...x, [k]: v }))
       return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditSupplier(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-brand-border">
               <div>
-                <h3 className="font-bold text-lg text-brand-navy">עריכת ספק</h3>
-                <p className="text-xs text-gray-400 mt-0.5">{editSupplier.name}</p>
+                <h3 className="font-bold text-lg text-slate-100">עריכת ספק</h3>
+                <p className="text-xs text-slate-400 mt-0.5">{editSupplier.name}</p>
               </div>
-              <button onClick={() => setEditSupplier(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+              <button onClick={() => setEditSupplier(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
             </div>
             <div className="overflow-y-auto p-6 space-y-5">
               <SupplierFormFields f={f} setF={setF} />
             </div>
-            <div className="flex gap-3 p-6 border-t border-gray-100">
+            <div className="flex gap-3 p-6 border-t border-brand-border">
               <button onClick={saveEditSupplier} className="btn-primary flex-1 flex items-center justify-center gap-2"><Save className="w-4 h-4" />שמור שינויים</button>
               <button onClick={() => setEditSupplier(null)} className="btn-secondary flex-1">ביטול</button>
             </div>
@@ -3868,31 +3868,31 @@ export default function Admin() {
     {/* Create User Modal */}
     {showCreateModal && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowCreateModal(false)}>
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-between p-6 border-b border-gray-100">
-            <h3 className="font-bold text-lg text-brand-navy">{['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'יצירת נציג חדש' : 'יצירת משתמש חדש'}</h3>
-            <button onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+        <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-6 border-b border-brand-border">
+            <h3 className="font-bold text-lg text-slate-100">{['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'יצירת נציג חדש' : 'יצירת משתמש חדש'}</h3>
+            <button onClick={() => setShowCreateModal(false)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
           <div className="overflow-y-auto p-6 space-y-4">
             <div className="grid grid-cols-1 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">שם מלא <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">שם מלא <span className="text-red-500">*</span></label>
                 <input className="input-field w-full" value={createForm.full_name} onChange={(e) => setCreateForm((f) => ({ ...f, full_name: e.target.value }))} placeholder="ישראל ישראלי" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">אימייל <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">אימייל <span className="text-red-500">*</span></label>
                 <input className="input-field w-full" type="email" value={createForm.email} onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))} placeholder="user@example.com" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">טלפון <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">טלפון <span className="text-red-500">*</span></label>
                 <input className="input-field w-full" type="tel" value={createForm.phone} onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value }))} placeholder="05X-XXXXXXX" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">סיסמה <span className="text-red-500">*</span></label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">סיסמה <span className="text-red-500">*</span></label>
                 <input className="input-field w-full" type="password" value={createForm.password} onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))} placeholder="לפחות 8 תווים" dir="ltr" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">תפקיד</label>
+                <label className="block text-sm font-medium text-slate-200 mb-1">תפקיד</label>
                 <select className="input-field w-full" value={createForm.role} onChange={(e) => { const r = e.target.value; setCreateForm((f) => ({ ...f, role: r, is_admin: r === 'admin' })) }}>
                   <option value="customer">לקוח</option>
                   <option value="support">נציג שירות</option>
@@ -3901,8 +3901,8 @@ export default function Admin() {
               </div>
             </div>
             <div className="flex gap-3 pt-1">
-              {[{ key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-gray-100 text-gray-500' },
-                { key: 'is_verified', label: 'מאומת', on: 'bg-blue-100 text-blue-700', off: 'bg-gray-100 text-gray-500' },
+              {[{ key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-brand-100 text-slate-400' },
+                { key: 'is_verified', label: 'מאומת', on: 'bg-blue-500/15 text-blue-300', off: 'bg-brand-100 text-slate-400' },
               ].map(({ key, label, on, off }) => (
                 <button
                   key={key}
@@ -3916,7 +3916,7 @@ export default function Admin() {
               ))}
             </div>
           </div>
-          <div className="flex gap-3 p-6 border-t border-gray-100">
+          <div className="flex gap-3 p-6 border-t border-brand-border">
             <button onClick={submitCreateUser} className="btn-primary flex-1 flex items-center justify-center gap-2">
               <PlusCircle className="w-4 h-4" />
               {['support', 'service', 'customer_support'].includes(String(createForm.role || '').toLowerCase()) ? 'צור נציג' : 'צור משתמש'}
@@ -3930,14 +3930,14 @@ export default function Admin() {
     {/* Edit User Modal */}
     {editUser && (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setEditUser(null)}>
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="bg-brand-200 rounded-2xl shadow-xl w-full max-w-lg flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
           {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div className="flex items-center justify-between p-6 border-b border-brand-border">
             <div>
-              <h3 className="font-bold text-lg text-brand-navy">עדכון פרטי משתמש</h3>
-              <p className="text-xs text-gray-400 mt-0.5">נרשם: {editUser.created_at ? new Date(editUser.created_at).toLocaleDateString('he-IL') : '—'}</p>
+              <h3 className="font-bold text-lg text-slate-100">עדכון פרטי משתמש</h3>
+              <p className="text-xs text-slate-400 mt-0.5">נרשם: {editUser.created_at ? new Date(editUser.created_at).toLocaleDateString('he-IL') : '—'}</p>
             </div>
-            <button onClick={() => setEditUser(null)} className="p-1.5 rounded-full hover:bg-gray-100"><X className="w-5 h-5 text-gray-500" /></button>
+            <button onClick={() => setEditUser(null)} className="p-1.5 rounded-full hover:bg-brand-100"><X className="w-5 h-5 text-slate-400" /></button>
           </div>
 
           {/* Scrollable body */}
@@ -3945,18 +3945,18 @@ export default function Admin() {
 
             {/* Personal info */}
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">פרטים אישיים</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">פרטים אישיים</p>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">שם מלא</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">שם מלא</label>
                   <input className="input-field w-full" value={editForm.full_name} onChange={(e) => setEditForm((f) => ({ ...f, full_name: e.target.value }))} placeholder="שם מלא" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">אימייל</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">אימייל</label>
                   <input className="input-field w-full" type="email" value={editForm.email} onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" dir="ltr" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">טלפון</label>
+                  <label className="block text-sm font-medium text-slate-200 mb-1">טלפון</label>
                   <input className="input-field w-full" type="tel" value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} placeholder="05X-XXXXXXX" dir="ltr" />
                 </div>
               </div>
@@ -3964,7 +3964,7 @@ export default function Admin() {
 
             {/* Role */}
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">תפקיד</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">תפקיד</p>
               <select
                 className="input-field w-full"
                 value={editForm.role}
@@ -3980,11 +3980,11 @@ export default function Admin() {
 
             {/* Toggles */}
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">הרשאות וסטטוס</p>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">הרשאות וסטטוס</p>
               <div className="grid grid-cols-3 gap-3">
-                {[{ key: 'is_active', label: 'פעיל', on: 'bg-green-100 text-green-700', off: 'bg-red-100 text-red-600' },
-                  { key: 'is_verified', label: 'מאומת', on: 'bg-blue-100 text-blue-700', off: 'bg-gray-100 text-gray-500' },
-                  { key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-gray-100 text-gray-500' },
+                {[{ key: 'is_active', label: 'פעיל', on: 'bg-green-500/15 text-green-300', off: 'bg-red-500/15 text-red-300' },
+                  { key: 'is_verified', label: 'מאומת', on: 'bg-blue-500/15 text-blue-300', off: 'bg-brand-100 text-slate-400' },
+                  { key: 'is_admin', label: 'אדמין', on: 'bg-brand-100 text-brand-700', off: 'bg-brand-100 text-slate-400' },
                 ].map(({ key, label, on, off }) => (
                   <button
                     key={key}
@@ -4002,16 +4002,16 @@ export default function Admin() {
 
             {/* Account info */}
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">מידע חשבון</p>
-              <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">מידע חשבון</p>
+              <div className="bg-brand-100 rounded-xl p-4 space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-500">מזהה משתמש</span>
-                  <span className="font-mono text-xs text-gray-600 dir-ltr" dir="ltr">{editUser.id?.slice(0, 8)}…</span>
+                  <span className="text-slate-400">מזהה משתמש</span>
+                  <span className="font-mono text-xs text-slate-300 dir-ltr" dir="ltr">{editUser.id?.slice(0, 8)}…</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">כשלונות כניסה</span>
+                  <span className="text-slate-400">כשלונות כניסה</span>
                   <div className="flex items-center gap-2">
-                    <span className={`font-medium ${editUser.failed_login_count > 0 ? 'text-red-600' : 'text-gray-700'}`}>{editUser.failed_login_count ?? 0}</span>
+                    <span className={`font-medium ${editUser.failed_login_count > 0 ? 'text-red-300' : 'text-slate-200'}`}>{editUser.failed_login_count ?? 0}</span>
                     {editUser.failed_login_count > 0 && (
                       <button onClick={() => resetLoginFailures(editUser.id)} className="text-xs text-brand-600 hover:underline">איפוס</button>
                     )}
@@ -4019,9 +4019,9 @@ export default function Admin() {
                 </div>
                 {editUser.locked_until && (
                   <div className="flex justify-between">
-                    <span className="text-gray-500">נעול עד</span>
+                    <span className="text-slate-400">נעול עד</span>
                     <div className="flex items-center gap-2">
-                      <span className="text-red-600 text-xs">{new Date(editUser.locked_until).toLocaleString('he-IL')}</span>
+                      <span className="text-red-300 text-xs">{new Date(editUser.locked_until).toLocaleString('he-IL')}</span>
                       <button onClick={() => resetLoginFailures(editUser.id)} className="text-xs text-brand-600 hover:underline">שחרר</button>
                     </div>
                   </div>
@@ -4031,7 +4031,7 @@ export default function Admin() {
           </div>
 
           {/* Footer */}
-          <div className="flex gap-3 p-6 border-t border-gray-100">
+          <div className="flex gap-3 p-6 border-t border-brand-border">
             <button onClick={saveEditUser} className="btn-primary flex-1 flex items-center justify-center gap-2">
               <Save className="w-4 h-4" />
               שמור שינויים

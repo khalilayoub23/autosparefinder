@@ -8,10 +8,10 @@ import { useAuthStore } from '../stores/authStore'
 
 function StatusPill({ status }) {
   const map = {
-    pending_payment: { label: 'ממתין לתשלום', cls: 'bg-yellow-100 text-yellow-700' },
+    pending_payment: { label: 'ממתין לתשלום', cls: 'bg-yellow-500/15 text-yellow-300' },
     paid: { label: 'שולם', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
-    supplier_ordered: { label: 'הוזמן מספק', cls: 'bg-indigo-100 text-indigo-700' },
-    shipped: { label: 'נשלח', cls: 'bg-cyan-100 text-cyan-700' },
+    supplier_ordered: { label: 'הוזמן מספק', cls: 'bg-indigo-500/15 text-indigo-300' },
+    shipped: { label: 'נשלח', cls: 'bg-cyan-500/15 text-cyan-300' },
     delivered: { label: 'נמסר', cls: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
     cancelled: { label: 'בוטל', cls: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
     refunded: { label: 'הוחזר', cls: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
@@ -125,7 +125,7 @@ export default function ClientPortal() {
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card p-4"><p className="text-sm text-[#94A3B8]">סה״כ הזמנות</p><p className="text-2xl font-bold text-white mt-1">{totals.orderCount}</p></div>
         <div className="card p-4"><p className="text-sm text-[#94A3B8]">נמסרו</p><p className="text-2xl font-bold text-[#4ADE80] mt-1">{totals.deliveredCount}</p></div>
-        <div className="card p-4"><p className="text-sm text-[#94A3B8]">ממתינות לתשלום</p><p className="text-2xl font-bold text-yellow-700 mt-1">{totals.pendingCount}</p></div>
+        <div className="card p-4"><p className="text-sm text-[#94A3B8]">ממתינות לתשלום</p><p className="text-2xl font-bold text-yellow-300 mt-1">{totals.pendingCount}</p></div>
         <div className="card p-4"><p className="text-sm text-[#94A3B8]">סה״כ רכישות</p><p className="text-2xl font-bold text-white mt-1">₪{totals.totalSpent.toFixed(0)}</p></div>
       </section>
 

@@ -607,7 +607,7 @@ export default function LandingPage() {
               </ul>
             </div>
           </div>
-          <div className="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-[12px] text-slate-500">
+          <div className="mt-10 pt-6 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-[12px] text-slate-400">
             <span>{t('footer.rights', { year: new Date().getFullYear() })}</span>
             <div className="flex items-center gap-5">
               <a href="/developers" className="hover:text-slate-300 transition-colors">{t('footer.api')}</a>

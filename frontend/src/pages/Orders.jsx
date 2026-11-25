@@ -43,11 +43,11 @@ function buildTrackingUrl(trackingNumber, storedUrl) {
 }
 
 const STATUS_MAP = {
-  pending_payment:   { label: 'ממתין לתשלום', icon: Clock,       color: 'bg-yellow-100 text-yellow-700' },
+  pending_payment:   { label: 'ממתין לתשלום', icon: Clock,       color: 'bg-yellow-500/15 text-yellow-300' },
   paid:              { label: 'שולם',          icon: CheckCircle, color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'    },
   confirmed:         { label: 'אושר',          icon: CheckCircle, color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'    },
-  processing:        { label: 'בעיבוד',        icon: Clock,       color: 'bg-indigo-100 text-indigo-700'},
-  supplier_ordered:  { label: 'הוזמן מספק',    icon: Truck,       color: 'bg-cyan-100 text-cyan-700'   },
+  processing:        { label: 'בעיבוד',        icon: Clock,       color: 'bg-indigo-500/15 text-indigo-300'},
+  supplier_ordered:  { label: 'הוזמן מספק',    icon: Truck,       color: 'bg-cyan-500/15 text-cyan-300'   },
   shipped:           { label: 'נשלח',          icon: Truck,       color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]'},
   delivered:         { label: 'נמסר',          icon: CheckCircle, color: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
   cancelled:         { label: 'בוטל',          icon: XCircle,     color: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]'     },
@@ -92,7 +92,7 @@ function OrderTimeline({ status }) {
           <div key={step.key} className="flex items-center flex-shrink-0">
             <div className="flex flex-col items-center gap-1">
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-all ${
-                done   ? 'bg-brand-500 border-brand-500 text-white' :
+                done   ? 'bg-brand-500 border-brand-500 text-[#0F1218]' :
                 active ? 'bg-[#1E2535] border-brand-500 text-[#38BDF8] ring-2 ring-brand-200' :
                          'bg-[#1E2535] border-[rgba(148,163,184,0.18)] text-gray-300'
               }`}>
@@ -103,7 +103,7 @@ function OrderTimeline({ status }) {
               }`}>{step.label}</span>
             </div>
             {i < TIMELINE_STEPS.length - 1 && (
-              <div className={`h-0.5 w-6 sm:w-10 mb-4 flex-shrink-0 ${done ? 'bg-brand-400' : 'bg-gray-200'}`} />
+              <div className={`h-0.5 w-6 sm:w-10 mb-4 flex-shrink-0 ${done ? 'bg-brand-400' : 'bg-brand-50'}`} />
             )}
           </div>
         )
@@ -248,7 +248,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
       </div>
       {/* Inline tracking pill — visible without expanding */}
       {order.tracking_number && (
-        <div className="px-5 pb-3 flex items-center gap-2 text-xs text-cyan-700">
+        <div className="px-5 pb-3 flex items-center gap-2 text-xs text-cyan-300">
           <Truck className="w-3.5 h-3.5 flex-shrink-0" />
           <span>מעקב: <strong>{order.tracking_number}</strong></span>
           {(() => {
@@ -258,7 +258,7 @@ function OrderCard({ order, onReturn, onDelete, selected, onSelect }) {
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 underline hover:text-cyan-900 font-medium"
+                className="inline-flex items-center gap-1 underline hover:text-cyan-300 font-medium"
               >
                 <ExternalLink className="w-3 h-3" /> עקוב אחר המשלוח
               </a>
@@ -374,7 +374,7 @@ const RETURN_REASONS = {
 }
 
 const RETURN_STATUS_MAP = {
-  pending:   { label: 'ממתין לאישור', color: 'bg-yellow-100 text-yellow-700' },
+  pending:   { label: 'ממתין לאישור', color: 'bg-yellow-500/15 text-yellow-300' },
   approved:  { label: 'אושר ✓',       color: 'bg-[rgba(34,197,94,0.12)]  text-[#4ADE80]'  },
   rejected:  { label: 'נדחה',          color: 'bg-[rgba(239,68,68,0.12)]    text-[#F87171]'    },
   completed: { label: 'הושלם',         color: 'bg-[rgba(14,165,233,0.12)]   text-[#38BDF8]'   },
@@ -382,7 +382,7 @@ const RETURN_STATUS_MAP = {
 }
 
 const SUPPLIER_PAYMENT_STATUS_MAP = {
-  pending:          { label: 'ממתין לתשלום ספק', color: 'bg-yellow-100 text-yellow-700' },
+  pending:          { label: 'ממתין לתשלום ספק', color: 'bg-yellow-500/15 text-yellow-300' },
   paid:             { label: 'שולם לספק', color: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
   failed:           { label: 'נכשל', color: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
   tracking_received:{ label: 'מעקב התקבל', color: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
@@ -434,7 +434,7 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
 
           {/* Refund preview based on policy */}
           {reason && (
-            <div className={`rounded-xl p-3 text-sm border ${isFullRefund ? 'bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.35)]' : 'bg-yellow-50 border-yellow-200'}`}>
+            <div className={`rounded-xl p-3 text-sm border ${isFullRefund ? 'bg-[rgba(34,197,94,0.12)] border-[rgba(34,197,94,0.35)]' : 'bg-yellow-500/15 border-yellow-500/30'}`}>
               {isFullRefund ? (
                 <div className="space-y-0.5">
                   <p className="font-semibold text-[#4ADE80]">✅ זכאי להחזר מלא 100%</p>
@@ -443,9 +443,9 @@ function ReturnModal({ orderId, orderAmount, onClose, onCreated }) {
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  <p className="font-semibold text-yellow-800">⚠ זכאי להחזר חלקי 90%</p>
-                  {estimatedRefund && <p className="text-yellow-700">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
-                  {handlingFee && handlingFee > 0 && <p className="text-yellow-600 text-xs">דמי טיפול: ₪{handlingFee.toFixed(2)} (10%) · עלות שילוח החזרה בחשבונך</p>}
+                  <p className="font-semibold text-yellow-300">⚠ זכאי להחזר חלקי 90%</p>
+                  {estimatedRefund && <p className="text-yellow-300">זיכוי משוער: ₪{estimatedRefund.toFixed(2)}</p>}
+                  {handlingFee && handlingFee > 0 && <p className="text-yellow-300 text-xs">דמי טיפול: ₪{handlingFee.toFixed(2)} (10%) · עלות שילוח החזרה בחשבונך</p>}
                 </div>
               )}
             </div>
@@ -699,7 +699,7 @@ export default function Orders() {
                       className="w-4 h-4 accent-brand-600 cursor-pointer"
                     />
                     <div>
-                      <p className="font-semibold text-amber-900">
+                      <p className="font-semibold text-amber-300">
                         {selectedIds.size > 0
                           ? selectedIds.size === 1
                             ? 'נבחרה הזמנה אחת לתשלום'
@@ -799,7 +799,7 @@ export default function Orders() {
                       <p className="text-xs text-[#94A3B8] mt-0.5">Virtual card: {sp.issuing_card_id}</p>
                     )}
                     {sp.supplier_purchase_status && (
-                      <p className="text-xs text-cyan-700 mt-0.5">
+                      <p className="text-xs text-cyan-300 mt-0.5">
                         סטטוס הזמנת ספק: {
                           sp.supplier_purchase_status === 'ordered' ? 'בוצע ונוצר מעקב' :
                           sp.supplier_purchase_status === 'submitted' ? 'נשלח לסוכן הזמנות' :
@@ -836,7 +836,7 @@ export default function Orders() {
                 </div>
 
                 {sp.tracking_number && (
-                  <div className="flex items-center gap-2 text-xs text-cyan-700 pt-1 border-t border-[rgba(148,163,184,0.18)]">
+                  <div className="flex items-center gap-2 text-xs text-cyan-300 pt-1 border-t border-[rgba(148,163,184,0.18)]">
                     <Truck className="w-3.5 h-3.5" />
                     <span>מעקב: <strong>{sp.tracking_number}</strong></span>
                     {trackingUrl && (
@@ -844,7 +844,7 @@ export default function Orders() {
                         href={trackingUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 underline hover:text-cyan-900 font-medium"
+                        className="inline-flex items-center gap-1 underline hover:text-cyan-300 font-medium"
                       >
                         <ExternalLink className="w-3 h-3" /> עקוב אחר המשלוח
                       </a>
@@ -886,7 +886,7 @@ export default function Orders() {
                 <div className="text-left flex-shrink-0">
                   <span className={`badge text-xs ${
                     r.status === 'approved' ? 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' :
-                    r.status === 'pending'  ? 'bg-yellow-100 text-yellow-700' :
+                    r.status === 'pending'  ? 'bg-yellow-500/15 text-yellow-300' :
                     'bg-[#252D3D] text-[#94A3B8]'
                   }`}>
                     {r.status === 'approved' ? 'אושר ✓' : r.status === 'pending' ? 'בטיפול' : r.status}

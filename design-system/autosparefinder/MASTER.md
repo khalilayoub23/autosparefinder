@@ -594,6 +594,16 @@ const { dir } = useI18n()
 
 ---
 
+## 16b. DARK-THEME ENFORCEMENT (mission 3, 2026-11-25)
+
+Light-theme leftovers were the remaining source of "the page looks like another site": `bg-white`, `bg-gray-50/100/200`, `text-gray-500..900`,
+`text-brand-navy` (**#151B27 = dark text on the dark shell**, invisible), `text-[#1B2228]`, pastel badges (`bg-green-100 text-green-700`) and
+**white text on the sky-blue gradient banners** (2.1-3.2:1). Rules, guarded by `frontend/src/components/ui/designConsistency.test.js`:
+surfaces `bg-brand-200/100/50`, borders `border-brand-border`, text `text-slate-200/300/400`, badges `bg-<c>-500/15 text-<c>-300`, and
+**dark text (`#0F1218`) on every `bg-brand-300..700` surface** (as `.btn-primary` does). Measured contrast (WCAG luminance, in-page) on the 23
+screens x 2 viewports: min 4.58:1 (was 1.0-2.1:1 on login, register, legal pages, admin, agents, consent modal, search hero).
+Evidence + harness: `docs/evidence/2026-11-25-ui/`.
+
 ## 17. FILE LOCATIONS
 
 | File | Purpose |

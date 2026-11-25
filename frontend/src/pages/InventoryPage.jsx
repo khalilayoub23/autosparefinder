@@ -60,16 +60,16 @@ const InventoryPage = () => {
     <DashboardLayout>
       <div className="mb-8 flex justify-between items-end">
         <div>
-          <h2 className="text-2xl font-black text-[#1B2228]">ניהול מלאי חלפים</h2>
-          <p className="text-sm text-slate-500">צפייה, עריכה וניהול של מלאי החלפים בזמן אמת</p>
+          <h2 className="text-2xl font-black text-[#E2E8F0]">ניהול מלאי חלפים</h2>
+          <p className="text-sm text-slate-400">צפייה, עריכה וניהול של מלאי החלפים בזמן אמת</p>
         </div>
-        <button className="bg-[#1B2228] text-white px-6 py-2 rounded-brand font-bold border border-cyan-300/50 shadow-sm hover:shadow-[0_10px_26px_rgba(0,204,255,0.2)] transition-all">
+        <button className="bg-[#1B2228] text-white px-6 py-2 rounded-brand font-bold border border-cyan-500/30/50 shadow-sm hover:shadow-[0_10px_26px_rgba(0,204,255,0.2)] transition-all">
           + הוסף חלק חדש
         </button>
       </div>
 
       {error && (
-        <div className="card p-4 mb-6 text-sm font-bold text-slate-600">
+        <div className="card p-4 mb-6 text-sm font-bold text-slate-300">
           {error}
         </div>
       )}
@@ -86,11 +86,11 @@ const InventoryPage = () => {
       <div className="card overflow-hidden relative min-h-[300px]">
         <table className="w-full text-right">
           <thead>
-            <tr className="bg-slate-100 border-b border-slate-300">
-              <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase">שם חלק</th>
-              <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase">מק"ט</th>
-              <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase">סטטוס מלאי</th>
-              <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase text-left">מחיר ליחידה</th>
+            <tr className="bg-brand-100 border-b border-brand-border">
+              <th className="py-4 px-6 text-xs font-bold text-slate-400 uppercase">שם חלק</th>
+              <th className="py-4 px-6 text-xs font-bold text-slate-400 uppercase">מק"ט</th>
+              <th className="py-4 px-6 text-xs font-bold text-slate-400 uppercase">סטטוס מלאי</th>
+              <th className="py-4 px-6 text-xs font-bold text-slate-400 uppercase text-left">מחיר ליחידה</th>
               <th className="py-4 px-6" />
             </tr>
           </thead>
@@ -105,7 +105,7 @@ const InventoryPage = () => {
               </>
             ) : parts.length === 0 ? (
               <tr>
-                <td colSpan="5" className="py-8 text-center text-slate-500 font-bold">לא נמצאו חלפים תואמים</td>
+                <td colSpan="5" className="py-8 text-center text-slate-400 font-bold">לא נמצאו חלפים תואמים</td>
               </tr>
             ) : (
               parts.map((part) => <InventoryItem key={part.id} part={part} />)

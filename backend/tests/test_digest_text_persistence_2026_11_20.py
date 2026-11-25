@@ -6,7 +6,7 @@ SRC = (Path(__file__).resolve().parent.parent / "BACKEND_API_ROUTES.py").read_te
 def test_digest_text_is_persisted_after_send():
     i = SRC.index("lines[0] = f\"📅 *AutoSpareFinder — דוח יומי*")
     block = SRC[i:i + 700]
-    assert "_wa_send_update" in block and "_store_report_text(\"daily_status\"" in block
+    assert "_owner_digest_report" in block and "_store_report_text(\"daily_status\"" in block
 
 
 def test_store_helper_never_raises_and_expires():

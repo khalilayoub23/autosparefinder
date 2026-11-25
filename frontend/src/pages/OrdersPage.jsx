@@ -10,9 +10,9 @@ const STATUS_META = {
   pending_payment: { label: 'ממתין לתשלום', cls: 'bg-[rgba(245,158,11,0.12)] text-[#FBBF24]' },
   paid: { label: 'שולם', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
   confirmed: { label: 'אושר', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
-  processing: { label: 'בעיבוד', cls: 'bg-indigo-100 text-indigo-700' },
-  supplier_ordered: { label: 'הוזמן מספק', cls: 'bg-cyan-100 text-cyan-700' },
-  shipped: { label: 'נשלח', cls: 'bg-[rgba(14,165,233,0.12)] text-blue-800' },
+  processing: { label: 'בעיבוד', cls: 'bg-indigo-500/15 text-indigo-300' },
+  supplier_ordered: { label: 'הוזמן מספק', cls: 'bg-cyan-500/15 text-cyan-300' },
+  shipped: { label: 'נשלח', cls: 'bg-[rgba(14,165,233,0.12)] text-blue-300' },
   delivered: { label: 'הושלם', cls: 'bg-[rgba(34,197,94,0.12)] text-[#4ADE80]' },
   cancelled: { label: 'בוטל', cls: 'bg-[rgba(239,68,68,0.12)] text-[#F87171]' },
   refunded: { label: 'הוחזר', cls: 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8]' },
@@ -208,7 +208,7 @@ const OrdersPage = () => {
                         type="button"
                         onClick={() => exportOrderToPDF(order)}
                         disabled={exportingId === order.id}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#252D3D] hover:bg-slate-200 text-[#94A3B8] text-xs font-bold rounded-lg transition-colors border border-[rgba(148,163,184,0.18)] disabled:opacity-60"
+                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#252D3D] hover:bg-brand-50 text-[#94A3B8] text-xs font-bold rounded-lg transition-colors border border-[rgba(148,163,184,0.18)] disabled:opacity-60"
                       >
                         <FaFilePdf className="text-red-500" />
                         {exportingId === order.id ? 'מייצא...' : 'Export'}

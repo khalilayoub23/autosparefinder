@@ -13,8 +13,8 @@ export default function Privacy() {
     >
 
         {/* TOC */}
-        <section className="bg-white rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-brand-navy mb-3">תוכן עניינים</h2>
+        <section className="bg-brand-200 rounded-xl p-6 shadow-sm">
+          <h2 className="text-base font-bold text-slate-100 mb-3">תוכן עניינים</h2>
           <ol className="list-decimal list-inside space-y-1 text-sm text-brand-600 columns-2">
             {['מבוא','מידע שאנו אוספים','כיצד אנו משתמשים במידע',
               'שיתוף עם צדדים שלישיים','אבטחת מידע','תקופות שמירה',
@@ -26,13 +26,13 @@ export default function Privacy() {
         </section>
 
         <S id="p1" title="1. מבוא">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">1.1 התחייבות לפרטיות</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">1.1 התחייבות לפרטיות</h3>
               <p>ב-<strong>Auto Spare</strong> אנו מכבדים את פרטיותך ומתחייבים להגן על המידע האישי שלך בהתאם לחוק הגנת הפרטיות, התשמ&quot;א-1981 ותיקון 13.</p>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">1.2 מה כולל מסמך זה?</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">1.2 מה כולל מסמך זה?</h3>
               <ul className="space-y-1">
                 <li>✅ איזה מידע אנו אוספים</li>
                 <li>✅ למה אנו משתמשים במידע</li>
@@ -46,23 +46,23 @@ export default function Privacy() {
         </S>
 
         <S id="p2" title="2. מידע שאנו אוספים">
-          <div className="space-y-4 text-sm text-gray-700">
+          <div className="space-y-4 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">2.1 מידע שאתה מספק</h3>
-              <p className="font-medium text-gray-700 mb-1">בעת הרשמה:</p>
+              <h3 className="font-semibold text-slate-200 mb-2">2.1 מידע שאתה מספק</h3>
+              <p className="font-medium text-slate-200 mb-1">בעת הרשמה:</p>
               <ul className="space-y-1 mb-3">
                 <li>👤 שם מלא</li>
                 <li>📧 כתובת דוא&quot;ל</li>
                 <li>📱 מספר טלפון נייד (לאימות 2FA)</li>
                 <li>🔒 סיסמה (מוצפנת)</li>
               </ul>
-              <p className="font-medium text-gray-700 mb-1">בעת הזמנה:</p>
+              <p className="font-medium text-slate-200 mb-1">בעת הזמנה:</p>
               <ul className="space-y-1 mb-3">
                 <li>🏠 כתובת מלאה למשלוח</li>
                 <li>🏢 שם חברה (אופציונלי)</li>
                 <li>📋 ח.פ / ע.מ (לעסקים)</li>
               </ul>
-              <p className="font-medium text-gray-700 mb-1">בעת שימוש:</p>
+              <p className="font-medium text-slate-200 mb-1">בעת שימוש:</p>
               <ul className="space-y-1">
                 <li>🚗 פרטי רכב (אופציונלי — לשיפור שירות)</li>
                 <li>💬 תוכן שיחות עם סוכני AI</li>
@@ -72,7 +72,7 @@ export default function Privacy() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">2.2 מידע שנאסף אוטומטית</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">2.2 מידע שנאסף אוטומטית</h3>
               <ul className="space-y-1 mb-3">
                 <li>🌐 כתובת IP</li>
                 <li>🖥️ סוג דפדפן ומכשיר</li>
@@ -81,7 +81,7 @@ export default function Privacy() {
                 <li>📄 עמודים שצפית בהם</li>
                 <li>🔗 מקור ההפניה (איך הגעת לאתר)</li>
               </ul>
-              <p className="font-medium text-gray-700 mb-1">עוגיות (Cookies):</p>
+              <p className="font-medium text-slate-200 mb-1">עוגיות (Cookies):</p>
               <ul className="space-y-1">
                 <li>🍪 עוגיות הכרחיות (אימות, עגלה)</li>
                 <li>🍪 עוגיות סטטיסטיקה (Google Analytics)</li>
@@ -89,7 +89,7 @@ export default function Privacy() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">2.3 מידע מצדדים שלישיים</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">2.3 מידע מצדדים שלישיים</h3>
               <ul className="space-y-1">
                 <li>• כניסה דרך Google/Facebook — נקבל שם, דוא&quot;ל, תמונת פרופיל (באישורך)</li>
                 <li>🚗 פרטי רכב מ-API משרד הרישוי (אם הזנת מספר רישוי)</li>
@@ -99,7 +99,7 @@ export default function Privacy() {
         </S>
 
         <S id="p3" title="3. כיצד אנו משתמשים במידע">
-          <div className="space-y-4 text-sm text-gray-700">
+          <div className="space-y-4 text-sm text-slate-200">
             <div className="grid grid-cols-1 gap-3">
               {[
                 ['✅ לספק את השירות', ['עיבוד הזמנות','משלוח מוצרים','יצירת קשר בנוגע להזמנה','שירות לקוחות']],
@@ -108,33 +108,33 @@ export default function Privacy() {
                 ['✅ שיווק (רק באישורך)', ['ניוזלטר','הצעות מותאמות אישית','מבצעים']],
                 ['✅ חובות חוקיות', ['חשבונאות (7 שנים)','מס הכנסה','דיווח לרשויות (לפי צו בית משפט)']],
               ].map(([title, items], i) => (
-                <div key={i} className="bg-gray-50 rounded-lg p-3">
-                  <p className="font-semibold text-gray-800 mb-1">{title}</p>
+                <div key={i} className="bg-brand-100 rounded-lg p-3">
+                  <p className="font-semibold text-slate-200 mb-1">{title}</p>
                   <ul className="space-y-0.5">
-                    {items.map((item, j) => <li key={j} className="text-gray-600">• {item}</li>)}
+                    {items.map((item, j) => <li key={j} className="text-slate-300">• {item}</li>)}
                   </ul>
                 </div>
               ))}
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">3.2 AI ולמידת מכונה</h3>
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-blue-800 text-xs space-y-1">
+              <h3 className="font-semibold text-slate-200 mb-2">3.2 AI ולמידת מכונה</h3>
+              <div className="bg-blue-500/15 border border-blue-500/30 rounded-lg p-3 text-blue-300 text-xs space-y-1">
                 <p>• סוכני ה-AI לומדים מהשיחות שלך לשיפור השירות</p>
                 <p>• <strong>לא משתפים</strong> מידע אישי עם מודלי AI חיצוניים</p>
                 <p>• כל העיבוד נעשה ב<strong>סביבה מאובטחת</strong></p>
               </div>
-              <div className="bg-gray-100 rounded-lg p-3 font-mono text-xs mt-2 space-y-1">
-                <p className="text-green-700">✅ AI לומד: &quot;רכבי טויוטה קורולה צריכים פילטר שמן מסוג X&quot;</p>
-                <p className="text-red-600">❌ AI לא שומר: &quot;יוסי כהן מרח׳ הרצל 5 הזמין...&quot;</p>
+              <div className="bg-brand-100 rounded-lg p-3 font-mono text-xs mt-2 space-y-1">
+                <p className="text-green-300">✅ AI לומד: &quot;רכבי טויוטה קורולה צריכים פילטר שמן מסוג X&quot;</p>
+                <p className="text-red-300">❌ AI לא שומר: &quot;יוסי כהן מרח׳ הרצל 5 הזמין...&quot;</p>
               </div>
             </div>
           </div>
         </S>
 
         <S id="p4" title="4. שיתוף מידע עם צדדים שלישיים">
-          <div className="space-y-4 text-sm text-gray-700">
+          <div className="space-y-4 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">4.1 לא נמכיר את המידע</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">4.1 לא נמכיר את המידע</h3>
               <ul className="space-y-1">
                 <li>❌ לא נמכור מידע למפרסמים</li>
                 <li>❌ לא נשכיר רשימות תפוצה</li>
@@ -142,16 +142,16 @@ export default function Privacy() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">4.2 חובות חוקיות</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">4.2 חובות חוקיות</h3>
               <p>נשתף מידע רק אם: צו בית משפט מחייב, חקירה פלילית, הגנה על זכויותינו, או מניעת נזק מיידי.</p>
             </div>
           </div>
         </S>
 
         <S id="p5" title="5. אבטחת מידע">
-          <div className="space-y-4 text-sm text-gray-700">
+          <div className="space-y-4 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-2">5.1 אמצעי אבטחה טכניים</h3>
+              <h3 className="font-semibold text-slate-200 mb-2">5.1 אמצעי אבטחה טכניים</h3>
               <div className="grid grid-cols-2 gap-2">
                 {[
                   ['🔒 הצפנה', ['SSL/TLS 256-bit לכל התקשורת','הצפנת מסד נתונים (AES-256)','הצפנת גיבויים']],
@@ -159,9 +159,9 @@ export default function Privacy() {
                   ['🔒 רשת', ['Firewall מתקדם','DDoS protection','Rate limiting']],
                   ['🔒 גישה', ['הרשאות מוגבלות לעובדים','לוגים מלאים','ביקורת אבטחה רבעונית']],
                 ].map(([title, items], i) => (
-                  <div key={i} className="bg-gray-50 rounded-lg p-3">
-                    <p className="font-semibold text-xs text-gray-800 mb-1">{title}</p>
-                    <ul className="space-y-0.5 text-xs text-gray-600">
+                  <div key={i} className="bg-brand-100 rounded-lg p-3">
+                    <p className="font-semibold text-xs text-slate-200 mb-1">{title}</p>
+                    <ul className="space-y-0.5 text-xs text-slate-300">
                       {items.map((item, j) => <li key={j}>• {item}</li>)}
                     </ul>
                   </div>
@@ -169,14 +169,14 @@ export default function Privacy() {
               </div>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">5.2 אמצעי אבטחה ארגוניים</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">5.2 אמצעי אבטחה ארגוניים</h3>
               <ul className="space-y-1">
                 <li>👥 הכשרת אבטחת מידע לעובדים + הסכמי סודיות</li>
                 <li>📋 מדיניות סיסמאות + עדכוני אבטחה שבועיים</li>
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">5.3 גיבויים</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">5.3 גיבויים</h3>
               <ul className="space-y-1">
                 <li>💾 גיבוי יומי מוצפן באחסון מרוחק</li>
                 <li>💾 בדיקת שחזור חודשית</li>
@@ -186,14 +186,14 @@ export default function Privacy() {
         </S>
 
         <S id="p6" title="6. תקופות שמירה">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-right border-collapse">
                 <thead>
                   <tr className="bg-brand-50 text-brand-700">
-                    <th className="p-2 border border-gray-200">סוג מידע</th>
-                    <th className="p-2 border border-gray-200">תקופה</th>
-                    <th className="p-2 border border-gray-200">סיבה</th>
+                    <th className="p-2 border border-brand-border">סוג מידע</th>
+                    <th className="p-2 border border-brand-border">תקופה</th>
+                    <th className="p-2 border border-brand-border">סיבה</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -206,17 +206,17 @@ export default function Privacy() {
                     ['חשבון משתמש פעיל','עד סגירה','שירות רצוף'],
                     ['חשבון לא פעיל','3 שנים','ארכיון'],
                   ].map(([t,p,r], i) => (
-                    <tr key={i} className={i%2===1?'bg-gray-50':''}>
-                      <td className="p-2 border border-gray-200 font-medium">{t}</td>
-                      <td className="p-2 border border-gray-200">{p}</td>
-                      <td className="p-2 border border-gray-200 text-gray-500">{r}</td>
+                    <tr key={i} className={i%2===1?'bg-brand-100':''}>
+                      <td className="p-2 border border-brand-border font-medium">{t}</td>
+                      <td className="p-2 border border-brand-border">{p}</td>
+                      <td className="p-2 border border-brand-border text-slate-400">{r}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">6.2 מחיקה אוטומטית</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">6.2 מחיקה אוטומטית</h3>
               <ul className="space-y-1 text-xs">
                 <li>• 30 יום — תמונות/קול שלא בשימוש</li>
                 <li>• 90 יום — שיחות ישנות</li>
@@ -227,8 +227,8 @@ export default function Privacy() {
         </S>
 
         <S id="p7" title="7. זכויותיך">
-          <div className="space-y-3 text-sm text-gray-700">
-            <p className="text-xs text-gray-500">בהתאם לחוק הגנת הפרטיות (תיקון 13):</p>
+          <div className="space-y-3 text-sm text-slate-200">
+            <p className="text-xs text-slate-400">בהתאם לחוק הגנת הפרטיות (תיקון 13):</p>
             {[
               ['7.1 זכות עיון 👁️', 'לראות איזה מידע יש עליך. פנה דרך ״הגדרות → המידע שלי״ או support@autosparefinder.co.il. מענה תוך 21 ימים (חינם פעם בשנה).'],
               ['7.2 זכות לתיקון ✏️', 'לתקן מידע שגוי דרך ״הגדרות → ערוך פרופיל״. מענה תוך 7 ימים.'],
@@ -237,9 +237,9 @@ export default function Privacy() {
               ['7.5 זכות להתנגדות ✋', 'לביטול שיווק — קישור ״הסר מרשימה״ בכל מייל. פעולה מיידית.'],
               ['7.6 זכות לניידות נתונים 📦', 'לקבל העתק של המידע (JSON/CSV) דרך ״הגדרות → ייצוא נתונים״. תוך 7 ימים.'],
             ].map(([title, desc], i) => (
-              <div key={i} className="bg-gray-50 rounded-lg p-3">
-                <p className="font-semibold text-gray-800 text-xs mb-1">{title}</p>
-                <p className="text-xs text-gray-600">{desc}</p>
+              <div key={i} className="bg-brand-100 rounded-lg p-3">
+                <p className="font-semibold text-slate-200 text-xs mb-1">{title}</p>
+                <p className="text-xs text-slate-300">{desc}</p>
               </div>
             ))}
 
@@ -247,15 +247,15 @@ export default function Privacy() {
         </S>
 
         <S id="p8" title="8. קטינים">
-          <div className="text-sm text-gray-700 space-y-2">
+          <div className="text-sm text-slate-200 space-y-2">
             <p>האתר מיועד לבני <strong>18 ומעלה</strong> בלבד. אנו <strong>לא אוספים במכוון</strong> מידע מקטינים.</p>
             <p>אם התברר שנאסף מידע של קטין — נמחק מיד, נודיע להורים ונחסום את החשבון.</p>
           </div>
         </S>
 
         <S id="p9" title="9. עוגיות וטכנולוגיות מעקב">
-          <div className="space-y-3 text-sm text-gray-700">
-            <p className="text-xs text-gray-500">עוגיות (Cookies) הן קבצי טקסט קטנים שנשמרים במכשיר שלך.</p>
+          <div className="space-y-3 text-sm text-slate-200">
+            <p className="text-xs text-slate-400">עוגיות (Cookies) הן קבצי טקסט קטנים שנשמרים במכשיר שלך.</p>
             <div className="grid grid-cols-2 gap-2">
               {[
                 ['🍪 הכרחיות (חובה)', ['זכירת התחברות','עגלת קניות','העדפות שפה','אבטחה']],
@@ -263,20 +263,20 @@ export default function Privacy() {
                 ['🍪 אנליטיקס', ['Google Analytics','ספירת מבקרים','דפים פופולריים']],
                 ['🍪 שיווק', ['פרסום ממוקד','רימרקטינג']],
               ].map(([title, items], i) => (
-                <div key={i} className="bg-gray-50 rounded-lg p-3">
-                  <p className="font-semibold text-xs text-gray-800 mb-1">{title}</p>
-                  <ul className="space-y-0.5 text-xs text-gray-600">
+                <div key={i} className="bg-brand-100 rounded-lg p-3">
+                  <p className="font-semibold text-xs text-slate-200 mb-1">{title}</p>
+                  <ul className="space-y-0.5 text-xs text-slate-300">
                     {items.map((item, j) => <li key={j}>• {item}</li>)}
                   </ul>
                 </div>
               ))}
             </div>
-            <p className="text-xs text-gray-500">לניהול עוגיות: &quot;הגדרות → עוגיות&quot; באתר, או דרך הגדרות הדפדפן שלך.</p>
+            <p className="text-xs text-slate-400">לניהול עוגיות: &quot;הגדרות → עוגיות&quot; באתר, או דרך הגדרות הדפדפן שלך.</p>
           </div>
         </S>
 
         <S id="p11" title="11. פריצת אבטחה (Data Breach)">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <p>גישה לא מורשית למידע אישי מוגדרת כפריצת אבטחה.</p>
             <div className="space-y-2">
               {[
@@ -284,9 +284,9 @@ export default function Privacy() {
                 ['תוך 72 שעות','דיווח לרשות הגנת הפרטיות + הודעה ללקוחות שנפגעו'],
                 ['תוך שבוע','חקירה מלאה + תיקון הפרצה + דו&quot;ח מפורט'],
               ].map(([t, d], i) => (
-                <div key={i} className="flex gap-3 bg-gray-50 rounded-lg p-3">
+                <div key={i} className="flex gap-3 bg-brand-100 rounded-lg p-3">
                   <span className="text-brand-600 font-bold text-xs whitespace-nowrap">{t}</span>
-                  <span className="text-xs text-gray-600">{d}</span>
+                  <span className="text-xs text-slate-300">{d}</span>
                 </div>
               ))}
             </div>
@@ -295,7 +295,7 @@ export default function Privacy() {
         </S>
 
         <S id="p12" title="12. שינויים במדיניות">
-          <div className="text-sm text-gray-700 space-y-2">
+          <div className="text-sm text-slate-200 space-y-2">
             <p>אנו רשאים לעדכן מדיניות זו מעת לעת.</p>
             <ul className="space-y-1">
               <li>• <strong>שינויים מהותיים</strong> — הודעה בדוא&quot;ל 30 יום מראש + הודעה באתר</li>
@@ -306,22 +306,22 @@ export default function Privacy() {
         </S>
 
         <S id="p13" title="13. יצירת קשר">
-          <div className="space-y-3 text-sm text-gray-700">
+          <div className="space-y-3 text-sm text-slate-200">
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">ממונה על הגנת הפרטיות</h3>
+              <h3 className="font-semibold text-slate-200 mb-1">ממונה על הגנת הפרטיות</h3>
               <ul className="space-y-1">
                 <li>📧 <a href="mailto:support@autosparefinder.co.il" className="text-brand-600 underline">support@autosparefinder.co.il</a></li>
                 <li>📱 <PhoneDisplay value="972-53-242-6920" /></li>
                   <li>🌐 <a href="https://www.autosparefinder.co.il" className="text-brand-600 underline" target="_blank" rel="noreferrer">www.autosparefinder.co.il</a></li>
                 <li>🏢 הרצל 55, עכו</li>
-                <li className="text-gray-500">שעות מענה: א׳-ה׳ 9:00-17:00</li>
+                <li className="text-slate-400">שעות מענה: א׳-ה׳ 9:00-17:00</li>
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-800 mb-1">בקשות רשמיות (עיון, מחיקה, תיקון)</h3>
-              <p className="text-xs text-gray-600">שלח בקשה בכתב בדוא&quot;ל עם: שם מלא, דוא&quot;ל, סוג בקשה, ות.ז לאימות. נענה תוך <strong>21 יום</strong> (כחוק).</p>
+              <h3 className="font-semibold text-slate-200 mb-1">בקשות רשמיות (עיון, מחיקה, תיקון)</h3>
+              <p className="text-xs text-slate-300">שלח בקשה בכתב בדוא&quot;ל עם: שם מלא, דוא&quot;ל, סוג בקשה, ות.ז לאימות. נענה תוך <strong>21 יום</strong> (כחוק).</p>
             </div>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+            <div className="bg-blue-500/15 border border-blue-500/30 rounded-lg p-3 text-xs text-blue-300">
               <p className="font-semibold mb-1">רשות הגנת הפרטיות</p>
               <p>📞 *3889 · 🌐 www.gov.il/privacy · 📧 privacy@justice.gov.il</p>
             </div>
@@ -329,19 +329,19 @@ export default function Privacy() {
         </S>
 
         {/* Consent */}
-        <section className="bg-green-50 border border-green-200 rounded-xl p-6 shadow-sm">
-          <h2 className="text-base font-bold text-brand-navy mb-3">✅ הסכמה</h2>
-          <p className="text-sm text-gray-600 mb-3">על ידי שימוש באתר, אתה מאשר:</p>
-          <ul className="space-y-1 text-sm text-gray-700">
+        <section className="bg-green-500/15 border border-green-500/30 rounded-xl p-6 shadow-sm">
+          <h2 className="text-base font-bold text-slate-100 mb-3">✅ הסכמה</h2>
+          <p className="text-sm text-slate-300 mb-3">על ידי שימוש באתר, אתה מאשר:</p>
+          <ul className="space-y-1 text-sm text-slate-200">
             <li>✅ קראתי והבנתי את מדיניות הפרטיות</li>
             <li>✅ אני מסכים לאיסוף ושימוש במידע כמתואר</li>
             <li>✅ אני מאשר העברת מידע לחו&quot;ל כמתואר</li>
             <li>✅ אני מבין את זכויותיי</li>
           </ul>
-          <p className="text-xs text-gray-500 mt-3 font-semibold">אם אינך מסכים — אל תשתמש באתר.</p>
+          <p className="text-xs text-slate-400 mt-3 font-semibold">אם אינך מסכים — אל תשתמש באתר.</p>
         </section>
 
-        <p className="text-center text-xs text-gray-400 pb-4">
+        <p className="text-center text-xs text-slate-400 pb-4">
           תאריך עדכון אחרון: 28 בפברואר 2026 · גרסה: 1.0<br />
           תואמת: תיקון 13 לחוק הגנת הפרטיות<br />
           © 2026 Auto Spare. כל הזכויות שמורות.
@@ -352,8 +352,8 @@ export default function Privacy() {
 
 function S({ id, title, children }) {
   return (
-    <section id={id} className="bg-white rounded-xl p-6 shadow-sm scroll-mt-4">
-      <h2 className="text-base font-bold text-brand-navy mb-3 border-b border-brand-100 pb-2">
+    <section id={id} className="bg-brand-200 rounded-xl p-6 shadow-sm scroll-mt-4">
+      <h2 className="text-base font-bold text-slate-100 mb-3 border-b border-brand-100 pb-2">
         {title}
       </h2>
       {children}

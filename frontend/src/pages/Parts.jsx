@@ -340,14 +340,14 @@ function PhotoEditorModal({ src, onApply, onClose }) {
               onClick={() => setTool(id)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
                 tool === id
-                  ? 'bg-brand-600 text-white shadow-sm'
+                  ? 'bg-brand-600 text-[#0F1218] shadow-sm'
                   : 'bg-[#1E2535] border border-[rgba(148,163,184,0.18)] text-[#94A3B8] hover:border-[rgba(14,165,233,0.40)]'
               }`}
             >
               {icon}{label}
             </button>
           ))}
-          <div className="h-5 w-px bg-gray-200 mx-1" />
+          <div className="h-5 w-px bg-brand-50 mx-1" />
           <button
             onClick={handleReset}
             disabled={!crop && marks.length === 0}
@@ -355,7 +355,7 @@ function PhotoEditorModal({ src, onApply, onClose }) {
           >
             <RotateCcw className="w-3.5 h-3.5" />איפוס
           </button>
-          <div className="h-5 w-px bg-gray-200 mx-1" />
+          <div className="h-5 w-px bg-brand-50 mx-1" />
           {/* Zoom controls */}
           <button
             onClick={() => applyZoom(zoom - 0.25)}
@@ -397,7 +397,7 @@ function PhotoEditorModal({ src, onApply, onClose }) {
         </div>
 
         {/* Instructions */}
-        <div className="px-4 py-2 bg-[rgba(14,165,233,0.12)] border-t border-blue-100">
+        <div className="px-4 py-2 bg-[rgba(14,165,233,0.12)] border-t border-blue-500/30">
           <p className="text-xs text-[#38BDF8]">
             {tool === 'crop'
               ? '✂️ גרור מלבן סביב החלק שרוצים לזהות — ה-AI יתמקד רק בו'
@@ -652,7 +652,7 @@ function _shippingDisplay(value, withCurrency = true) {
 function ExpressBadge({ price, days, cutoff }) {
   if (!price) return null
   return (
-    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-yellow-50 text-yellow-700 border border-yellow-200 font-medium">
+    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-yellow-500/15 text-yellow-300 border border-yellow-500/30 font-medium">
       ⚡ אקספרס {days}d · +₪{Math.round(price)}{cutoff ? ` עד ${cutoff}` : ''}
     </span>
   )
@@ -1465,10 +1465,10 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
           onClick={e => e.stopPropagation()}
         >
           {/* Top bar */}
-          <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-white text-center">
-            <p className="text-xs font-semibold uppercase tracking-widest text-white/70 mb-1">לאיזה רכב לחפש?</p>
+          <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-[#0F1218] text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-[#0F1218]/80 mb-1">לאיזה רכב לחפש?</p>
             <h2 className="text-2xl font-bold">{sv.manufacturer} {sv.model}</h2>
-            <p className="text-white/80 text-sm mt-0.5">{sv.year}</p>
+            <p className="text-[#0F1218]/80 text-sm mt-0.5">{sv.year}</p>
           </div>
 
           {/* Car details card */}
@@ -1547,10 +1547,10 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-white text-center rounded-t-2xl">
-          <p className="text-xs font-semibold uppercase tracking-widest text-white/70 mb-1">לאיזה רכב לחפש?</p>
+        <div className="bg-gradient-to-r from-brand-600 to-brand-700 px-5 pt-5 pb-4 text-[#0F1218] text-center rounded-t-2xl">
+          <p className="text-xs font-semibold uppercase tracking-widest text-[#0F1218]/80 mb-1">לאיזה רכב לחפש?</p>
           <h2 className="text-2xl font-bold">בחר רכב</h2>
-          <p className="text-white/80 text-sm mt-0.5">לצמצום תוצאות החיפוש</p>
+          <p className="text-[#0F1218]/80 text-sm mt-0.5">לצמצום תוצאות החיפוש</p>
         </div>
         {/* Vehicle options */}
         <div className="p-4 space-y-2 max-h-64 overflow-y-auto">
@@ -1578,7 +1578,7 @@ function VehicleConfirmModal({ vehicles, selectedVehicle, onConfirm, onClose }) 
               chosen === '__none__' ? 'border-gray-400 bg-[#1E2535]' : 'border-[rgba(148,163,184,0.18)] hover:border-[rgba(148,163,184,0.18)] bg-[#1E2535]'
             }`}
           >
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${chosen === '__none__' ? 'bg-gray-200' : 'bg-[#252D3D]'}`}>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${chosen === '__none__' ? 'bg-brand-50' : 'bg-[#252D3D]'}`}>
               <Search className="w-5 h-5 text-[#94A3B8]" />
             </div>
             <div className="flex-1 text-right">
@@ -1713,14 +1713,14 @@ function VinScannerModal({ onResult, onClose }) {
             <p className="font-mono font-bold text-center text-white tracking-widest text-sm bg-[rgba(34,197,94,0.12)] border border-[rgba(34,197,94,0.35)] rounded-xl py-2 px-3">{detected}</p>
             <div className="flex gap-2">
               <button onClick={() => setDetected('')} className="flex-1 py-2 rounded-xl border border-[rgba(148,163,184,0.18)] text-sm text-[#94A3B8] hover:bg-[#1E2535]">נסה שוב</button>
-              <button onClick={handleConfirm} className="flex-1 py-2 rounded-brand bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700">אשר</button>
+              <button onClick={handleConfirm} className="flex-1 py-2 rounded-brand bg-brand-600 text-[#0F1218] text-sm font-semibold hover:bg-brand-700">אשר</button>
             </div>
           </div>
         ) : (
           <div className="p-4 space-y-2">
             <p className="text-xs text-[#94A3B8] text-center">כוון את המצלמה לברקוד ה-VIN</p>
             {!scanning && (
-              <button onClick={handleCapture} className="w-full py-2.5 rounded-brand bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700">
+              <button onClick={handleCapture} className="w-full py-2.5 rounded-brand bg-brand-600 text-[#0F1218] text-sm font-semibold hover:bg-brand-700">
                 <Camera className="w-4 h-4 inline ml-1" /> צלם לזיהוי
               </button>
             )}
@@ -2473,7 +2473,7 @@ export default function Parts() {
       value: partFamilies.length.toLocaleString(),
       hint: selectedPartFamilyLabel,
       icon: Package,
-      tone: 'from-rose-50 to-pink-50 border-rose-200 text-rose-700',
+      tone: 'from-rose-50 to-pink-50 border-rose-500/30 text-rose-300',
     },
   ]
 
@@ -3203,15 +3203,15 @@ export default function Parts() {
       )}
 
       {/* Page hero */}
-      <div className="rounded-xl bg-gradient-to-br from-brand-700 via-brand-600 to-sky-700 px-4 py-5 sm:px-6 sm:py-6 text-white shadow-lg shadow-brand-900/10">
+      <div className="rounded-xl bg-gradient-to-br from-brand-700 via-brand-600 to-brand-500 px-4 py-5 sm:px-6 sm:py-6 text-[#0F1218] shadow-lg shadow-brand-900/10">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3 sm:gap-4">
             <div className="w-12 h-12 rounded-2xl bg-white/20 ring-1 ring-white/20 flex items-center justify-center flex-shrink-0">
-              <Search className="w-5 h-5 text-white" />
+              <Search className="w-5 h-5 text-[#0F1218]" />
             </div>
             <div className="lg:order-1">
               <h1 className="text-xl sm:text-2xl font-black tracking-tight leading-tight">חיפוש חלקי חילוף</h1>
-              <p className="text-white/75 text-xs sm:text-sm mt-1">חפש לפי רכב · תמונה · קול · VIN</p>
+              <p className="text-[#0F1218]/80 text-xs sm:text-sm mt-1">חפש לפי רכב · תמונה · קול · VIN</p>
             </div>
           </div>
           {selectedVehicle && (
@@ -3220,11 +3220,11 @@ export default function Parts() {
               className="flex items-center justify-between gap-2 bg-white/15 hover:bg-white/25 transition-colors rounded-2xl px-3 py-2.5 text-right w-full sm:w-auto flex-shrink-0 backdrop-blur-sm"
             >
               <div className="text-right">
-                <p className="text-xs text-white/70 leading-none mb-0.5">הרכב שלי</p>
+                <p className="text-xs text-[#0F1218]/80 leading-none mb-0.5">הרכב שלי</p>
                 <p className="text-sm font-bold leading-none">{selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}</p>
               </div>
               <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-                <Car className="w-4 h-4 text-white" />
+                <Car className="w-4 h-4 text-[#0F1218]" />
               </div>
             </button>
           )}
@@ -3249,7 +3249,7 @@ export default function Parts() {
                   <p className={`text-sm font-bold ${active ? 'text-[#E2E8F0]' : 'text-[#CBD5E1]'}`}>{card.title}</p>
                   <p className="text-xs text-[#94A3B8] mt-1">{card.subtitle}</p>
                 </div>
-                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${active ? `${card.iconTone} text-white` : 'bg-[#252D3D] text-[#94A3B8]'}`}>
+                <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${active ? `${card.iconTone} text-[#0F1218]` : 'bg-[#252D3D] text-[#94A3B8]'}`}>
                   <Icon className="w-4 h-4" />
                 </span>
               </div>
@@ -3392,7 +3392,7 @@ export default function Parts() {
                 <button
                   onClick={addVehicle}
                   disabled={addingVehicle}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-3 rounded-brand font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-[#0F1218] px-4 py-3 rounded-brand font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
                 >
                   {addingVehicle ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Car className="w-3.5 h-3.5" />}
                   הוסף
@@ -3435,7 +3435,7 @@ export default function Parts() {
                 <button
                   onClick={() => handleVinSearch()}
                   disabled={vinLoading}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-[#0F1218] px-4 py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap flex-shrink-0 min-h-12 xs:min-w-[92px]"
                 >
                   {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                   זהה
@@ -3481,7 +3481,7 @@ export default function Parts() {
                 <button
                   onClick={() => handleVinSearch(vinPartQuery)}
                   disabled={vinLoading}
-                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1 whitespace-nowrap min-h-11"
+                  className="bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-[#0F1218] px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center justify-center gap-1 whitespace-nowrap min-h-11"
                 >
                   {vinLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                   חפש חלק
@@ -4138,7 +4138,7 @@ export default function Parts() {
                 type="button"
                 onClick={() => search(0)}
                 disabled={isLoading}
-                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-brand-600 px-3 text-sm font-bold text-white shadow-sm disabled:opacity-60"
+                className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-brand-600 px-3 text-sm font-bold text-[#0F1218] shadow-sm disabled:opacity-60"
               >
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 חפש עכשיו
@@ -4427,21 +4427,21 @@ export default function Parts() {
           {/* Vehicle confirmation banner */}
           {vehicles.length > 0 && (
             selectedVehicle ? (
-              <div className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-xl p-3">
+              <div className="flex items-center justify-between bg-rose-500/15 border border-rose-500/30 rounded-xl p-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-rose-100 flex items-center justify-center flex-shrink-0">
-                    <Car className="w-4 h-4 text-rose-600" />
+                  <div className="w-9 h-9 rounded-xl bg-rose-500/15 flex items-center justify-center flex-shrink-0">
+                    <Car className="w-4 h-4 text-rose-300" />
                   </div>
                   <div>
                     <p className="text-xs text-rose-500 font-medium">מכוון לרכב</p>
-                    <p className="text-sm font-bold text-rose-800">
+                    <p className="text-sm font-bold text-rose-300">
                       {selectedVehicle.manufacturer} {selectedVehicle.model} {selectedVehicle.year}
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={() => setShowVehiclePicker(true)}
-                  className="text-xs text-rose-600 hover:text-rose-800 font-semibold border border-rose-200 hover:border-rose-400 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
+                  className="text-xs text-rose-300 hover:text-rose-300 font-semibold border border-rose-500/30 hover:border-rose-400 px-2.5 py-1 rounded-lg transition-colors whitespace-nowrap"
                 >
                   שנה רכב
                 </button>
@@ -4449,13 +4449,13 @@ export default function Parts() {
             ) : (
               <button
                 onClick={() => setShowVehiclePicker(true)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-rose-200 hover:border-rose-400 hover:bg-rose-50 transition-all text-right"
+                className="w-full flex items-center gap-3 p-3 rounded-xl border-2 border-dashed border-rose-500/30 hover:border-rose-400 hover:bg-rose-500/15 transition-all text-right"
               >
-                <div className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center flex-shrink-0">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/15 flex items-center justify-center flex-shrink-0">
                   <Car className="w-4 h-4 text-rose-500" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-rose-700">בחר רכב לצמצום החיפוש</p>
+                  <p className="text-sm font-semibold text-rose-300">בחר רכב לצמצום החיפוש</p>
                   <p className="text-xs text-rose-400">מומלץ לתוצאות מדויקות יותר</p>
                 </div>
               </button>
@@ -4463,7 +4463,7 @@ export default function Parts() {
           )}
 
           {!voiceSupported && (
-            <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-xl p-3 text-sm">
+            <div className="flex items-center gap-2 bg-yellow-500/15 border border-yellow-500/30 text-yellow-300 rounded-xl p-3 text-sm">
               <AlertCircle className="w-5 h-5 flex-shrink-0" />
               הדפדפן שלך לא תומך בזיהוי קול. נסה Chrome למחשב או נייד.
             </div>
@@ -4521,7 +4521,7 @@ export default function Parts() {
             <p className="text-sm text-[#94A3B8]">ייתכן שהחלק אינו זמין לדגם זה</p>
             <button
               onClick={() => runVoicePartsSearch(query, '')}
-              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-[#0F1218] text-sm font-medium hover:bg-brand-700 transition-colors"
             >
               <Search className="w-4 h-4" /> הצג תוצאות מכל היצרנים
             </button>
@@ -4676,7 +4676,7 @@ export default function Parts() {
             <p className="text-sm text-[#94A3B8]">ייתכן שהחלק אינו זמין לדגם זה</p>
             <button
               onClick={() => runPhotoPartsSearch(photoCandidates, '')}
-              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors"
+              className="mt-2 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-600 text-[#0F1218] text-sm font-medium hover:bg-brand-700 transition-colors"
             >
               <Search className="w-4 h-4" /> הצג תוצאות מכל היצרנים
             </button>
@@ -4841,7 +4841,7 @@ export default function Parts() {
                         key={pg}
                         onClick={() => search(pg)}
                         className={`min-w-11 rounded-2xl border px-3 py-2.5 text-sm font-bold transition-all ${
-                          pg === page ? 'border-brand-600 bg-brand-600 text-white' : 'border-[rgba(148,163,184,0.18)] bg-[#1E2535] text-[#E2E8F0] hover:border-[rgba(14,165,233,0.40)]'
+                          pg === page ? 'border-brand-600 bg-brand-600 text-[#0F1218]' : 'border-[rgba(148,163,184,0.18)] bg-[#1E2535] text-[#E2E8F0] hover:border-[rgba(14,165,233,0.40)]'
                         }`}
                       >
                         {pg + 1}

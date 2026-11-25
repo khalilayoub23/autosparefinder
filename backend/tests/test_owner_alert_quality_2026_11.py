@@ -177,7 +177,7 @@ def test_no_hebrew_task_count_defect_remains_in_owner_alert_sources():
 # ── H. inventory of notification sources ────────────────────────────────────────────────────────────────────
 REGISTERED = {   # file -> {call name: count}; every owner-notification call site in production code
     "BACKEND_AI_AGENTS.py": {"_notify": 2},
-    "BACKEND_API_ROUTES.py": {"_alert_owner": 11, "_wa_send_update": 8, "notify_owner": 28, "resolve_owner_alert": 5},
+    "BACKEND_API_ROUTES.py": {"_alert_owner": 11, "_wa_send_update": 5, "notify_owner": 28, "resolve_owner_alert": 5},
     "boaz_tasks.py": {"notify": 1},
     "db_cleanup_agent.py": {"notify_owner": 2},
     "db_update_agent.py": {"_notify": 4, "_notify_res": 1},
@@ -195,7 +195,7 @@ def test_notification_source_inventory_is_complete():
     """A new owner-notification call site (or a new file) fails here until it is added to REGISTERED AND to
     docs/WHATSAPP_NOTIFICATIONS.md §9 - an unregistered path cannot appear silently."""
     assert notification_inventory.scan() == REGISTERED
-    assert sum(sum(v.values()) for v in REGISTERED.values()) == 76
+    assert sum(sum(v.values()) for v in REGISTERED.values()) == 73
 
 
 def test_inventory_is_documented():

@@ -73,11 +73,11 @@ const DashboardHome = () => {
   return (
     <div className="space-y-6 lg:space-y-8">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-black text-[#1B2228]">לוח בקרה</h1>
+        <h1 className="text-3xl font-black text-[#E2E8F0]">לוח בקרה</h1>
       </div>
 
       {error && (
-        <div className="card p-4 text-sm font-bold text-slate-600">
+        <div className="card p-4 text-sm font-bold text-slate-300">
           {error}
         </div>
       )}

@@ -307,7 +307,7 @@ export default function Cart() {
         <h1 className="section-title">סל קניות <span className="text-base font-normal text-[#94A3B8]">({t.count} פריטים)</span></h1>
         <div className="flex gap-2">
           {['cart', 'address', 'payment'].map((s, i) => (
-            <div key={s} className={`w-3 h-3 rounded-full ${step === s ? 'bg-brand-600' : i < ['cart','address','payment'].indexOf(step) ? 'bg-brand-300' : 'bg-gray-200'}`} />
+            <div key={s} className={`w-3 h-3 rounded-full ${step === s ? 'bg-brand-600' : i < ['cart','address','payment'].indexOf(step) ? 'bg-brand-300' : 'bg-brand-50'}`} />
           ))}
         </div>
       </div>
@@ -388,7 +388,7 @@ export default function Cart() {
             const maxDays = Math.max(...items.map((i) => i.deliveryDays ?? 14))
             const hasLongDelivery = items.some((i) => (i.deliveryDays ?? 0) > 18)
             return (
-              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-[rgba(14,165,233,0.35)]' : 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-blue-100'}`}>
+              <div className={`text-xs rounded-xl px-4 py-3 flex items-center gap-2 ${hasLongDelivery ? 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-[rgba(14,165,233,0.35)]' : 'bg-[rgba(14,165,233,0.12)] text-[#38BDF8] border border-blue-500/30'}`}>
                 <span>🚚</span>
                 <span>
                   {hasLongDelivery
@@ -423,7 +423,7 @@ export default function Cart() {
                 </div>
                 <button
                   onClick={() => { setUseOtherAddress(true); setAddress({ street: '', city: '', postal_code: '', country: 'Israel' }) }}
-                  className="text-xs text-[#38BDF8] hover:text-blue-800 flex items-center gap-1 shrink-0 mt-0.5"
+                  className="text-xs text-[#38BDF8] hover:text-blue-300 flex items-center gap-1 shrink-0 mt-0.5"
                 >
                   <Edit3 className="w-3 h-3" /> שנה כתובת
                 </button>
@@ -437,7 +437,7 @@ export default function Cart() {
               {useOtherAddress && (
                 <button
                   onClick={() => { setUseOtherAddress(false); setAddress(profileAddress) }}
-                  className="text-xs text-[#38BDF8] hover:text-blue-800 flex items-center gap-1"
+                  className="text-xs text-[#38BDF8] hover:text-blue-300 flex items-center gap-1"
                 >
                   ← חזור לכתובת המשלוח הרגילה
                 </button>

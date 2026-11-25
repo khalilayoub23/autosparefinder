@@ -7,7 +7,7 @@ export default function LegalPageHeader({
   icon: Icon,
 }) {
   return (
-    <div className="bg-brand-700 text-white py-10 px-4">
+    <div className="bg-brand-700 text-[#0F1218] py-10 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="flex flex-col items-center text-center">
           <BrandLogo

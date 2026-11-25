@@ -273,6 +273,7 @@ _PROVIDER_SEND_ALLOWED = {
     ("BACKEND_AUTH_SECURITY.py", "send_whatsapp_2fa"),            # login code requested by the user
     ("routes/utils.py", "_send_post_payment_notification"),       # transactional, right after payment
     ("routes/admin.py", "_send_channel_message"),                 # an admin typing a reply in the console
+    ("BACKEND_API_ROUTES.py", "_send"),                            # _owner_digest_pass: morning digest sent directly so "ok" = accepted
     ("routes/webhooks.py", "_send"),                              # late chat answer to the same conversation
     ("routes/webhooks.py", "_owner_reply_bg"),                    # reply to the owner's own console message
     ("routes/webhooks.py", "_whatsapp_webhook_impl"),             # chat replies
@@ -286,6 +287,7 @@ _GATE_CALL_ALLOWED = {
     ("BACKEND_API_ROUTES.py", "_job_queue_report_loop"),   # night-pipeline report, own markers
     ("BACKEND_API_ROUTES.py", "_harvest_supervisor_loop"), # weekly digest, own marker
     ("BACKEND_API_ROUTES.py", "_health_monitor_loop"),     # opt-in admin copies (ADMIN_ALERT_PHONES)
+    ("BACKEND_API_ROUTES.py", "_owner_digest_report"),     # periodic reports: digest event, direct fallback only when the store is down
     ("social/tools.py", "whatsapp_send_message"),          # campaign message to a recipient, quiet-hours gated
 }
 

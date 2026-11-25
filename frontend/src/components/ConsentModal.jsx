@@ -36,21 +36,21 @@ export default function ConsentModal() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       style={{ direction: 'rtl' }}
     >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+      <div className="bg-brand-200 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
         {/* Header */}
         <div className="bg-gradient-to-l from-brand-700 to-brand-600 px-6 py-5">
           <div className="flex items-center gap-3">
-            <ShieldCheck className="text-white w-8 h-8 flex-shrink-0" />
+            <ShieldCheck className="text-[#0F1218] w-8 h-8 flex-shrink-0" />
             <div>
-              <h2 className="text-white text-xl font-bold">ברוכים הבאים ל-AutoSpareFinder</h2>
-              <p className="text-brand-100 text-sm mt-0.5">אנא קראו ואשרו לפני שממשיכים</p>
+              <h2 className="text-[#0F1218] text-xl font-bold">ברוכים הבאים ל-AutoSpareFinder</h2>
+              <p className="text-[#0F1218]/80 text-sm mt-0.5">אנא קראו ואשרו לפני שממשיכים</p>
             </div>
           </div>
         </div>
 
         {/* Body */}
         <div className="px-6 py-5 space-y-4">
-          <p className="text-gray-700 text-sm leading-relaxed">
+          <p className="text-slate-200 text-sm leading-relaxed">
             לפני השימוש בשירות, עליכם לקרוא ולאשר את המסמכים הבאים. השימוש בפלטפורמה
             מהווה הסכמה לתנאים אלה.
           </p>
@@ -68,12 +68,12 @@ export default function ConsentModal() {
                 className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
                   ${privacyChecked
                     ? 'bg-brand-600 border-brand-500'
-                    : 'border-gray-300 group-hover:border-brand-400'}`}
+                    : 'border-brand-border group-hover:border-brand-400'}`}
               >
                 {privacyChecked && <CheckCircle2 className="text-white w-3.5 h-3.5" strokeWidth={3} />}
               </div>
             </div>
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-slate-200">
               קראתי ואני מסכים/ה{' '}
               <Link
                 to="/privacy"
@@ -100,12 +100,12 @@ export default function ConsentModal() {
                 className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors
                   ${termsChecked
                     ? 'bg-brand-600 border-brand-500'
-                    : 'border-gray-300 group-hover:border-brand-400'}`}
+                    : 'border-brand-border group-hover:border-brand-400'}`}
               >
                 {termsChecked && <CheckCircle2 className="text-white w-3.5 h-3.5" strokeWidth={3} />}
               </div>
             </div>
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-slate-200">
               קראתי ואני מסכים/ה{' '}
               <Link
                 to="/terms"
@@ -121,7 +121,7 @@ export default function ConsentModal() {
 
           {/* Notice if not checked */}
           {!canSubmit && (
-            <p className="text-xs text-gray-400 text-center">
+            <p className="text-xs text-slate-400 text-center">
               יש לסמן את שני התיבות לפני שממשיכים
             </p>
           )}
@@ -134,8 +134,8 @@ export default function ConsentModal() {
             disabled={!canSubmit || loading}
             className={`w-full py-3 rounded-brand font-bold text-base transition-all
               ${canSubmit && !loading
-                ? 'bg-brand-600 hover:bg-brand-700 text-white shadow-md hover:shadow-lg active:scale-95'
-                : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                ? 'bg-brand-600 hover:bg-brand-700 text-[#0F1218] shadow-md hover:shadow-lg active:scale-95'
+                : 'bg-brand-50 text-slate-400 cursor-not-allowed'}`}
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
@@ -149,7 +149,7 @@ export default function ConsentModal() {
               'אני מאשר/ת ומסכים/ה — המשך'
             )}
           </button>
-          <p className="text-center text-xs text-gray-400 mt-3">
+          <p className="text-center text-xs text-slate-400 mt-3">
             ניתן לעיין בהם תמיד דרך דף הפרופיל
           </p>
         </div>

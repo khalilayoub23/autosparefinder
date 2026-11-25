@@ -13,15 +13,15 @@ import { chatApi } from '../api/chat'
 
 const AGENT_LABELS = {
   router_agent:          { label: 'מנהל',         color: 'bg-brand-100 text-brand-700' },
-  parts_finder_agent:    { label: 'חיפוש חלקים',  color: 'bg-blue-100 text-blue-700'   },
-  sales_agent:           { label: 'מכירות',        color: 'bg-green-100 text-green-700' },
+  parts_finder_agent:    { label: 'חיפוש חלקים',  color: 'bg-blue-500/15 text-blue-300'   },
+  sales_agent:           { label: 'מכירות',        color: 'bg-green-500/15 text-green-300' },
   orders_agent:          { label: 'הזמנות',        color: 'bg-brand-100 text-brand-700'},
-  finance_agent:         { label: 'כספים',         color: 'bg-yellow-100 text-yellow-700'},
-  service_agent:         { label: 'שירות לקוחות',  color: 'bg-cyan-100 text-cyan-700'   },
-  security_agent:        { label: 'אבטחה',         color: 'bg-red-100 text-red-700'      },
-  marketing_agent:       { label: 'שיווק',         color: 'bg-pink-100 text-pink-700'   },
-  supplier_manager_agent:{ label: 'ספקים',         color: 'bg-gray-100 text-gray-700'   },
-  social_media_manager_agent:{ label: 'רשתות חברתיות', color: 'bg-indigo-100 text-indigo-700'},
+  finance_agent:         { label: 'כספים',         color: 'bg-yellow-500/15 text-yellow-300'},
+  service_agent:         { label: 'שירות לקוחות',  color: 'bg-cyan-500/15 text-cyan-300'   },
+  security_agent:        { label: 'אבטחה',         color: 'bg-red-500/15 text-red-300'      },
+  marketing_agent:       { label: 'שיווק',         color: 'bg-pink-500/15 text-pink-300'   },
+  supplier_manager_agent:{ label: 'ספקים',         color: 'bg-brand-100 text-slate-200'   },
+  social_media_manager_agent:{ label: 'רשתות חברתיות', color: 'bg-indigo-500/15 text-indigo-300'},
 }
 
 const QUICK_MSGS = [
@@ -33,7 +33,7 @@ const QUICK_MSGS = [
 ]
 
 function AgentBadge({ agent }) {
-  const info = AGENT_LABELS[agent] || { label: agent, color: 'bg-gray-100 text-gray-700' }
+  const info = AGENT_LABELS[agent] || { label: agent, color: 'bg-brand-100 text-slate-200' }
   return <span className={`badge ${info.color} text-xs`}>{info.label}</span>
 }
 
@@ -51,10 +51,10 @@ function InlineMarkdown({ text }) {
           </a>
         )
         const bold = tok.match(/^\*\*(.+?)\*\*$/)
-        if (bold) return <strong key={i} className="font-semibold text-brand-navy">{bold[1]}</strong>
+        if (bold) return <strong key={i} className="font-semibold text-slate-100">{bold[1]}</strong>
         const price = tok.match(/^(₪[\d,]+(?:\.\d+)?)$/)
         if (price) return (
-          <span key={i} className="font-semibold text-green-700 bg-green-50 rounded px-0.5">{tok}</span>
+          <span key={i} className="font-semibold text-green-300 bg-green-500/15 rounded px-0.5">{tok}</span>
         )
         return <span key={i}>{tok}</span>
       })}
@@ -131,7 +131,7 @@ function Message({ msg, onRate, onCatalogSearch }) {
 
   return (
     <div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : 'flex-row'} mb-4`}>
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-brand-600' : 'bg-white border border-gray-200'}`}>
+      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isUser ? 'bg-brand-600' : 'bg-brand-200 border border-brand-border'}`}>
         {isUser ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-brand-600" />}
       </div>
       <div className={`flex flex-col max-w-[75%] lg:max-w-[60%] ${isUser ? 'items-end' : 'items-start'}`}>
@@ -145,7 +145,7 @@ function Message({ msg, onRate, onCatalogSearch }) {
             <img
               src={msg.image_data_url}
               alt="chat attachment"
-              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-gray-200"
+              className="rounded-lg mb-2 max-h-64 w-auto object-contain border border-brand-border"
             />
           )}
           {isUser
@@ -166,7 +166,7 @@ function Message({ msg, onRate, onCatalogSearch }) {
         )}
 
         <div className={`flex items-center gap-1 mt-1 ${isUser ? 'flex-row-reverse' : ''}`}>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-slate-400">
             {msg.created_at ? formatDistanceToNow(new Date(msg.created_at), { addSuffix: true, locale: he }) : ''}
           </span>
           {!isUser && !rated && (
@@ -187,7 +187,7 @@ function Message({ msg, onRate, onCatalogSearch }) {
 function TypingIndicator() {
   return (
     <div className="flex gap-3 mb-4">
-      <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center">
+      <div className="w-8 h-8 rounded-full bg-brand-200 border border-brand-border flex items-center justify-center">
         <Bot className="w-4 h-4 text-brand-600" />
       </div>
       <div className="chat-bubble-agent flex items-center gap-1 py-3 px-4">
@@ -360,15 +360,15 @@ export default function Chat() {
     <div className="flex h-[calc(100vh-5rem)] gap-4">
       {/* Sidebar - conversations */}
       <aside className="hidden md:flex flex-col w-72 card overflow-hidden">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-800">שיחות</h3>
+        <div className="p-4 border-b border-brand-border flex items-center justify-between">
+          <h3 className="font-semibold text-slate-200">שיחות</h3>
           <button onClick={newConversation} className="btn-primary text-sm px-3 py-1.5 flex items-center gap-1">
             <PlusCircle className="w-4 h-4" /> חדש
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {conversations.length === 0 && (
-            <p className="text-xs text-gray-400 text-center py-8">אין שיחות עדיין</p>
+            <p className="text-xs text-slate-400 text-center py-8">אין שיחות עדיין</p>
           )}
           {conversations.map((c) => {
             const unread = isUnread(c)
@@ -377,31 +377,31 @@ export default function Chat() {
               key={c.id}
               onClick={() => selectConversation(c.id)}
               className={`group flex items-start justify-between p-3 rounded-xl cursor-pointer mb-1 transition-colors ${
-                currentConversationId === c.id ? 'bg-brand-50 border border-brand-200' : unread ? 'bg-brand-50 border border-brand-200' : 'hover:bg-gray-50 border border-transparent'
+                currentConversationId === c.id ? 'bg-brand-50 border border-brand-200' : unread ? 'bg-brand-50 border border-brand-200' : 'hover:bg-brand-100 border border-transparent'
               }`}
             >
               <div className="flex items-start gap-2 min-w-0 flex-1">
                 <div className="relative flex-shrink-0 mt-0.5">
                   <MessageSquare className={`w-4 h-4 ${
-                    currentConversationId === c.id ? 'text-brand-600' : unread ? 'text-brand-500' : 'text-gray-400'
+                    currentConversationId === c.id ? 'text-brand-600' : unread ? 'text-brand-500' : 'text-slate-400'
                   }`} />
                   {unread && <span className="absolute -top-1 -right-1 w-2 h-2 bg-brand-500 rounded-full" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className={`text-sm truncate ${
-                    currentConversationId === c.id ? 'font-semibold text-brand-700' : unread ? 'font-semibold text-brand-navy' : 'font-medium text-gray-700'
+                    currentConversationId === c.id ? 'font-semibold text-brand-700' : unread ? 'font-semibold text-slate-100' : 'font-medium text-slate-200'
                   }`}>
                     {c.title || 'שיחה חדשה'}
                   </p>
                   <div className="flex items-center justify-between gap-1 mt-0.5">
-                    <p className="text-xs text-gray-400 truncate">{AGENT_LABELS[c.current_agent]?.label || c.current_agent}</p>
-                    <p className="text-xs text-gray-400 flex-shrink-0 dir-ltr">{fmtTime(c.last_message_at)}</p>
+                    <p className="text-xs text-slate-400 truncate">{AGENT_LABELS[c.current_agent]?.label || c.current_agent}</p>
+                    <p className="text-xs text-slate-400 flex-shrink-0 dir-ltr">{fmtTime(c.last_message_at)}</p>
                   </div>
                 </div>
               </div>
               <button
                 onClick={(e) => { e.stopPropagation(); deleteConversation(c.id) }}
-                className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 text-red-400 ml-1 mt-0.5 transition-opacity"
+                className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/15 text-red-400 ml-1 mt-0.5 transition-opacity"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -414,14 +414,14 @@ export default function Chat() {
       {/* Main chat area */}
       <div className="flex-1 flex flex-col card overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="p-4 border-b border-brand-border flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 bg-brand-100 rounded-xl flex items-center justify-center">
               <Bot className="w-5 h-5 text-brand-600" />
             </div>
             <div>
-              <h2 className="font-semibold text-brand-navy text-sm">עוזר AI</h2>
-              <p className="text-xs text-gray-400">{AGENT_LABELS[agentName]?.label || 'מנהל'} • מוכן לעזור</p>
+              <h2 className="font-semibold text-slate-100 text-sm">עוזר AI</h2>
+              <p className="text-xs text-slate-400">{AGENT_LABELS[agentName]?.label || 'מנהל'} • מוכן לעזור</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -439,7 +439,7 @@ export default function Chat() {
         </div>
 
         {(humanRequested || humanActive) && (
-          <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-xs ${humanActive ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+          <div className={`mx-4 mt-3 rounded-xl border px-3 py-2 text-xs ${humanActive ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-amber-500/15 border-amber-500/30 text-amber-300'}`}>
             {humanActive
               ? 'נציג/ה אנושי/ת מטפל/ת בשיחה כרגע. אפשר להמשיך לכתוב כרגיל.'
               : `בקשה לנציג אנושי התקבלה. ${queuePosition > 0 ? `מיקום בתור: ${queuePosition}${queueSize > 0 ? ` מתוך ${queueSize}` : ''}. ` : ''}${etaMinutes > 0 ? `זמן משוער: כ-${etaMinutes} דק׳.` : ''}${escalated ? ' הטיפול קיבל קדימות גבוהה יותר.' : ''}`}
@@ -447,14 +447,14 @@ export default function Chat() {
         )}
 
         {awaitingFeedback && (
-          <div className="mx-4 mt-3 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-xs text-indigo-800">
+          <div className="mx-4 mt-3 rounded-xl border border-indigo-500/30 bg-indigo-500/15 px-3 py-3 text-xs text-indigo-300">
             <p className="font-semibold text-sm mb-2">איך היה הטיפול של הנציג/ה?</p>
             <div className="flex items-center gap-1 mb-2">
               {[1, 2, 3, 4, 5].map((score) => (
                 <button
                   key={score}
                   onClick={() => setHandoffFeedbackRating(score)}
-                  className={`px-2 py-1 rounded-md border text-xs ${handoffFeedbackRating >= score ? 'bg-yellow-100 border-yellow-300 text-yellow-700' : 'bg-white border-gray-200 text-gray-500'}`}
+                  className={`px-2 py-1 rounded-md border text-xs ${handoffFeedbackRating >= score ? 'bg-yellow-500/15 border-yellow-500/30 text-yellow-300' : 'bg-brand-200 border-brand-border text-slate-400'}`}
                 >
                   {score}
                 </button>
@@ -485,8 +485,8 @@ export default function Chat() {
               <div className="w-16 h-16 bg-brand-50 rounded-2xl flex items-center justify-center mb-4">
                 <Bot className="w-9 h-9 text-brand-500" />
               </div>
-              <h3 className="text-lg font-semibold text-brand-navy mb-1">שלום, {user?.full_name?.split(' ')[0]}!</h3>
-              <p className="text-gray-500 text-sm mb-6">אני יכול לעזור לך למצוא חלקי רכב, לבדוק הזמנות ועוד.</p>
+              <h3 className="text-lg font-semibold text-slate-100 mb-1">שלום, {user?.full_name?.split(' ')[0]}!</h3>
+              <p className="text-slate-400 text-sm mb-6">אני יכול לעזור לך למצוא חלקי רכב, לבדוק הזמנות ועוד.</p>
               <div className="flex flex-wrap gap-2 justify-center max-w-lg">
                 {QUICK_MSGS.map((q) => (
                   <button key={q} onClick={() => handleSend(q)} className="btn-secondary text-sm px-4 py-2 rounded-brand">
@@ -503,16 +503,16 @@ export default function Chat() {
 
         {/* Media preview */}
           {(imageFile || audioFile) && (
-            <div className="px-4 py-2 border-t border-gray-100 flex items-center gap-2">
+            <div className="px-4 py-2 border-t border-brand-border flex items-center gap-2">
               {imageFile && <img src={URL.createObjectURL(imageFile)} className="h-14 w-14 object-cover rounded-lg" alt="" />}
               {audioFile && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-700">
+                <div className="rounded-lg border border-brand-border bg-brand-100 px-3 py-2 text-xs text-slate-200">
                   קליפ קולי: {audioFile.name}
                 </div>
               )}
               <button
                 onClick={() => { setImageFile(null); setAudioFile(null) }}
-                className="text-xs text-red-500 hover:text-red-700"
+                className="text-xs text-red-500 hover:text-red-300"
               >
                 הסר
               </button>
@@ -520,9 +520,9 @@ export default function Chat() {
           )}
 
           {/* Input */}
-        <div className="p-4 border-t border-gray-100">
+        <div className="p-4 border-t border-brand-border">
           <div className="flex items-end gap-2">
-            <button onClick={() => fileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-gray-400 hover:text-brand-600">
+            <button onClick={() => fileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600">
               <Image className="w-5 h-5" />
             </button>
             <input
@@ -535,7 +535,7 @@ export default function Chat() {
                   setAudioFile(null)
                 }}
               />
-              <button onClick={() => audioFileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-gray-400 hover:text-brand-600" title="שלח הקלטה">
+              <button onClick={() => audioFileRef.current?.click()} className="btn-ghost p-2.5 flex-shrink-0 text-slate-400 hover:text-brand-600" title="שלח הקלטה">
                 <Mic className="w-5 h-5" />
               </button>
               <input
@@ -570,7 +570,7 @@ export default function Chat() {
               {isTyping ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-2 text-center">Auto Spare AI • הזמנות מעובדות רק לאחר תשלום מאושר</p>
+          <p className="text-xs text-slate-400 mt-2 text-center">Auto Spare AI • הזמנות מעובדות רק לאחר תשלום מאושר</p>
         </div>
       </div>
     </div>

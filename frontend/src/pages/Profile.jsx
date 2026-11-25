@@ -159,7 +159,7 @@ export default function Profile() {
       {account.verified !== null && (
         <div className={`flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 ${account.verified ? 'border-[rgba(34,197,94,0.35)] bg-[rgba(34,197,94,0.12)]' : 'border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.12)]'}`}>
           <div className="flex items-center gap-2 text-sm">
-            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-white ${account.verified ? 'bg-emerald-500' : 'bg-amber-500'}`}>
+            <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-[#0F1218] ${account.verified ? 'bg-emerald-500' : 'bg-amber-500'}`}>
               {account.verified ? '✓' : '!'}
             </span>
             <span className={account.verified ? 'text-[#4ADE80]' : 'text-[#FBBF24]'}>
@@ -250,7 +250,7 @@ export default function Profile() {
             {user?.is_verified ? (
               <span className="badge bg-[rgba(34,197,94,0.12)] text-[#4ADE80]">✓ מאומת</span>
             ) : (
-              <span className="badge bg-yellow-100 text-yellow-700">⚠ לא מאומת</span>
+              <span className="badge bg-yellow-500/15 text-yellow-300">⚠ לא מאומת</span>
             )}
           </div>
           <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2">
@@ -274,7 +274,7 @@ export default function Profile() {
               </div>
               <div className="flex items-center gap-2">
                 {!v.is_primary && (
-                  <button onClick={() => setPrimary(v.id)} title="הגדר כראשי" className="p-1.5 rounded-lg hover:bg-yellow-100 text-yellow-500">
+                  <button onClick={() => setPrimary(v.id)} title="הגדר כראשי" className="p-1.5 rounded-lg hover:bg-yellow-500/15 text-yellow-500">
                     <Star className="w-3.5 h-3.5" />
                   </button>
                 )}
@@ -319,7 +319,7 @@ export default function Profile() {
       <Section title="העדפות התראות" icon={Bell}>
         <div className="space-y-3">
           {NOTIF_KEYS.map(({ key, label, desc }) => (
-            <div key={key} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
+            <div key={key} className="flex items-center justify-between py-2 border-b border-brand-border last:border-0">
               <div>
                 <p className="text-sm font-medium text-white">{label}</p>
                 <p className="text-xs text-[#94A3B8]">{desc}</p>
@@ -327,7 +327,7 @@ export default function Profile() {
               <button
                 onClick={() => toggleNotif(key)}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors shrink-0 ${
-                  notifPrefs[key] ? 'bg-brand-500' : 'bg-gray-200'
+                  notifPrefs[key] ? 'bg-brand-500' : 'bg-brand-50'
                 }`}
               >
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-[#1E2535] shadow transition-transform ${

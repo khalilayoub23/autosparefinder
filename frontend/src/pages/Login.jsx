@@ -79,14 +79,14 @@ export default function Login() {
     <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <AuthBrandHeader
-          title={<span className="text-brand-navy">AutoSpare Finder</span>}
+          title={<span className="text-slate-100">AutoSpare Finder</span>}
           subtitle="חלקי חילוף לרכב עם התאמה חכמה"
         />
 
         <div className="auth-panel">
           {step === 'login' ? (
             <>
-              <h2 className="text-xl font-bold text-brand-navy mb-6 text-center">ברוך הבא</h2>
+              <h2 className="text-xl font-bold text-slate-100 mb-6 text-center">ברוך הבא</h2>
 
               {/* Email / password form */}
               <form onSubmit={handleLogin} className="space-y-4" autoComplete="on">
@@ -121,7 +121,7 @@ export default function Login() {
                     />
                     <button
                       type="button"
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
                       onClick={() => setShowPass(!showPass)}
                     >
                       {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -132,11 +132,11 @@ export default function Login() {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      className="w-4 h-4 rounded border-gray-300 text-brand-600"
+                      className="w-4 h-4 rounded border-brand-border text-brand-600"
                       checked={form.trustDevice}
                       onChange={(e) => setForm({ ...form, trustDevice: e.target.checked })}
                     />
-                    <span className="text-sm text-gray-600">זכור אותי</span>
+                    <span className="text-sm text-slate-300">זכור אותי</span>
                   </label>
                   <Link to="/reset-password" className="text-sm text-brand-600 hover:text-brand-700 font-medium">
                     שכחת סיסמה?
@@ -161,7 +161,7 @@ export default function Login() {
               {/* Social login — below form */}
               <SocialLoginButtons redirectTo={from} />
 
-              <p className="text-center text-sm text-gray-500 mt-6">
+              <p className="text-center text-sm text-slate-400 mt-6">
                 אין לך חשבון?{' '}
                 <Link to="/register" className="text-brand-600 hover:text-brand-700 font-semibold">הירשם עכשיו</Link>
               </p>
@@ -170,8 +170,8 @@ export default function Login() {
             <>
               <div className="text-center mb-6">
                 <div className="text-4xl mb-3">📱</div>
-                <h2 className="text-xl font-bold text-brand-navy">אימות דו-שלבי</h2>
-                <p className="text-sm text-gray-500 mt-1">הזן את הקוד שנשלח לטלפון שלך</p>
+                <h2 className="text-xl font-bold text-slate-100">אימות דו-שלבי</h2>
+                <p className="text-sm text-slate-400 mt-1">הזן את הקוד שנשלח לטלפון שלך</p>
               </div>
               <form onSubmit={handle2FA} className="space-y-4">
                 <input
@@ -188,11 +188,11 @@ export default function Login() {
                 <label className="flex items-center gap-2 cursor-pointer justify-center">
                   <input
                     type="checkbox"
-                    className="w-4 h-4 rounded border-gray-300 text-brand-600"
+                    className="w-4 h-4 rounded border-brand-border text-brand-600"
                     checked={form.trustDevice}
                     onChange={(e) => setForm({ ...form, trustDevice: e.target.checked })}
                   />
-                  <span className="text-sm text-gray-600">סמוך על המכשיר הזה (180 יום)</span>
+                  <span className="text-sm text-slate-300">סמוך על המכשיר הזה (180 יום)</span>
                 </label>
                 <button type="submit" disabled={isLoading || code.length < 6} className="btn-primary w-full flex items-center justify-center gap-2">
                   {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}

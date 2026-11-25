@@ -1086,7 +1086,7 @@ async def _status_update_loop() -> None:
             #     dedup (re-alerts immediately the moment the failing set changes).
             if is_digest_time:
                 lines[0] = f"📅 *AutoSpareFinder — דוח יומי* ({_il_time} ישראל)"
-                _dres = await _wa_send_update("\n".join(lines))
+                _dres = await _owner_digest_report("daily_status", lines[0], "\n".join(lines[1:]))
                 await _store_report_text("daily_status", _today, "\n".join(lines), bool((_dres or {}).get("ok")))
                 _last_digest_date = _today
                 if (_dres or {}).get("ok"):
@@ -1094,7 +1094,7 @@ async def _status_update_loop() -> None:
                 print("[StatusUpdate] Sent daily digest to owner")
             elif has_problem and problem_sig != _last_problem_sig:
                 lines[0] = f"⚠️ *AutoSpareFinder — בעיה במערכת* ({_il_time} ישראל)"
-                await _wa_send_update("\n".join(lines))
+                await _owner_digest_report("status_problem", lines[0], "\n".join(lines[1:]))
                 _last_problem_sig = problem_sig
                 print(f"[StatusUpdate] Sent PROBLEM alert to owner: {problem_sig[:120]}")
             else:
@@ -1862,7 +1862,7 @@ async def _job_queue_report_loop() -> None:
             lines.append(f"מנות שהורצו: {cur['batches_run']}")
             lines.append(f"— {st['done']}/{st['total']} שלבים הושלמו · לעצירה: *עצור*")
 
-            await _wa_send_update("\n".join(lines))
+            await _owner_digest_report("job_queue", lines[0], "\n".join(lines[1:]), section="catalog")
             last_sent = time.time()
             logger.info("[job_queue_report] sent: step=%s remaining=%s delta=%s",
                         key, rem, done_last_hour)
@@ -2475,7 +2475,7 @@ async def _harvest_supervisor_loop() -> None:
                         # _last_digest_date) and notify_owner()'s alert_key/cooldown model
                         # has nothing to add here. Kept as a direct, justified bypass.
                         try:
-                            _wres = await _wa_send_update(msg)
+                            _wres = await _owner_digest_report("weekly_harvest", "📊 דוח שאיבה שבועי", msg, category="harvest", section="catalog")
                             if (_wres or {}).get("ok"):
                                 await _mark_digest_sent("weekly_harvest", _today)
                         except Exception:
@@ -4420,6 +4420,77 @@ def _admin_gets_wa(admin) -> bool:
     return phone in allowed and phone != _d(os.getenv("OWNER_WHATSAPP_PHONE", ""))
 
 
+async def _owner_digest_record(category: str, title: str, body: str = "", *, severity: str = "info", state: str = "new",
+                               alert_key: str = "", fingerprint: str = "", ref: str = "", choices=None,
+                               event_keys=None, kind: str = "alert", section: str = "") -> "dict | None":
+    """Record a ROUTINE owner event in the durable digest store. Returns the result shaped like a queued send
+    ({"ok": True, "queued": True, "digest": True}) so notify_owner's cooldown / event-seen bookkeeping works
+    unchanged, a suppressed-repeat dict, or None when the store is unavailable (caller then sends directly)."""
+    try:
+        import owner_digest as _od
+        actions = [str(c[1]) for c in (choices or []) if isinstance(c, (list, tuple)) and len(c) == 2]
+        res = await _od.Store(await get_redis()).record(
+            category=category, title=title, body=body, severity=severity, state=state, alert_key=alert_key,
+            fingerprint=fingerprint, ref=ref, actions=actions, event_keys=event_keys, kind=kind, section=section)
+    except Exception as exc:
+        print(f"[owner_digest] record unavailable ({exc}) - sending directly")
+        return None
+    if res.get("ok"):
+        return {"ok": True, "queued": True, "digest": True, "event_id": res.get("event_id"), "action": res.get("action")}
+    return res
+
+
+async def _owner_digest_report(kind_key: str, title: str, text: str, *, category: str = "health", section: str = "health") -> dict:
+    """A periodic report (daily status, weekly harvest, job-queue progress) as ONE digest event: the latest
+    version of the same report replaces the pending one. Falls back to the direct send when the store is down."""
+    res = await _owner_digest_record(category, title, text, severity="info", state="new", alert_key=f"report_{kind_key}",
+                                     kind="report", section=section)
+    if res is None:
+        return await _wa_send_update(f"{title}\n{text}")
+    return res
+
+
+async def _owner_digest_pass(force: bool = False) -> dict:
+    """One digest delivery pass (health monitor, every 5 min). Sends the frozen digest via the bridge DIRECTLY:
+    unlike _wa_send_update it never parks the text in the retry queue, so 'ok' means WhatsApp accepted it and a
+    failure keeps the events pending. Never reports an outage through the broken channel."""
+    try:
+        import owner_digest as _od
+        if not _od.enabled():
+            return {"skipped": "disabled"}
+        _r = await get_redis()
+        to = await _updates_group_jid() or os.getenv("OWNER_WHATSAPP_PHONE", "")
+        if not to:
+            return {"skipped": "no_destination"}
+        note, ch_raw = "", None
+        try:
+            ch_raw = await _r.get(_wa_channel_key())
+            if ch_raw:
+                st = json.loads(ch_raw)
+                note = f"WhatsApp היה מנותק מ-{datetime.fromtimestamp(float(st.get('down_since', time.time())), APP_LOCAL_TZ):%d/%m %H:%M}; העדכונים נשמרו ונשלחים עכשיו"
+        except Exception:
+            pass
+
+        async def _send(text: str) -> dict:
+            return await _wa_send(to=to, text=text)
+
+        res = await _od.Store(_r).deliver(_send, window_open=_notify_window_open()[0], note=note, force=force)
+        if res.get("ok"):
+            await _r.set("autospare:owner_delivery:last", json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "ok": True,
+                                                                      "error": None}), ex=30 * 86400)
+            if ch_raw:
+                await _r.delete(_wa_channel_key())
+            print(f"[owner_digest] delivered {res.get('digest')} events={res.get('events')} parts={res.get('parts')} attempts={res.get('attempts')}")
+        elif res.get("error"):
+            import wa_queue_plan as _wqp3
+            if _wqp3.channel_error_kind(res.get("error")) == "down":
+                await _wa_channel_down(_r, str(res.get("error")))
+        return res
+    except Exception as exc:
+        print(f"[owner_digest] pass error: {exc}")
+        return {"ok": False, "error": str(exc)}
+
+
 async def notify_owner(
     category: str,
     title: str,
@@ -4518,10 +4589,20 @@ async def notify_owner(
         # 2026-09-09) so a persistent condition that re-queues every sampling
         # cycle all night collapses to one delivery instead of bursting at 09:00.
         text = _omf.cap_message(text, int(os.getenv("OWNER_MSG_MAX_CHARS", "1200")), "(המשך בקונסולה)")
-        result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key,
-                                       meta={"group": group or alert_key, "state": state or "", "sev": severity,
-                                             "title": f"{_state_label + ' · ' if _state_label else ''}{title}"[:120]}
-                                       if (group or alert_key) else None)
+        import owner_digest as _od
+        if not _is_critical and _od.enabled():
+            # ROUTINE alert -> the durable morning digest (mission 3, 2026-11-25). Only severity "critical" keeps the
+            # immediate path below. Redis down -> recorded=None and the alert is sent directly (never lost).
+            result = await _owner_digest_record(category, title, body, severity=severity, state=state or "new",
+                                                alert_key=alert_key, fingerprint=fingerprint, ref=ref,
+                                                choices=choices, event_keys=_ev_keys)
+        else:
+            result = None
+        if result is None:
+            result = await _wa_send_update(text, critical=_is_critical, alert_key=alert_key,
+                                           meta={"group": group or alert_key, "state": state or "", "sev": severity,
+                                                 "title": f"{_state_label + ' · ' if _state_label else ''}{title}"[:120]}
+                                           if (group or alert_key) else None)
         if (result.get("ok") or result.get("queued")) and _ev_keys:
             try:
                 _r = await get_redis()
@@ -6417,6 +6498,7 @@ async def _health_monitor_loop():
             if _notify_window_open()[0]:
                 await _flush_wa_quiet_queue()
             await _flush_wa_retry_queue()      # failed immediate sends; critical ones go out at any hour
+            await _owner_digest_pass()         # ONE consolidated morning digest of all routine events (09:30 IL, idempotent)
 
             current_states = await _probe()
             # provider replaced by _wa_send

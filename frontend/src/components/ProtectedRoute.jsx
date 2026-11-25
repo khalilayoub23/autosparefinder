@@ -37,7 +37,7 @@ export default function ProtectedRoute({ children, adminOnly = false }) {
 
   if (checkingAuth) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-gray-500">
+      <div className="min-h-screen flex items-center justify-center text-slate-400">
         טוען הרשאות...
       </div>
     )

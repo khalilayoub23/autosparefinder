@@ -26,8 +26,8 @@ export default class ErrorBoundary extends Component {
       return (
         <div className="min-h-[60vh] flex flex-col items-center justify-center text-center px-4">
           <div className="text-5xl mb-4">⚠️</div>
-          <h2 className="text-xl font-bold text-gray-800 mb-2">אירעה שגיאה בלתי צפויה</h2>
-          <p className="text-sm text-gray-500 mb-6 max-w-sm">
+          <h2 className="text-xl font-bold text-slate-200 mb-2">אירעה שגיאה בלתי צפויה</h2>
+          <p className="text-sm text-slate-400 mb-6 max-w-sm">
             {this.state.errorMessage}
           </p>
           <div className="flex gap-3">

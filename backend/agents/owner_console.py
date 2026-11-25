@@ -1954,6 +1954,15 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         return _HELP
     if low in ("status", "סטטוס", "review", "סקירה", "מצב"):
         return "📊 *סטטוס מערכת*\n" + await build_status_snapshot(db)
+    if low in ("digest", "דיגסט", "עדכוני בוקר"):
+        # the events waiting for the next morning digest + the last checkpoint (mission 3, 2026-11-25); read-only
+        import owner_digest as _od
+        from BACKEND_AUTH_SECURITY import get_redis as _gr
+        _st = _od.Store(await _gr())
+        _evs, _last = await _st.pending(), await _st._getj(_od.K_LAST)
+        _txt = "\n".join(f"• {e['title']}" for e in _evs[:15]) or "אין אירועים ממתינים."
+        return (f"🌅 *דיגסט הבוקר* — {len(_evs)} ממתינים (נשלח ב-{_od.DIGEST_HOUR:02d}:{_od.DIGEST_MINUTE:02d})\n{_txt}"
+                + (f"\nהאחרון שנמסר: {_last['id']}" if _last else ""))
     if low in ("harvester", "שאיבה", "קטלוג", "harvest"):
         snap = await build_status_snapshot(db, brief=True)
         return snap or "אין נתוני שאיבה כרגע."

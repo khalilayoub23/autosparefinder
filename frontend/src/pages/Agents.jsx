@@ -26,22 +26,22 @@ const AGENT_ICON_MAP = {
 }
 
 const COLOR_MAP = {
-  gray:   { logoBg: 'bg-gradient-to-br from-slate-500 via-zinc-600 to-gray-700', badge: 'bg-gray-200 text-gray-700', ring: 'ring-gray-200', accent: 'bg-gray-100 text-gray-700' },
-  blue:   { logoBg: 'bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-700', badge: 'bg-blue-100 text-blue-700', ring: 'ring-blue-200', accent: 'bg-blue-50 text-blue-700' },
-  green:  { logoBg: 'bg-gradient-to-br from-emerald-500 via-green-600 to-teal-700', badge: 'bg-green-100 text-green-700', ring: 'ring-green-200', accent: 'bg-green-50 text-green-700' },
+  gray:   { logoBg: 'bg-gradient-to-br from-slate-500 via-zinc-600 to-gray-700', badge: 'bg-brand-50 text-slate-200', ring: 'ring-brand-border', accent: 'bg-brand-100 text-slate-200' },
+  blue:   { logoBg: 'bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-700', badge: 'bg-blue-500/15 text-blue-300', ring: 'ring-blue-200', accent: 'bg-blue-500/15 text-blue-300' },
+  green:  { logoBg: 'bg-gradient-to-br from-emerald-500 via-green-600 to-teal-700', badge: 'bg-green-500/15 text-green-300', ring: 'ring-green-200', accent: 'bg-green-500/15 text-green-300' },
   orange: { logoBg: 'bg-gradient-to-br from-amber-500 via-brand-600 to-red-600', badge: 'bg-brand-100 text-brand-700', ring: 'ring-brand-200', accent: 'bg-brand-50 text-brand-700' },
-  yellow: { logoBg: 'bg-gradient-to-br from-yellow-400 via-amber-500 to-brand-600', badge: 'bg-yellow-100 text-yellow-700', ring: 'ring-yellow-200', accent: 'bg-yellow-50 text-yellow-800' },
-  pink:   { logoBg: 'bg-gradient-to-br from-rose-500 via-pink-600 to-fuchsia-700', badge: 'bg-pink-100 text-pink-700', ring: 'ring-pink-200', accent: 'bg-pink-50 text-pink-700' },
-  red:    { logoBg: 'bg-gradient-to-br from-red-500 via-rose-600 to-red-700', badge: 'bg-red-100 text-red-700', ring: 'ring-red-200', accent: 'bg-red-50 text-red-700' },
+  yellow: { logoBg: 'bg-gradient-to-br from-yellow-400 via-amber-500 to-brand-600', badge: 'bg-yellow-500/15 text-yellow-300', ring: 'ring-yellow-200', accent: 'bg-yellow-500/15 text-yellow-300' },
+  pink:   { logoBg: 'bg-gradient-to-br from-rose-500 via-pink-600 to-fuchsia-700', badge: 'bg-pink-500/15 text-pink-300', ring: 'ring-pink-200', accent: 'bg-pink-500/15 text-pink-300' },
+  red:    { logoBg: 'bg-gradient-to-br from-red-500 via-rose-600 to-red-700', badge: 'bg-red-500/15 text-red-300', ring: 'ring-red-200', accent: 'bg-red-500/15 text-red-300' },
   purple: { logoBg: 'bg-gradient-to-br from-brand-500 via-brand-600 to-brand-700', badge: 'bg-brand-100 text-brand-700', ring: 'ring-brand-200', accent: 'bg-brand-50 text-brand-700' },
-  indigo: { logoBg: 'bg-gradient-to-br from-indigo-500 via-blue-600 to-cyan-700', badge: 'bg-indigo-100 text-indigo-700', ring: 'ring-indigo-200', accent: 'bg-indigo-50 text-indigo-700' },
-  teal:   { logoBg: 'bg-gradient-to-br from-teal-500 via-cyan-600 to-blue-700', badge: 'bg-teal-100 text-teal-700', ring: 'ring-teal-200', accent: 'bg-teal-50 text-teal-700' },
+  indigo: { logoBg: 'bg-gradient-to-br from-indigo-500 via-blue-600 to-cyan-700', badge: 'bg-indigo-500/15 text-indigo-300', ring: 'ring-indigo-200', accent: 'bg-indigo-500/15 text-indigo-300' },
+  teal:   { logoBg: 'bg-gradient-to-br from-teal-500 via-cyan-600 to-blue-700', badge: 'bg-teal-500/15 text-teal-300', ring: 'ring-teal-200', accent: 'bg-teal-500/15 text-teal-300' },
 }
 
 const TYPE_LABELS = {
-  customer: { label: 'לקוחות', style: 'bg-blue-50 text-blue-600 border border-blue-200' },
+  customer: { label: 'לקוחות', style: 'bg-blue-500/15 text-blue-300 border border-blue-500/30' },
   admin:    { label: 'מנהל',   style: 'bg-brand-50 text-brand-600 border border-brand-200' },
-  internal: { label: 'פנימי',  style: 'bg-gray-50 text-gray-600 border border-gray-200' },
+  internal: { label: 'פנימי',  style: 'bg-brand-100 text-slate-300 border border-brand-border' },
 }
 
 const FALLBACK_TOKEN_PROVIDERS = [
@@ -114,7 +114,7 @@ function AgentCard({ agent, onSave, isSaving }) {
   }
 
   return (
-    <div className={`bg-white/90 rounded-2xl border border-brand-200 shadow-sm shadow-brand-100/60 overflow-hidden ring-1 ${colors.ring} hover:shadow-md transition-shadow`}>
+    <div className={`bg-brand-200/90 rounded-2xl border border-brand-200 shadow-sm shadow-brand-100/60 overflow-hidden ring-1 ${colors.ring} hover:shadow-md transition-shadow`}>
       {/* Header */}
       <div className="p-5">
         <div className="flex items-start justify-between gap-3">
@@ -128,10 +128,10 @@ function AgentCard({ agent, onSave, isSaving }) {
             </div>
             <div>
               <div className="flex items-baseline gap-2">
-                <h3 className="font-bold text-brand-navy text-base">{agent.persona}</h3>
-                <span className="text-xs text-gray-500 font-medium">{agent.name_he}</span>
+                <h3 className="font-bold text-slate-100 text-base">{agent.persona}</h3>
+                <span className="text-xs text-slate-400 font-medium">{agent.name_he}</span>
               </div>
-              <p className="text-xs text-gray-400 font-mono">{agent.name}</p>
+              <p className="text-xs text-slate-400 font-mono">{agent.name}</p>
             </div>
           </div>
           <div className="flex flex-col items-end gap-1.5">
@@ -143,22 +143,22 @@ function AgentCard({ agent, onSave, isSaving }) {
                 ? <CheckCircle className="w-3.5 h-3.5 text-green-500" />
                 : <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
               }
-              <span className={`text-xs font-medium ${agent.ai_status === 'active' ? 'text-green-600' : 'text-amber-600'}`}>
+              <span className={`text-xs font-medium ${agent.ai_status === 'active' ? 'text-green-300' : 'text-amber-300'}`}>
                 {agent.ai_status === 'active' ? 'AI פעיל' : 'Mock Mode'}
               </span>
             </div>
           </div>
         </div>
 
-        <p className="mt-3 text-sm text-gray-600 leading-relaxed">{agent.description_he}</p>
+        <p className="mt-3 text-sm text-slate-300 leading-relaxed">{agent.description_he}</p>
 
         {/* Model + Temp */}
         <div className="flex items-center gap-3 mt-3">
-          <span className="flex items-center gap-1 text-xs text-gray-500">
+          <span className="flex items-center gap-1 text-xs text-slate-400">
             <Zap className="w-3 h-3" /> {agent.model}
           </span>
-          <span className="text-xs text-gray-400">•</span>
-          <span className="text-xs text-gray-500">Temp: {agent.temperature}</span>
+          <span className="text-xs text-slate-400">•</span>
+          <span className="text-xs text-slate-400">Temp: {agent.temperature}</span>
         </div>
 
         {/* Capabilities */}
@@ -172,10 +172,10 @@ function AgentCard({ agent, onSave, isSaving }) {
 
         {/* Assigned tasks */}
         <div className="mt-3">
-          <p className="text-[11px] text-gray-400 mb-1">משימות משויכות</p>
+          <p className="text-[11px] text-slate-400 mb-1">משימות משויכות</p>
           <div className="flex flex-wrap gap-1.5">
             {(agent.assigned_tasks || agent.capabilities || []).map((task) => (
-              <span key={task} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-700">
+              <span key={task} className="text-xs px-2 py-0.5 rounded-full bg-brand-100 text-slate-200">
                 {task}
               </span>
             ))}
@@ -183,7 +183,7 @@ function AgentCard({ agent, onSave, isSaving }) {
         </div>
 
         {/* Edit controls */}
-        <div className="mt-4 border-t border-gray-100 pt-3">
+        <div className="mt-4 border-t border-brand-border pt-3">
           <button
             type="button"
             onClick={() => setEditing((v) => !v)}
@@ -196,7 +196,7 @@ function AgentCard({ agent, onSave, isSaving }) {
           {editing && (
             <div className="mt-3 space-y-3 bg-brand-50/80 rounded-xl p-3 border border-brand-200">
               <div>
-                <label className="text-xs text-gray-500">שם סוכן (תצוגה)</label>
+                <label className="text-xs text-slate-400">שם סוכן (תצוגה)</label>
                 <input
                   className="input-field w-full mt-1"
                   value={editForm.persona}
@@ -204,7 +204,7 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500">מודל</label>
+                <label className="text-xs text-slate-400">מודל</label>
                 <input
                   className="input-field w-full mt-1"
                   value={editForm.model}
@@ -213,7 +213,7 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500">טמפרטורה</label>
+                <label className="text-xs text-slate-400">טמפרטורה</label>
                 <input
                   type="number"
                   step="0.1"
@@ -226,7 +226,7 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500">System Prompt</label>
+                <label className="text-xs text-slate-400">System Prompt</label>
                 <textarea
                   rows={6}
                   className="input-field w-full mt-1 resize-y"
@@ -236,7 +236,7 @@ function AgentCard({ agent, onSave, isSaving }) {
                 />
               </div>
               <div>
-                <label className="text-xs text-gray-500">משימות משויכות (שורה לכל משימה)</label>
+                <label className="text-xs text-slate-400">משימות משויכות (שורה לכל משימה)</label>
                 <textarea
                   rows={4}
                   className="input-field w-full mt-1 resize-y"
@@ -260,45 +260,45 @@ function AgentCard({ agent, onSave, isSaving }) {
 
       {/* Test Panel */}
       {!isInternal && isTestable && (
-        <div className="border-t border-gray-100">
+        <div className="border-t border-brand-border">
           <button
             onClick={() => setExpanded(!expanded)}
-            className="w-full flex items-center justify-between px-5 py-3 text-sm text-gray-600 hover:bg-brand-50 transition-colors"
+            className="w-full flex items-center justify-between px-5 py-3 text-sm text-slate-300 hover:bg-brand-50 transition-colors"
           >
             <span className="font-medium">בדיקת סוכן</span>
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
           {expanded && (
-            <div className="px-5 pb-5 space-y-3 bg-gray-50">
+            <div className="px-5 pb-5 space-y-3 bg-brand-100">
               <textarea
                 rows={2}
                 value={testMsg}
                 onChange={(e) => setTestMsg(e.target.value)}
                 placeholder="שלח הודעת בדיקה לסוכן..."
-                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                className="w-full text-sm border border-brand-border rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 bg-brand-200"
                 dir="rtl"
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleTest() } }}
               />
               <button
                 onClick={handleTest}
                 disabled={testing || !testMsg.trim()}
-                className="flex items-center gap-2 px-4 py-2 rounded-brand text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 rounded-brand text-sm font-medium bg-brand-600 text-[#0F1218] hover:bg-brand-700 disabled:opacity-50 transition-colors"
               >
                 {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                 {testing ? 'שולח...' : 'שלח'}
               </button>
               {testResult && (
-                <div className={`rounded-xl p-3 text-sm ${testResult.status === 'ok' ? 'bg-white border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+                <div className={`rounded-xl p-3 text-sm ${testResult.status === 'ok' ? 'bg-brand-200 border border-green-500/30' : 'bg-red-500/15 border border-red-500/30'}`}>
                   <div className="flex items-center gap-1.5 mb-1.5">
                     {testResult.status === 'ok'
-                      ? <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+                      ? <CheckCircle className="w-3.5 h-3.5 text-green-300" />
                       : <AlertCircle className="w-3.5 h-3.5 text-red-500" />
                     }
-                    <span className={`text-xs font-semibold ${testResult.status === 'ok' ? 'text-green-700' : 'text-red-600'}`}>
+                    <span className={`text-xs font-semibold ${testResult.status === 'ok' ? 'text-green-300' : 'text-red-300'}`}>
                       {testResult.status === 'ok' ? 'תגובה' : 'שגיאה'}
                     </span>
                   </div>
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-wrap">{testResult.response}</p>
+                  <p className="text-slate-200 leading-relaxed whitespace-pre-wrap">{testResult.response}</p>
                 </div>
               )}
             </div>
@@ -544,25 +544,25 @@ export default function Agents() {
           <div className="w-10 h-10 bg-gradient-to-br from-brand-500 to-brand-700 rounded-xl flex items-center justify-center shadow-sm">
             <Bot className="w-5 h-5 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-brand-navy">סוכני AI</h1>
+          <h1 className="text-2xl font-bold text-slate-100">סוכני AI</h1>
         </div>
-        <p className="text-gray-500 mr-13 pr-13">לוח בקרה לניהול, ניטור ובדיקת סוכנים עם חיבור נתונים חי מהמערכת</p>
+        <p className="text-slate-400 mr-13 pr-13">לוח בקרה לניהול, ניטור ובדיקת סוכנים עם חיבור נתונים חי מהמערכת</p>
       </div>
 
       {/* Status Banner */}
       {data && (
-        <div className={`flex items-center gap-3 p-4 rounded-xl mb-6 ${data.ai_status === 'active' ? 'bg-green-50 border border-green-200' : 'bg-amber-50 border border-amber-200'}`}>
+        <div className={`flex items-center gap-3 p-4 rounded-xl mb-6 ${data.ai_status === 'active' ? 'bg-green-500/15 border border-green-500/30' : 'bg-amber-500/15 border border-amber-500/30'}`}>
           {data.ai_status === 'active'
-            ? <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-            : <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+            ? <CheckCircle className="w-5 h-5 text-green-300 flex-shrink-0" />
+            : <AlertCircle className="w-5 h-5 text-amber-300 flex-shrink-0" />
           }
           <div>
-            <p className={`text-sm font-semibold ${data.ai_status === 'active' ? 'text-green-800' : 'text-amber-800'}`}>
+            <p className={`text-sm font-semibold ${data.ai_status === 'active' ? 'text-green-300' : 'text-amber-300'}`}>
               {data.ai_status === 'active'
                 ? `AI פעיל — ${data.total} סוכנים טעונים`
                 : 'Mock Mode — CEREBRAS_API_KEY לא מוגדר'}
             </p>
-            <p className={`text-xs mt-0.5 ${data.ai_status === 'active' ? 'text-green-600' : 'text-amber-600'}`}>
+            <p className={`text-xs mt-0.5 ${data.ai_status === 'active' ? 'text-green-300' : 'text-amber-300'}`}>
               {data.ai_status === 'active'
                 ? (modelsInUse.length
                   ? `מודלים פעילים בפועל: ${modelsInUse.join(' | ')}`
@@ -570,7 +570,7 @@ export default function Agents() {
                 : 'הגדר CEREBRAS_API_KEY ב-backend/.env לקבלת תגובות AI אמיתיות'}
             </p>
             {data.ai_status === 'active' && channelModelsText && (
-              <p className="text-[11px] text-green-600 mt-1 break-words">
+              <p className="text-[11px] text-green-300 mt-1 break-words">
                 מודלי ערוצים: {channelModelsText}
               </p>
             )}
@@ -580,105 +580,105 @@ export default function Agents() {
 
       {usageSummary && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
-            <p className="text-xs text-gray-500">סה״כ ריצות AI (14 ימים)</p>
-            <p className="text-2xl font-bold text-brand-navy mt-1">{usageSummary.total_runs ?? 0}</p>
-            <div className="flex items-center gap-1 text-xs text-gray-500 mt-2"><Activity className="w-3.5 h-3.5" /> ניטור חי לכל הסוכנים</div>
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+            <p className="text-xs text-slate-400">סה״כ ריצות AI (14 ימים)</p>
+            <p className="text-2xl font-bold text-slate-100 mt-1">{usageSummary.total_runs ?? 0}</p>
+            <div className="flex items-center gap-1 text-xs text-slate-400 mt-2"><Activity className="w-3.5 h-3.5" /> ניטור חי לכל הסוכנים</div>
           </div>
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
-            <p className="text-xs text-gray-500">אחוז הצלחה</p>
-            <p className="text-2xl font-bold text-green-700 mt-1">{usageSummary.success_rate_pct ?? 0}%</p>
-            <p className="text-xs text-gray-500 mt-2">{usageSummary.success_runs ?? 0} הצליחו</p>
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+            <p className="text-xs text-slate-400">אחוז הצלחה</p>
+            <p className="text-2xl font-bold text-green-300 mt-1">{usageSummary.success_rate_pct ?? 0}%</p>
+            <p className="text-xs text-slate-400 mt-2">{usageSummary.success_runs ?? 0} הצליחו</p>
           </div>
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
-            <p className="text-xs text-gray-500">זמן תגובה ממוצע</p>
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+            <p className="text-xs text-slate-400">זמן תגובה ממוצע</p>
             <p className="text-2xl font-bold text-brand-700 mt-1">{usageSummary.avg_execution_ms ?? 0}ms</p>
-            <div className="flex items-center gap-1 text-xs text-gray-500 mt-2"><Timer className="w-3.5 h-3.5" /> latency ממוצע</div>
+            <div className="flex items-center gap-1 text-xs text-slate-400 mt-2"><Timer className="w-3.5 h-3.5" /> latency ממוצע</div>
           </div>
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
-            <p className="text-xs text-gray-500">פריטי זיכרון משותף</p>
-            <p className="text-2xl font-bold text-indigo-700 mt-1">{usageSummary.shared_memory_items ?? 0}</p>
-            <div className="flex items-center gap-1 text-xs text-gray-500 mt-2"><Database className="w-3.5 h-3.5" /> shared memory פעיל</div>
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+            <p className="text-xs text-slate-400">פריטי זיכרון משותף</p>
+            <p className="text-2xl font-bold text-indigo-300 mt-1">{usageSummary.shared_memory_items ?? 0}</p>
+            <div className="flex items-center gap-1 text-xs text-slate-400 mt-2"><Database className="w-3.5 h-3.5" /> shared memory פעיל</div>
           </div>
         </div>
       )}
 
       {usageSummary && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-6">
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-brand-navy">שימוש לפי סוכן</h3>
-              <span className="text-xs text-gray-500">{usageByAgent.length} סוכנים פעילים</span>
+              <h3 className="text-sm font-semibold text-slate-100">שימוש לפי סוכן</h3>
+              <span className="text-xs text-slate-400">{usageByAgent.length} סוכנים פעילים</span>
             </div>
             <div className="space-y-2 max-h-64 overflow-auto pr-1">
               {usageByAgent.slice(0, 10).map((row) => (
                 <div key={row.agent_name} className="rounded-xl border border-brand-100 px-3 py-2 flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-sm font-medium text-gray-800">{row.agent_name}</p>
-                    <p className="text-xs text-gray-500">{row.runs} ריצות • {row.avg_execution_ms}ms ממוצע</p>
+                    <p className="text-sm font-medium text-slate-200">{row.agent_name}</p>
+                    <p className="text-xs text-slate-400">{row.runs} ריצות • {row.avg_execution_ms}ms ממוצע</p>
                   </div>
                   <div className="text-left">
-                    <p className="text-xs text-green-700">{row.success} הצלחות</p>
-                    <p className="text-xs text-red-600">{row.errors} שגיאות</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">{formatUsageTs(row.last_used_at)}</p>
+                    <p className="text-xs text-green-300">{row.success} הצלחות</p>
+                    <p className="text-xs text-red-300">{row.errors} שגיאות</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{formatUsageTs(row.last_used_at)}</p>
                   </div>
                 </div>
               ))}
-              {!usageByAgent.length && <p className="text-sm text-gray-500">אין נתוני שימוש עדיין.</p>}
+              {!usageByAgent.length && <p className="text-sm text-slate-400">אין נתוני שימוש עדיין.</p>}
             </div>
           </div>
 
-          <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
+          <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 shadow-sm shadow-brand-100/60">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-brand-navy">זיכרון משותף אחרון</h3>
-              <span className="text-xs text-gray-500">{sharedMemoryRows.length} רשומות</span>
+              <h3 className="text-sm font-semibold text-slate-100">זיכרון משותף אחרון</h3>
+              <span className="text-xs text-slate-400">{sharedMemoryRows.length} רשומות</span>
             </div>
             <div className="space-y-2 max-h-64 overflow-auto pr-1">
               {sharedMemoryRows.slice(0, 12).map((row) => (
                 <div key={row.id} className="rounded-xl border border-brand-100 px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-xs font-semibold text-gray-700">{row.memory_key}</p>
-                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{row.scope}</span>
+                    <p className="text-xs font-semibold text-slate-200">{row.memory_key}</p>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-brand-100 text-slate-300">{row.scope}</span>
                   </div>
-                  <p className="text-sm text-gray-700 mt-1 break-words">{row.memory_value}</p>
-                  <p className="text-[11px] text-gray-400 mt-1">agent: {row.agent_name || 'system'} • {formatUsageTs(row.updated_at)}</p>
+                  <p className="text-sm text-slate-200 mt-1 break-words">{row.memory_value}</p>
+                  <p className="text-[11px] text-slate-400 mt-1">agent: {row.agent_name || 'system'} • {formatUsageTs(row.updated_at)}</p>
                 </div>
               ))}
-              {!sharedMemoryRows.length && <p className="text-sm text-gray-500">אין רשומות זיכרון משותף.</p>}
+              {!sharedMemoryRows.length && <p className="text-sm text-slate-400">אין רשומות זיכרון משותף.</p>}
             </div>
           </div>
         </div>
       )}
 
       {usageSummary && (
-        <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
+        <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-brand-navy">לוג שימוש אחרון</h3>
-            <span className="text-xs text-gray-500">{usageRecent.length} אירועים</span>
+            <h3 className="text-sm font-semibold text-slate-100">לוג שימוש אחרון</h3>
+            <span className="text-xs text-slate-400">{usageRecent.length} אירועים</span>
           </div>
           <div className="space-y-2 max-h-72 overflow-auto pr-1">
             {usageRecent.slice(0, 20).map((row) => (
               <div key={row.id} className="rounded-xl border border-brand-100 px-3 py-2 flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 truncate">{row.agent_name} • {row.intent || 'general'}</p>
-                  <p className="text-xs text-gray-500 truncate">{row.source || 'web'} • {row.model_used || 'unknown-model'} • {formatUsageTs(row.created_at)}</p>
+                  <p className="text-sm font-medium text-slate-200 truncate">{row.agent_name} • {row.intent || 'general'}</p>
+                  <p className="text-xs text-slate-400 truncate">{row.source || 'web'} • {row.model_used || 'unknown-model'} • {formatUsageTs(row.created_at)}</p>
                 </div>
                 <div className="text-left shrink-0">
-                  <p className={`text-xs font-semibold ${row.success ? 'text-green-700' : 'text-red-600'}`}>{row.success ? 'OK' : 'ERROR'}</p>
-                  <p className="text-xs text-gray-500">{row.execution_time_ms ?? 0}ms</p>
+                  <p className={`text-xs font-semibold ${row.success ? 'text-green-300' : 'text-red-300'}`}>{row.success ? 'OK' : 'ERROR'}</p>
+                  <p className="text-xs text-slate-400">{row.execution_time_ms ?? 0}ms</p>
                 </div>
               </div>
             ))}
-            {!usageRecent.length && <p className="text-sm text-gray-500">אין לוגים להצגה.</p>}
+            {!usageRecent.length && <p className="text-sm text-slate-400">אין לוגים להצגה.</p>}
           </div>
         </div>
       )}
 
       {usageSummary && (
-        <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
+        <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-brand-navy">לוג משימות סוכנים (מלא)</h3>
-            <span className="text-xs text-gray-500">{usageTaskLogs.length} פעולות</span>
+            <h3 className="text-sm font-semibold text-slate-100">לוג משימות סוכנים (מלא)</h3>
+            <span className="text-xs text-slate-400">{usageTaskLogs.length} פעולות</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
@@ -735,31 +735,31 @@ export default function Agents() {
             {usageTaskLogs.slice(0, 80).map((row) => (
               <div key={row.id} className="rounded-xl border border-brand-100 px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-gray-800 truncate">{row.agent_name || 'unknown'} • {row.action_type || 'task'}</p>
-                  <p className={`text-xs font-semibold ${row.success ? 'text-green-700' : 'text-red-600'}`}>{row.success ? 'OK' : 'ERROR'}</p>
+                  <p className="text-sm font-medium text-slate-200 truncate">{row.agent_name || 'unknown'} • {row.action_type || 'task'}</p>
+                  <p className={`text-xs font-semibold ${row.success ? 'text-green-300' : 'text-red-300'}`}>{row.success ? 'OK' : 'ERROR'}</p>
                 </div>
-                <p className="text-xs text-gray-500 mt-0.5 truncate">{row.source || 'web'} • {row.intent || 'general'} • {row.model_used || 'n/a'} • {formatUsageTs(row.created_at)} • {row.execution_time_ms ?? 0}ms</p>
-                {row.message_preview && <p className="text-xs text-gray-700 mt-1 break-words"><span className="font-semibold">in:</span> {row.message_preview}</p>}
-                {row.response_preview && <p className="text-xs text-gray-700 mt-1 break-words"><span className="font-semibold">out:</span> {row.response_preview}</p>}
-                {!row.success && row.error_message && <p className="text-xs text-red-600 mt-1 break-words">{row.error_message}</p>}
+                <p className="text-xs text-slate-400 mt-0.5 truncate">{row.source || 'web'} • {row.intent || 'general'} • {row.model_used || 'n/a'} • {formatUsageTs(row.created_at)} • {row.execution_time_ms ?? 0}ms</p>
+                {row.message_preview && <p className="text-xs text-slate-200 mt-1 break-words"><span className="font-semibold">in:</span> {row.message_preview}</p>}
+                {row.response_preview && <p className="text-xs text-slate-200 mt-1 break-words"><span className="font-semibold">out:</span> {row.response_preview}</p>}
+                {!row.success && row.error_message && <p className="text-xs text-red-300 mt-1 break-words">{row.error_message}</p>}
               </div>
             ))}
-            {!usageTaskLogs.length && <p className="text-sm text-gray-500">אין לוג משימות להצגה.</p>}
+            {!usageTaskLogs.length && <p className="text-sm text-slate-400">אין לוג משימות להצגה.</p>}
           </div>
         </div>
       )}
 
       {/* Runtime token controls */}
-      <div className="bg-white/90 border border-brand-200 rounded-2xl p-5 mb-6 shadow-sm shadow-brand-100/60">
+      <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-5 mb-6 shadow-sm shadow-brand-100/60">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="min-w-[260px]">
-            <p className="text-sm font-semibold text-brand-navy">ניהול טוקן AI</p>
-            <p className="text-xs text-gray-500 mt-1">ספק נבחר: {selectedProviderLabel}</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-sm font-semibold text-slate-100">ניהול טוקן AI</p>
+            <p className="text-xs text-slate-400 mt-1">ספק נבחר: {selectedProviderLabel}</p>
+            <p className="text-xs text-slate-400 mt-1">
               מצב נוכחי: {selectedProviderStatus?.configured ? `מוגדר (${selectedProviderStatus?.token_preview || '****'})` : 'לא מוגדר'}
             </p>
-            <p className="text-xs text-gray-500 mt-1">עודכן לאחרונה: {formatTs(selectedProviderStatus?.persisted_updated_at)}</p>
-            <p className="text-[11px] text-green-700 mt-2">העדכון נשמר ב-DB ומוחל אוטומטית גם אחרי ריסטארט של ה-Backend (Debug).</p>
+            <p className="text-xs text-slate-400 mt-1">עודכן לאחרונה: {formatTs(selectedProviderStatus?.persisted_updated_at)}</p>
+            <p className="text-[11px] text-green-300 mt-2">העדכון נשמר ב-DB ומוחל אוטומטית גם אחרי ריסטארט של ה-Backend (Debug).</p>
 
             <div className="flex flex-wrap gap-1.5 mt-3">
               {providerOptions.map((provider) => {
@@ -770,11 +770,11 @@ export default function Agents() {
                     type="button"
                     key={provider.provider}
                     onClick={() => setRuntimeTokenProvider(provider.provider)}
-                    className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${runtimeTokenProvider === provider.provider
+                    className={`px-2.5 py-1 rounded-brand text-xs border transition-colors ${runtimeTokenProvider === provider.provider
                       ? 'border-brand-300 bg-brand-50 text-brand-700'
                       : configured
-                        ? 'border-green-200 bg-green-50 text-green-700'
-                        : 'border-gray-200 bg-gray-50 text-gray-600'
+                        ? 'border-green-500/30 bg-green-500/15 text-green-300'
+                        : 'border-brand-border bg-brand-100 text-slate-300'
                     }`}
                   >
                     {provider.label}
@@ -809,7 +809,7 @@ export default function Agents() {
                 aria-label={showRuntimeToken ? 'הסתר טוקן' : 'הצג טוקן'}
                 title={showRuntimeToken ? 'הסתר טוקן' : 'הצג טוקן'}
                 onClick={() => setShowRuntimeToken((v) => !v)}
-                className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-gray-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                className="absolute left-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-md flex items-center justify-center text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
               >
                 {showRuntimeToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -828,15 +828,15 @@ export default function Agents() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
+      <div className="bg-brand-200/90 border border-brand-200 rounded-2xl p-4 mb-6 shadow-sm shadow-brand-100/60">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-          <h2 className="text-sm font-semibold text-brand-navy">סינון סוכנים</h2>
-          <p className="text-xs text-gray-500">{filteredAgents.length} מתוך {agents.length} מוצגים</p>
+          <h2 className="text-sm font-semibold text-slate-100">סינון סוכנים</h2>
+          <p className="text-xs text-slate-400">{filteredAgents.length} מתוך {agents.length} מוצגים</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="relative">
-            <Search className="w-4 h-4 text-gray-400 absolute right-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               className="input-field w-full pr-9"
@@ -882,8 +882,8 @@ export default function Agents() {
       </div>
 
       {!filteredAgents.length && (
-        <div className="mt-6 bg-gray-50 border border-gray-200 rounded-2xl p-6 text-center">
-          <p className="text-sm text-gray-600">לא נמצאו סוכנים לפי הסינון הנוכחי.</p>
+        <div className="mt-6 bg-brand-100 border border-brand-border rounded-2xl p-6 text-center">
+          <p className="text-sm text-slate-300">לא נמצאו סוכנים לפי הסינון הנוכחי.</p>
         </div>
       )}
     </div>

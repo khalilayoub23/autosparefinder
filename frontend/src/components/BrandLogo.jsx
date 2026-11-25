@@ -59,7 +59,7 @@ export default function BrandLogo({
   }
 
   return (
-    <span className={`${mergedClassName} inline-flex items-center justify-center ${blend ? 'bg-transparent border-0' : 'rounded-xl border border-cyan-300 bg-slate-100'}`.trim()}>
+    <span className={`${mergedClassName} inline-flex items-center justify-center ${blend ? 'bg-transparent border-0' : 'rounded-xl border border-cyan-500/30 bg-brand-100'}`.trim()}>
       <Wrench className="h-1/2 w-1/2 text-cyan-500" />
     </span>
   )

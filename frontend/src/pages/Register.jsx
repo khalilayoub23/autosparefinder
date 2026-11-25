@@ -61,24 +61,24 @@ export default function Register() {
       <div className="auth-page min-h-screen flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <AuthBrandHeader
-            title={<span className="text-brand-navy">כמעט שם 🎉</span>}
+            title={<span className="text-slate-100">כמעט שם 🎉</span>}
             subtitle="נשאר רק לאמת את החשבון"
           />
           <div className="auth-panel text-center">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-brand-success/10">
               <CheckCircle2 className="h-9 w-9 text-brand-success" />
             </div>
-            <h2 className="text-2xl font-bold text-brand-navy mb-2">נרשמת בהצלחה!</h2>
-            <p className="text-slate-500 mb-6">שלחנו לך שני דברים כדי להשלים את ההצטרפות:</p>
+            <h2 className="text-2xl font-bold text-slate-100 mb-2">נרשמת בהצלחה!</h2>
+            <p className="text-slate-400 mb-6">שלחנו לך שני דברים כדי להשלים את ההצטרפות:</p>
 
             <div className="space-y-3 text-right mb-7">
               <div className="flex items-start gap-3 rounded-brand border border-brand-border bg-brand-surface p-3">
                 <MessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
-                <p className="text-sm text-slate-600"><b className="text-brand-navy">קוד אימות ב-SMS</b> — הזן אותו בהתחברות כדי לאמת את הטלפון.</p>
+                <p className="text-sm text-slate-300"><b className="text-slate-100">קוד אימות ב-SMS</b> — הזן אותו בהתחברות כדי לאמת את הטלפון.</p>
               </div>
               <div className="flex items-start gap-3 rounded-brand border border-brand-border bg-brand-surface p-3">
                 <Mail className="mt-0.5 h-5 w-5 shrink-0 text-brand-blue" />
-                <p className="text-sm text-slate-600"><b className="text-brand-navy">מייל ברוכים הבאים ואימות</b> — לחיצה על הקישור מפעילה את החשבון (אפשר גם מאוחר יותר מהפרופיל).</p>
+                <p className="text-sm text-slate-300"><b className="text-slate-100">מייל ברוכים הבאים ואימות</b> — לחיצה על הקישור מפעילה את החשבון (אפשר גם מאוחר יותר מהפרופיל).</p>
               </div>
             </div>
 
@@ -97,24 +97,24 @@ export default function Register() {
     <div className="auth-page min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <AuthBrandHeader
-          title={<span className="text-brand-navy">פתיחת חשבון חדש</span>}
+          title={<span className="text-slate-100">פתיחת חשבון חדש</span>}
           subtitle="צור חשבון מהיר וקבל גישה לכל כלי החיפוש"
         />
 
         <div className="auth-panel">
-          <h2 className="text-xl font-bold text-brand-navy mb-1 text-center">הצטרף אלינו</h2>
-          <p className="text-center text-sm text-slate-500 mb-6">פחות מדקה, בלי כרטיס אשראי</p>
+          <h2 className="text-xl font-bold text-slate-100 mb-1 text-center">הצטרף אלינו</h2>
+          <p className="text-center text-sm text-slate-400 mb-6">פחות מדקה, בלי כרטיס אשראי</p>
 
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
-              <label htmlFor="full_name" className="block text-sm font-medium text-slate-700 mb-1">שם מלא</label>
+              <label htmlFor="full_name" className="block text-sm font-medium text-slate-200 mb-1">שם מלא</label>
               <input id="full_name" autoComplete="name" className="input-field" placeholder="ישראל ישראלי"
                      value={form.full_name} onChange={set('full_name')} onBlur={blur('full_name')} required />
               {err(touched.full_name && !nameOk, 'נא להזין שם מלא')}
             </div>
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">אימייל</label>
+              <label htmlFor="email" className="block text-sm font-medium text-slate-200 mb-1">אימייל</label>
               <div className="relative">
                 <input id="email" type="email" dir="ltr" autoComplete="email" className="input-field pl-9" placeholder="your@email.com"
                        value={form.email} onChange={set('email')} onBlur={blur('email')} aria-invalid={touched.email && !emailOk} required />
@@ -124,7 +124,7 @@ export default function Register() {
             </div>
 
             <div>
-              <label htmlFor="phone" className="block text-sm font-medium text-slate-700 mb-1">טלפון <span className="text-slate-400 font-normal">(לאימות דו-שלבי)</span></label>
+              <label htmlFor="phone" className="block text-sm font-medium text-slate-200 mb-1">טלפון <span className="text-slate-400 font-normal">(לאימות דו-שלבי)</span></label>
               <div className="relative">
                 <input id="phone" type="tel" dir="ltr" autoComplete="tel" maxLength={16} className="input-field pl-9" placeholder="0501234567 או ‎+18777804236"
                        value={form.phone} onChange={set('phone')} onBlur={blur('phone')} aria-invalid={touched.phone && !phoneOk} required />
@@ -134,12 +134,12 @@ export default function Register() {
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1">סיסמה</label>
+              <label htmlFor="password" className="block text-sm font-medium text-slate-200 mb-1">סיסמה</label>
               <div className="relative">
                 <input id="password" type={showPass ? 'text' : 'password'} dir="ltr" autoComplete="new-password" className="input-field pl-10" placeholder="לפחות 8 תווים"
                        value={form.password} onChange={set('password')} onBlur={blur('password')} required />
                 <button type="button" aria-label={showPass ? 'הסתר סיסמה' : 'הצג סיסמה'}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300"
                         onClick={() => setShowPass(!showPass)}>
                   {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -151,7 +151,7 @@ export default function Register() {
                   <div className="flex gap-1.5" aria-hidden="true">
                     {[0, 1, 2].map((i) => (
                       <span key={i} className={`h-1.5 flex-1 rounded-full transition-colors ${
-                        pwScore > i ? (pwScore === 3 ? 'bg-brand-success' : 'bg-brand-blue') : 'bg-slate-200'}`} />
+                        pwScore > i ? (pwScore === 3 ? 'bg-brand-success' : 'bg-brand-blue') : 'bg-brand-50'}`} />
                     ))}
                   </div>
                   <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px]">
@@ -164,7 +164,7 @@ export default function Register() {
             </div>
 
             <div>
-              <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 mb-1">אישור סיסמה</label>
+              <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-200 mb-1">אישור סיסמה</label>
               <div className="relative">
                 <input id="confirmPassword" type={showPass ? 'text' : 'password'} dir="ltr" autoComplete="new-password" className="input-field pl-9" placeholder="••••••••"
                        value={form.confirmPassword} onChange={set('confirmPassword')} onBlur={blur('confirmPassword')}
@@ -189,13 +189,13 @@ export default function Register() {
 
           {/* Divider */}
           <div className="relative my-5">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-200" /></div>
-            <div className="relative flex justify-center text-sm"><span className="bg-white px-3 text-slate-400 font-medium">או</span></div>
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-brand-border" /></div>
+            <div className="relative flex justify-center text-sm"><span className="bg-brand-200 px-3 text-slate-400 font-medium">או</span></div>
           </div>
 
           <SocialLoginButtons redirectTo="/" />
 
-          <p className="text-center text-sm text-slate-500 mt-6">
+          <p className="text-center text-sm text-slate-400 mt-6">
             יש לך חשבון? <Link to="/login" className="text-brand-600 font-semibold hover:text-brand-700">כנס</Link>
           </p>
         </div>

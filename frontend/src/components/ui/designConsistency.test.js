@@ -51,3 +51,26 @@ describe('result cards use the dark surface', () => {
     expect(s).toContain("categoryLabel(s.category")
   })
 })
+
+describe('dark-theme colour guards (mission 3, 2026-11-25)', () => {
+  const scoped = files.filter(({ p }) => !p.endsWith('.test.js'))
+  it('no light-theme utilities or dark-on-dark text colours remain in pages/components', () => {
+    const bad = []
+    const re = /\b(bg-white(?!\/)|bg-gray-(?:50|100|200)|bg-slate-(?:50|100)|text-gray-[5-9]00|text-slate-[6-9]00|border-gray-[123]00|text-brand-navy|text-\[#1B2228\]|bg-(?:yellow|green|red|blue|amber|orange|purple|indigo|cyan|emerald|sky|pink|teal)-(?:50|100))\b/
+    for (const { p, s } of scoped) {
+      const m = s.match(re)
+      if (m) bad.push(p.replace(SRC, '') + ': ' + m[0])
+    }
+    expect(bad).toEqual([])
+  })
+  it('white text is never placed on the sky-blue brand backgrounds (contrast < 3:1)', () => {
+    const bad = []
+    for (const { p, s } of scoped) {
+      for (const m of s.matchAll(/class(?:Name)?=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
+        const cls = m[1] || m[2] || ''
+        if (/\bbg-brand-(?:300|400|500|600|700)\b(?!\/)/.test(cls) && /\btext-white\b/.test(cls)) bad.push(p.replace(SRC, '') + ': ' + cls.slice(0, 70))
+      }
+    }
+    expect(bad).toEqual([])
+  })
+})

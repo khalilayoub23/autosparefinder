@@ -26,8 +26,8 @@ const SalesChart = () => {
   }, []);
 
   return (
-    <div className="bg-white p-6 rounded-brand border border-brand-border shadow-sm h-full flex flex-col relative">
-      <h3 className="text-lg font-bold text-brand-navy mb-6">פעילות חיפושים והזמנות (שבועי)</h3>
+    <div className="bg-brand-200 p-6 rounded-brand border border-brand-border shadow-sm h-full flex flex-col relative">
+      <h3 className="text-lg font-bold text-slate-100 mb-6">פעילות חיפושים והזמנות (שבועי)</h3>
       {loading && <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10 font-bold text-brand-blue">טוען נתונים...</div>}
       <div className="flex-1 w-full min-h-[300px]">
         <ResponsiveContainer width="100%" height="100%">
