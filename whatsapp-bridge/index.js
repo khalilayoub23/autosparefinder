@@ -1,6 +1,8 @@
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
-const baileys = require('@whiskeysockets/baileys')
+// ESM namespace import (2026-11-26, #158): Baileys 6.7.x is an ES module with an import cycle that require(esm) cannot
+// initialise ("Cannot access 'WAMessageStubType' before initialization"). 6.7.24 is pinned because it is the first
+// line that sends to LID-addressed groups (addressing_mode + lid device JIDs); 6.17.16 encoded group devices as
+// <lid>@s.whatsapp.net and every group send failed with 'not-acceptable'.
+import * as baileys from '@whiskeysockets/baileys'
 const makeWASocket = baileys.default || baileys.makeWASocket || baileys
 const {
   useMultiFileAuthState,
@@ -14,6 +16,7 @@ const {
 } = baileys
 
 import { Boom } from '@hapi/boom'
+import { isNonChatJid } from './jid_policy.js'
 import axios from 'axios'
 import express from 'express'
 import qrcode from 'qrcode-terminal'
@@ -215,6 +218,11 @@ app.post('/send', async (req, res) => {
     mentions,
     client_msg_id,
   } = req.body
+  if (isNonChatJid(reply_jid) || isNonChatJid(to)) {
+    // Never publish to Status / a broadcast list / a channel (#158). 400 = caller error, not retryable.
+    logEvent('SEND_REJECTED', 'retryable=false reason=non-chat destination')
+    return res.status(400).json({ ok: false, error: 'non-chat destination (status/broadcast/newsletter)', retryable: false })
+  }
   const clientMsgId = typeof client_msg_id === 'string' && /^[A-Za-z0-9]{8,64}$/.test(client_msg_id) ? client_msg_id : ''
 
   const hasText = typeof text === 'string' && text.trim().length > 0
@@ -662,6 +670,7 @@ async function startBot() {
       if (!msg.message || msg.key.fromMe) continue
       const jid = msg.key.remoteJid
       if (!jid) continue
+      if (isNonChatJid(jid)) continue   // Status updates, broadcast lists, channels are not conversations (#158)
       const content = normalizeMessageContent(msg.message) || msg.message
 
       // Button / list response (owner taps). Posted to the SAME webhook with the structured selection; the backend

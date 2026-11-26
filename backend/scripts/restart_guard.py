@@ -24,8 +24,10 @@ so it can only make the guard stricter.
 Usage:   restart_guard.py --op NAME                         # authorize only (exit 0 / 4)
          restart_guard.py --op NAME -- docker restart autospare_backend
 Exit:    0 authorized (and CMD succeeded) | 4 DENIED | otherwise CMD's own exit status.
-Data Imported/Modified: token files under /run/restart_guard/tokens (single use, TTL 120 s).
-Last Updated: 2026-11-12
+Data Imported/Modified: token files under /run/restart_guard/tokens (single use, TTL 120 s); one JSON line per
+                        decision (with the complete preflight JSON) appended to RESTART_GUARD_AUDIT_LOG
+                        (default /var/log/autospare/restart_guard_audit.jsonl).
+Last Updated: 2026-11-26 (#158 durable decision audit)
 """
 from __future__ import annotations
 
@@ -53,6 +55,8 @@ class Decision:
     authorized: bool
     reason: str
     nonce: str = ""
+    preflight: Optional[dict] = None     # the parsed preflight JSON (complete), when there was one
+    exit_code: Optional[int] = None      # the preflight process exit status, when it ran
 
 
 def _timeout() -> float:
@@ -89,23 +93,26 @@ def authorize(run: Callable = subprocess.run, now: Callable[[], float] = time.ti
     if not isinstance(data, dict):
         return Decision(False, "preflight output is not a JSON object", nonce)
 
+    def _d(ok: bool, why: str) -> Decision:
+        return Decision(ok, why, nonce, preflight=data, exit_code=proc.returncode)
+
     verdict = data.get("verdict")
     if verdict != "SAFE":
         blockers = data.get("blockers")
         shown = "; ".join(str(b) for b in blockers[:3]) if isinstance(blockers, list) and blockers else "no detail"
-        return Decision(False, f"preflight verdict {verdict!r} (exit {proc.returncode}): {shown}", nonce)
+        return _d(False, f"preflight verdict {verdict!r} (exit {proc.returncode}): {shown}")
     if proc.returncode != 0:
-        return Decision(False, f"preflight said SAFE but exited {proc.returncode}", nonce)
+        return _d(False, f"preflight said SAFE but exited {proc.returncode}")
     if data.get("safe") is not True or data.get("blockers") != []:
-        return Decision(False, "preflight SAFE verdict is inconsistent (safe/blockers)", nonce)
+        return _d(False, "preflight SAFE verdict is inconsistent (safe/blockers)")
     if data.get("nonce") != nonce:
-        return Decision(False, "preflight nonce mismatch - result is stale or not for this request", nonce)
+        return _d(False, "preflight nonce mismatch - result is stale or not for this request")
     checked = data.get("checked_at")
     if isinstance(checked, bool) or not isinstance(checked, (int, float)):
-        return Decision(False, "preflight result has no usable checked_at", nonce)
+        return _d(False, "preflight result has no usable checked_at")
     if checked < started - 5 or checked > now() + 5 or now() - checked > MAX_AGE_S:
-        return Decision(False, "preflight result is outside the freshness window", nonce)
-    return Decision(True, "preflight SAFE (fresh, nonce verified)", nonce)
+        return _d(False, "preflight result is outside the freshness window")
+    return _d(True, "preflight SAFE (fresh, nonce verified)")
 
 
 def argv_digest(argv: Sequence[str]) -> str:
@@ -122,6 +129,29 @@ def issue_token(op: str, docker_argv: Sequence[str], nonce: str, now: float) -> 
         json.dump({"op": op, "argv": argv_digest(docker_argv), "issued_at": now, "nonce": nonce}, fh)
     os.chmod(path, 0o600)
     return tid
+
+
+AUDIT_LOG_DEFAULT = "/var/log/autospare/restart_guard_audit.jsonl"
+
+
+def audit_path() -> str:
+    """Where every guard decision is recorded (host side; append-only JSON lines). Relocating it never loosens
+    anything: an AUTHORIZED decision that cannot be recorded is refused (see main)."""
+    return os.environ.get("RESTART_GUARD_AUDIT_LOG", "").strip() or AUDIT_LOG_DEFAULT
+
+
+def write_audit(op: str, decision: "Decision", cmd: Sequence[str], at: float) -> None:
+    """Append one decision with the COMPLETE preflight JSON (#158: the 2026-11-26 deploy kept its SAFE verdicts
+    only in a session transcript, cut by `tail`). Raises OSError when the record cannot be written."""
+    path = audit_path()
+    os.makedirs(os.path.dirname(path) or ".", mode=0o750, exist_ok=True)
+    rec = {"at": at, "op": op, "authorized": decision.authorized, "reason": decision.reason,
+           "nonce": decision.nonce, "preflight_exit": decision.exit_code, "preflight": decision.preflight,
+           "command": list(cmd)}
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def deny(op: str, reason: str, cmd: Sequence[str]) -> int:
@@ -150,6 +180,13 @@ def main(argv: List[str]) -> int:
         print("[restart_guard] PRE_RESTART_FORCE is ignored: there is no override.", file=sys.stderr)
 
     decision = authorize()
+    try:
+        write_audit(op, decision, cmd, time.time())
+        print(f"[restart_guard] decision recorded in {audit_path()}", file=sys.stderr)
+    except OSError as exc:
+        if decision.authorized:   # an unrecorded restart is not allowed: fail closed
+            return deny(op, f"could not record the decision in {audit_path()}: {exc}", cmd)
+        print(f"[restart_guard] WARNING: denial not recorded ({exc})", file=sys.stderr)
     if not decision.authorized:
         return deny(op, decision.reason, cmd)
     print(f"[restart_guard] AUTHORIZED op={op}: {decision.reason}", file=sys.stderr)

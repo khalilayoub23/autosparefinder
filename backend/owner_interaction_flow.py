@@ -62,10 +62,14 @@ async def handle_owner_text(store, text: str, quoted_message_id: str, *, owner_d
         return True
     ix = b.interaction
     err = ""
+    from agents.owner_continuations import FROM_BUTTON_FOLLOWUP
+    _tok = FROM_BUTTON_FOLLOWUP.set(True)   # a button follow-up: the "own wording" path may recognise notes (#158)
     try:
         result = await run_continuation(b.command)
     except Exception as exc:  # the agent failed: nothing changed, the request stays usable
         result, err = None, str(exc)[:120]
+    finally:
+        FROM_BUTTON_FOLLOWUP.reset(_tok)
     if result is None or not getattr(result, "ok", False):
         await store.release_followup(ix.id)
         await store.event(ix.id, "followup_failed", {"error": err or (getattr(result, "text", "") or "")[:120]})
@@ -73,7 +77,13 @@ async def handle_owner_text(store, text: str, quoted_message_id: str, *, owner_d
         await send(to=owner_dest, text=f"{msg}\n\nהבקשה {ix.task_ref or ix.id} עדיין פתוחה — אפשר ללחוץ שוב על הכפתור.")
         return True
     await store.event(ix.id, "followup_completed", {"verb": (ix.continuation or {}).get("verb", "")})
-    await send(to=owner_dest, text=result.render())
+    rendered = result.render()
+    await send(to=owner_dest, text=rendered)
+    try:   # the console must know what just happened in this thread (#158)
+        from agents.owner_console import record_exchange
+        await record_exchange(text, rendered, (ix.continuation or {}).get("agent", "") or ix.agent, ix.task_ref or ix.id)
+    except Exception:
+        pass
     return True
 
 

@@ -28,7 +28,9 @@ import { fileURLToPath } from 'node:url'
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 const REAL_NM = path.join(HERE, 'node_modules')
-const { promiseTimeout } = require(path.join(REAL_NM, '@whiskeysockets/baileys/lib/Utils/generics.js'))
+// Baileys' own promiseTimeout, loaded through the package index: 6.7.x is ESM and a direct require of
+// lib/Utils/generics.js hits an import-cycle TDZ error under require(esm) (#158); the index loads it in order.
+const { promiseTimeout } = require(path.join(REAL_NM, '@whiskeysockets/baileys/lib/index.js'))
 const lifecycle = await import(path.join(HERE, 'bridge_lifecycle.js'))
 const ORPHAN_MS = 250
 
@@ -36,7 +38,7 @@ const ORPHAN_MS = 250
 const STUB = `
 const EventEmitter = require('events')
 const { Boom } = require('@hapi/boom')
-const { promiseTimeout } = require(${JSON.stringify(path.join(REAL_NM, '@whiskeysockets/baileys/lib/Utils/generics.js'))})
+const { promiseTimeout } = require(${JSON.stringify(path.join(REAL_NM, '@whiskeysockets/baileys/lib/index.js'))})
 const sockets = []
 const mode = { send: 'ok', groups: 'ok' }
 // Same shape as Baileys socket.js: an async arrow named waitForMessage that awaits promiseTimeout.
@@ -175,7 +177,7 @@ function runScript(script) {
   return spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 8000 })
 }
 const PRELUDE = `import { createRequire } from 'node:module'; const require = createRequire(${JSON.stringify(import.meta.url)});
-const { promiseTimeout } = require(${JSON.stringify(path.join(REAL_NM, '@whiskeysockets/baileys/lib/Utils/generics.js'))});
+const { promiseTimeout } = require(${JSON.stringify(path.join(REAL_NM, '@whiskeysockets/baileys/lib/index.js'))});
 const waitForMessage = async (ms) => promiseTimeout(ms, () => {});
 async function orphan() { const w = waitForMessage(60); void w; throw new Error('Connection Closed') }
 const lc = await import(${JSON.stringify(path.join(HERE, 'bridge_lifecycle.js'))});`

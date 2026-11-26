@@ -117,8 +117,10 @@ def test_noa_edit_owner_text_becomes_the_new_version(noa):
     run(flow.handle_tap(s, {"interaction_id": ix.id, "action_id": "edit"}, sender_is_owner=True, owner_dest="O",
                         send=send, console=_prompt_text))
     assert "הנוסח הנוכחי" in send.sent[0]["text"]
-    run(flow.handle_owner_text(s, "הנוסח החדש שלי", "", owner_dest="O", send=send, run_continuation=_runner))
-    assert noa["edits"][-1]["text"] == "הנוסח החדש שלי" and noa["edits"][-1]["actor"] == "owner" and not noa["llm"]
+    # #158: a replacement is a real post (keeps the post's price); text without any of the post's facts is notes
+    new = "רפידות בלם מקוריות לקורולה, עכשיו מ-₪198"
+    run(flow.handle_owner_text(s, new, "", owner_dest="O", send=send, run_continuation=_runner))
+    assert noa["edits"][-1]["text"] == new and noa["edits"][-1]["actor"] == "owner" and not noa["llm"]
 
 
 # ── Email Agent: draft edit -> a NEW verified Gmail draft, never a send ───────────────────────────────────────────
@@ -329,3 +331,197 @@ def test_engagement_edit_replaces_the_draft_and_never_sends(monkeypatch):
     r = run(oc.run("ערוךתשובה c0ffee12 כן! יש במלאי", db=None))
     assert r.ok and saved == [(item["id"], "כן! יש במלאי")] and not sent
     assert r.choices == op.inbox_choices("c0ffee12") and "ענה c0ffee12" in r.text
+
+
+# ── #158: notes sent after "אכתוב נוסח משלי" are notes, not the post (owner, 2026-11-26) ─────────────────────────
+LONG_POST = ("רפידות בלם לקורולה מ-₪198. " * 12).strip()
+
+
+def test_notes_after_edit_tap_are_rewritten_by_noa_not_pasted(noa):
+    pid = "ab12cd34-0000-0000-0000-000000000000"
+    noa["posts"][pid]["content"] = LONG_POST
+    s, send = MemoryStore(), Sender()
+    ix = run(oi.create_from_choices(s, op.post_choices("ab12cd34"), body="v1"))
+    run(flow.handle_tap(s, {"interaction_id": ix.id, "action_id": "edit"}, sender_is_owner=True, owner_dest="O",
+                        send=send, console=_prompt_text))
+    notes = "הפוסט לא צריך את ההערות שלי בתוכו, תעשי אותו מצחיק יותר"
+    run(flow.handle_owner_text(s, notes, "", owner_dest="O", send=send, run_continuation=_runner))
+    assert noa["llm"] and notes in noa["llm"][0]["prompt"], "NOA received the notes as a change request"
+    assert noa["edits"][-1]["actor"] == "noa" and noa["edits"][-1]["text"] != notes, "the notes were not pasted in"
+    assert "נראתה כמו הערות" in send.sent[-1]["text"] and "ערוך ab12cd34" in send.sent[-1]["text"]
+
+
+def test_full_replacement_text_is_still_word_for_word(noa):
+    pid = "ab12cd34-0000-0000-0000-000000000000"
+    noa["posts"][pid]["content"] = LONG_POST
+    s, send = MemoryStore(), Sender()
+    ix = run(oi.create_from_choices(s, op.post_choices("ab12cd34"), body="v1"))
+    run(flow.handle_tap(s, {"interaction_id": ix.id, "action_id": "edit"}, sender_is_owner=True, owner_dest="O",
+                        send=send, console=_prompt_text))
+    new = ("מצאנו לכם רפידות בלם מקוריות לקורולה מ-₪198, עם התאמה מאומתת לרכב. " * 4).strip()
+    run(flow.handle_owner_text(s, new, "", owner_dest="O", send=send, run_continuation=_runner))
+    assert noa["edits"][-1] == {"id": pid, "text": new, "source": "whatsapp", "actor": "owner"} and not noa["llm"]
+
+
+def test_looks_like_notes_rule():
+    assert oc.looks_like_notes("תקצרי את זה", "פוסט קצר")
+    assert oc.looks_like_notes("הערות: בלי אימוג'י", "x")
+    assert not oc.looks_like_notes("פוסט חדש לגמרי באותו אורך בערך", "פוסט ישן באותו אורך בערך")
+    assert oc.notes_verdict("יותר מצחיק", "א" * 400) == "ask" and oc.notes_verdict("ב" * 300, "א" * 400) == "post"
+    assert not oc.looks_like_notes("", "א" * 400)
+
+
+def test_completed_continuation_is_recorded_in_the_console_history(noa, monkeypatch):
+    from agents import owner_console as con
+    hist = []
+
+    async def load():
+        return list(hist)
+
+    async def save(h):
+        hist[:] = h
+
+    monkeypatch.setattr(con, "_load_history", load)
+    monkeypatch.setattr(con, "_save_history", save)
+    s, send = MemoryStore(), Sender()
+    ix = run(oi.create_from_choices(s, op.post_choices("ab12cd34"), body="v1"))
+    run(flow.handle_tap(s, {"interaction_id": ix.id, "action_id": "change"}, sender_is_owner=True, owner_dest="O",
+                        send=send, console=_prompt_text))
+    run(flow.handle_owner_text(s, "תקצרי", "", owner_dest="O", send=send, run_continuation=_runner))
+    assert hist[0]["role"] == "user" and "תקצרי" in hist[0]["content"] and "NOA" in hist[0]["content"]
+    assert hist[1]["role"] == "assistant" and hist[1]["agent"] == "social_media_manager_agent" and "קצר ולעניין" in hist[1]["content"]
+
+
+def test_owner_name_never_gets_the_definite_article():
+    from agents import owner_console as con
+    assert con._clean_wa_reply("הבנתי, החליל. נתחיל.") == "הבנתי, חליל. נתחיל."
+    assert "חליל" in con._clean_wa_reply("חליל, הכל טוב") and "החליל" not in con._clean_wa_reply("החליל!")
+    assert "לחליל" in con._clean_wa_reply("שלחתי לחליל")
+
+
+# real revisions of post 3e253a49 (2026-11-26): v3 and v4 were the owner's NOTES pasted in by the old exact-edit path
+V2 = ("הקפיצים של Peugeot 3008 מתנהלים לאסטרטגיה? קפיצי Coil Spring של MOTUL מבטיחים יציבות מלאה, במיוחד במזג אוויר קר.\n"
+      "מחיר: 399 ₪ – חפשו לפי מספר רישוי ב autosparefinder.co.il.\n\n#קפיצים #AutoSpareFinder")
+V3 = 'אהבתי את הרעיון והסדר אבל עדיין יש מילים שלא קשורות כמו : " מתנהלים לאסטרטגיה" איך המילים הללו קשורים למתלים ?!'
+V4 = "פשוט תתייחסי להערה שרשמתי מקודם"
+
+
+def test_the_two_real_pasted_notes_are_recognised_as_notes():
+    assert oc.looks_like_notes(V3, V2), "no price/link/hashtag of the post, talks about its words"
+    assert oc.looks_like_notes(V4, V3), "refers to 'the note'"
+
+
+def test_rewrite_base_skips_pasted_notes_and_returns_them(monkeypatch):
+    import social.campaign_manager as cm
+    revs = [{"version": 1, "content": "v1 " + V2, "actor": "noa"}, {"version": 2, "content": V2, "actor": "noa"},
+            {"version": 3, "content": V3, "actor": "owner"}, {"version": 4, "content": V4, "actor": "owner"}]
+
+    async def fake_revs(db, pid):
+        return revs
+
+    monkeypatch.setattr(cm, "get_revisions", fake_revs)
+    base, notes = run(oc._rewrite_base(None, {"id": "3e253a49", "content": V4}))
+    assert base == V2 and notes == [V3, V4]
+    # a genuine owner replacement (keeps the facts) is a real base, not a note
+    revs.append({"version": 5, "content": V2.replace("מתנהלים לאסטרטגיה", "נשחקים עם הזמן"), "actor": "owner"})
+    base, notes = run(oc._rewrite_base(None, {"id": "3e253a49", "content": revs[-1]["content"]}))
+    assert "נשחקים עם הזמן" in base and notes == []
+
+
+def test_noa_change_prompt_carries_the_earlier_notes_and_the_real_base(noa, monkeypatch):
+    import social.campaign_manager as cm
+    pid = "ab12cd34-0000-0000-0000-000000000000"
+    noa["posts"][pid]["content"] = V4
+
+    async def fake_revs(db, p):
+        return [{"version": 1, "content": V2, "actor": "noa"}, {"version": 2, "content": V3, "actor": "owner"},
+                {"version": 3, "content": V4, "actor": "owner"}]
+
+    monkeypatch.setattr(cm, "get_revisions", fake_revs)
+    res = run(oc.noa_change(None, "ab12cd34", "תתקני את הניסוח"))
+    p = noa["llm"][0]["prompt"]
+    assert res.ok and V2[:40] in p and V3 in p and V4 in p, "base = last real post, both notes included"
+    assert p.index(V2[:40]) < p.index(V3), "the post comes first, then the notes"
+
+
+def test_approve_refuses_to_publish_owner_notes(monkeypatch):
+    from agents import owner_console as con
+    import social.campaign_manager as cm
+    calls = []
+
+    async def fake_revs(db, pid):
+        return [{"version": 1, "content": V2, "actor": "noa"}, {"version": 2, "content": V3, "actor": "owner", "source": "whatsapp"},
+                {"version": 3, "content": V4, "actor": "owner", "source": "whatsapp"}]
+
+    async def approve(db, post_id, approved_by):
+        calls.append(post_id)
+        return True
+
+    monkeypatch.setattr(cm, "get_revisions", fake_revs)
+    monkeypatch.setattr(cm, "approve_post_content", approve)
+    out = run(con._approve_and_publish(None, {"id": "3e253a49-0000-0000-0000-000000000000", "content": V4}))
+    assert out.startswith("⛔") and "שנהפוסט 3e253a49" in out and calls == [], "nothing approved or published"
+
+
+
+# expert review (#158): real-shaped replacement posts must never be treated as notes
+REAL_POSTS = [
+    "במקום לחפש שעות במוסכים – רפידות בלם לקורולה 2018 מ-₪198, התאמה מאומתת לפי מספר רישוי. autosparefinder.co.il #רפידות",
+    "צריך מסנן שמן לקיה פיקנטו? ₪49 בלבד, משלוח מהיר. חפשו לפי מספר רישוי ב-autosparefinder.co.il #קיה #מסנן_שמן",
+    "בלי הפתעות במוסך: מצמד מקורי למאזדה 3 ב-₪1,290, כולל אחריות 12 חודשים. #מאזדה #מצמד",
+    "שנה חדשה, רכב בטוח יותר 🚗 דיסקים ורפידות לטויוטה RAV4 מ-₪420 – בדקו התאמה לפי מספר רישוי. #טויוטה",
+]
+
+
+@pytest.mark.parametrize("post", REAL_POSTS)
+def test_real_shaped_replacement_posts_are_posts(post):
+    assert oc.notes_verdict(post, LONG_POST) == "post"
+
+
+def test_typed_edit_is_always_word_for_word_even_if_it_looks_like_notes(noa):
+    pid = "ab12cd34-0000-0000-0000-000000000000"
+    noa["posts"][pid]["content"] = LONG_POST
+    res = run(oc.run("ערוך ab12cd34 " + V4, None))           # typed command: no button follow-up flag
+    assert res.ok and noa["edits"][-1] == {"id": pid, "text": V4, "source": "whatsapp", "actor": "owner"} and not noa["llm"]
+
+
+def test_ambiguous_text_after_the_button_changes_nothing_and_asks(noa):
+    pid = "ab12cd34-0000-0000-0000-000000000000"
+    noa["posts"][pid]["content"] = LONG_POST
+    s, send = MemoryStore(), Sender()
+    ix = run(oi.create_from_choices(s, op.post_choices("ab12cd34"), body="v1"))
+    run(flow.handle_tap(s, {"interaction_id": ix.id, "action_id": "edit"}, sender_is_owner=True, owner_dest="O",
+                        send=send, console=_prompt_text))
+    run(flow.handle_owner_text(s, "יותר מצחיק ופחות רשמי", "", owner_dest="O", send=send, run_continuation=_runner))
+    assert not noa["edits"] and not noa["llm"], "nothing changed"
+    out = send.sent[-1]["text"]
+    assert "לא שיניתי כלום" in out and "שנהפוסט ab12cd34" in out and "ערוך ab12cd34" in out
+    assert ix.state != "completed", "the request stays usable"
+
+
+def test_approve_force_and_web_edits_are_not_blocked(monkeypatch):
+    from agents import owner_console as con
+    import social.campaign_manager as cm
+    calls = []
+    revs = [{"version": 1, "content": V2, "actor": "noa", "source": "noa_draft"},
+            {"version": 2, "content": V4, "actor": "owner", "source": "whatsapp"}]
+
+    async def fake_revs(db, pid):
+        return revs
+
+    class Reached(Exception):
+        pass
+
+    async def approve(db, post_id, approved_by):
+        calls.append(post_id)
+        raise Reached()                                        # stop right at the approval step
+
+    monkeypatch.setattr(cm, "get_revisions", fake_revs)
+    monkeypatch.setattr(cm, "approve_post_content", approve)
+    post = {"id": "3e253a49-0000-0000-0000-000000000000", "content": V4}
+    with pytest.raises(Reached):
+        run(con._approve_and_publish(None, post, force=True))   # the explicit override approves
+    revs[1]["source"] = "web"                                  # an admin-panel edit is never treated as pasted notes
+    with pytest.raises(Reached):
+        run(con._approve_and_publish(None, post))
+    assert len(calls) == 2

@@ -6566,7 +6566,9 @@ async def _health_monitor_loop():
 
         return states
 
+    _hm_fail_streak = 0   # #158: consecutive passes that died in the outer except (the loop itself must be watched)
     while True:
+        _hm_pass_failed = False
         try:
             # G8 2026-07-20: deliver WhatsApp messages queued during quiet hours as soon
             # as the daytime window opens (this pass runs every 5 min).
@@ -7122,14 +7124,17 @@ async def _health_monitor_loop():
                             # one alert stream per distinct STORAGE. st_dev is not enough: inside the container "/"
                             # (overlay) and "/app/state" (volume) differ in st_dev but report the same host disk
                             # (audit 2026-11-24: two alerts, identical numbers) - compare what they report.
+                            # NOT named _probe: that name is this loop's own probe function, and rebinding it to a
+                            # sample made every later cycle fail at `await _probe()` ('dict' object is not callable,
+                            # 164x after the 2026-11-26 deploy) - the whole health check was dead (#158).
                             try:
-                                _probe = _da.sample(_dp)
+                                _disk_sample = _da.sample(_dp)
                             except OSError:
-                                _probe = None
-                            if _probe is not None and any(_omf_d.disk_same_storage(_probe, _k) for _k in _seen_samples):
+                                _disk_sample = None
+                            if _disk_sample is not None and any(_omf_d.disk_same_storage(_disk_sample, _k) for _k in _seen_samples):
                                 continue
-                            if _probe is not None:
-                                _seen_samples.append(_probe)
+                            if _disk_sample is not None:
+                                _seen_samples.append(_disk_sample)
                             _sk = f"autospare:disk_alert:{_dp}"
                             try:
                                 _s = _da.sample(_dp)
@@ -7258,7 +7263,29 @@ async def _health_monitor_loop():
                 print(f"[HealthMonitor] Check 5 (job_registry/tasks) error: {_e}")
 
         except Exception as e:
+            _hm_pass_failed = True
+            _hm_err_type = type(e).__name__
             print(f"[HealthMonitor] Outer error: {e}")
+
+        # #158: the outer except used to print one line and carry on - a pass that died on every cycle (164x after the
+        # 2026-11-26 deploy) looked healthy from outside. 3 consecutive dead passes (~15 min) -> one critical alert
+        # (fingerprint = the error type, so a persisting failure is not re-sent); recovery is reported once.
+        try:
+            if _hm_pass_failed:
+                _hm_fail_streak += 1
+                if _hm_fail_streak == 3:
+                    await notify_owner("system", "בדיקות הבריאות של המערכת לא רצות",
+                                       f"3 סבבים ברצף (כל 5 דק') נכשלו לפני שהבדיקות רצו, כולל התראות קריטיות. "
+                                       f"סוג השגיאה: {_hm_err_type}. הפרטים ביומן השרת.",
+                                       severity="critical", alert_key="health_loop_failing",
+                                       fingerprint=_hm_err_type, remind_s=86400)
+            else:
+                if _hm_fail_streak >= 3:
+                    await resolve_owner_alert("system", "בדיקות הבריאות של המערכת חזרו לרוץ",
+                                              alert_key="health_loop_failing")
+                _hm_fail_streak = 0
+        except Exception as _hm_e:
+            print(f"[HealthMonitor] failure-streak alert error: {_hm_e}")
 
         # ── Pending social-post reminder (runs every health-monitor cycle) ────
         # One-shot WA notification on creation is easy to miss. This re-pings the

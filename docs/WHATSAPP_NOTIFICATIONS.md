@@ -162,7 +162,7 @@ remove **that payload** (`_WA_QUIET_REMOVE_LUA`) or update its attempts only whi
 
 ## 9. Verified inventory of owner-notification call sites (2026-11-24, #152)
 
-Counted with an AST scan (2026-11-26 #157: **74 call sites** - +1 single engagement-draft decision alert; 2026-11-25 update: 73 call sites - three direct `_wa_send_update` report sends became digest events, see §11; the table below shows the 2026-11-24 count of 76 before that change) (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
+Counted with an AST scan (2026-11-26 #158: **76 call sites** - +2 health-loop failing/recovered; 2026-11-26 #157: 74 call sites - +1 single engagement-draft decision alert; 2026-11-25 update: 73 call sites - three direct `_wa_send_update` report sends became digest events, see §11; the table below shows the 2026-11-24 count of 76 before that change) (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
 `resolve_owner_alert`, `_notify`, `_notify_res`, `_wa_send_update`, and the injected `notify` callable) over production
 code (tests/devtests/legacy excluded). The earlier "57 sites" and the audit's "69 call lines" were both stale/partial:
 the true number is **76 call sites in 12 files**. `tests/test_owner_alert_quality_2026_11.py::test_notification_source_inventory_is_complete`
@@ -170,7 +170,7 @@ fails when a call site is added, removed or moved, until the registry in that te
 
 | File | Calls | Sources it carries |
 |---|---|---|
-| `BACKEND_API_ROUTES.py` | notify_owner 28 · _alert_owner 11 · _wa_send_update 8 · resolve_owner_alert 5 | health monitor (service down/restored, errors, disk, OOM, zombie jobs, dead letters, WhatsApp channel), harvest supervisor + FlareSolverr, Meili parity, catalog stagnation, NOA posts/briefs/daily report, orders, digests (daily status, night pipeline, weekly harvest) |
+| `BACKEND_API_ROUTES.py` | notify_owner 30 · _alert_owner 11 · _wa_send_update 5 · resolve_owner_alert 6 (2026-11-26 #158 count) | health monitor (incl. its own failing/recovered alert #158, service down/restored, errors, disk, OOM, zombie jobs, dead letters, WhatsApp channel), harvest supervisor + FlareSolverr, Meili parity, catalog stagnation, NOA posts/briefs/daily report, orders, digests (daily status, night pipeline, weekly harvest) |
 | `BACKEND_AI_AGENTS.py` | _notify 2 | agent-side owner notices |
 | `boaz_tasks.py` | notify 1 | BOAZ decision requests (merged with the Email Agent alert for the same mail) |
 | `db_cleanup_agent.py` | notify_owner 2 | learned keywords backlog, cleanup alerts |
@@ -442,3 +442,47 @@ Persistence: everything above is in Postgres; a backend restart between the tap 
 backend: `WA_INTERACTIVE_ENABLED`, `WA_GROUP_INBOUND_ENABLED`, `WA_GROUP_COMPOSER_ENABLED`, `WA_COMPOSER_GROUP_JID`, `WA_GROUP_EXPECTED_SUBJECT`, `OWNER_FOLLOWUP_TTL_S`;
 bridge: `WA_INTERACTIVE_ENABLED`, `WA_GROUP_INBOUND_ENABLED` (bridge reads them at start). Migration: PII `0043_owner_interactions` (amended
 before its first production apply: continuation columns + `completed` state).
+
+## 14. Mission 8 (#158, 2026-11-26) - group sends, `@` mentions, conversation quality, presentation
+
+### 14.1 What `@` autocomplete is (and is not)
+* The `@` participant menu inside the **WhatsApp app** is WhatsApp's own client UI. Nothing on our side can make it open or
+  change it. It appears only in a **group** chat, never in the 1:1 chat with the bot.
+* The autocomplete we own is the admin page composer (`frontend/src/components/Admin/GroupMentionComposer.jsx`, Admin page,
+  tab *social* - `Admin.jsx`): `@` opens the live member list from `GET /admin/whatsapp/group-members` (bridge
+  `/groups/<jid>/participants`, our own account excluded), filters as you type, keyboard/mouse select, sends a real mention
+  JID validated by the bridge against the live group metadata.
+* The updates group has **2 members** (owner + the bot account, both LID-only). So the app's `@` menu in that group can only
+  ever offer the bot, and the admin composer can only offer the owner.
+
+### 14.2 Group sends and LID addressing
+Every send to the group failed `not-acceptable` because the installed Baileys build (6.17.16, a published old-code release that `^6.7.0` resolved to) encoded member devices of a
+LID-addressed group as phone JIDs. Pinned `@whiskeysockets/baileys@6.7.24` (sets `addressing_mode`, encodes devices by the
+group's addressing mode), loaded via ESM `import * as baileys`. Rollback: restore the pre-#158 `node_modules`
+snapshot + `package.json`/`package-lock.json` and recreate the bridge (guarded).
+
+### 14.3 Non-chat JIDs
+`whatsapp-bridge/jid_policy.js`: `status@broadcast`, `*@broadcast`, `*@newsletter` are dropped on inbound (before any
+routing) and refused by `/send` (400, not retryable). Contacts' Statuses used to reach the customer brain and get answered.
+
+### 14.4 Decision buttons and follow-ups
+* Button label = the producer's own label when it fits 20 chars (`owner_interactions.button_label`), else the vocabulary.
+* The buttons message names its subject (`buttons_body`, the alert title) - two pending decisions are distinguishable.
+* `change` = the agent rewrites from your notes (`🔁 NOA תשכתב` / `שינוי לפי הערות`); `edit` = your own text replaces it
+  word for word (`✏️ אכתוב נוסח משלי` / `נוסח משלי`).
+* Only the BUTTON follow-up of `edit` is checked (`notes_verdict`): strong evidence of notes (talks about notes/wording,
+  or a short instruction) -> NOA rewrites and says so; weak evidence (price/link/hashtags gone) -> nothing changes, both
+  commands are offered; otherwise it is the post. A TYPED `ערוך <id> <text>` is always word for word.
+* A post whose latest revision is owner notes that arrived via WhatsApp is not published (`_approve_and_publish`);
+  `אשר <id> בכוח` overrides. Admin-panel edits (`source=web`) are never blocked.
+
+### 14.5 Owner console conversation rules
+Shared voice block: continuity (short follow-ups refer to the last topic, never re-ask the last question, never restart),
+intent classes (question / change / approval-execution / complaint), name `חליל` (never `החליל`, also fixed in
+`_clean_wa_reply`), money: nobody pays or orders from a chat sentence - deterministic reply with `רכש` / `אשררכש` /
+`אשרתשלוםספק`. Button continuations are written into the console history (`record_exchange`) so the next turn knows what
+just happened. History keeps 20 messages, the prompt sees 12.
+
+### 14.6 Notification policy - unchanged
+Routine -> 09:30 IL digest; decisions immediate (1:1); critical immediate; quiet hours 09:00-21:00 IL. #158 also restores
+the health monitor itself (it had been failing every cycle since the 08:47 deploy).

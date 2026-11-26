@@ -31,7 +31,15 @@ def test_classification_and_agents():
     e = oi.build(EMAIL)
     assert e.agent == "EMAIL" and [a.id for a in e.actions] == ["details", "approve", "cancel"]
     assert oi.build([("x", "משהו לא מוכר 1")]) is None, "unknown commands are never offered as buttons"
-    assert all(a.label in oi.ACTION_LABELS.values() for a in e.actions), "labels come from the vocabulary"
+    # #158: the producer's own label is the button when it fits WhatsApp's 20 chars; otherwise the vocabulary word
+    assert all(a.label == oi.button_label(lab, a.id) for a, (lab, _c) in zip(e.actions, EMAIL)), "label rule"
+    assert oi.button_label("🔁 NOA תשנה", "change") == "🔁 NOA תשנה"
+    assert oi.button_label("x" * 21, "change") == oi.ACTION_LABELS["change"]
+    assert oi.button_label("   ", "edit") == oi.ACTION_LABELS["edit"]
+    assert oi.button_label("🔁" + "א" * 19, "change") == oi.ACTION_LABELS["change"], "UTF-16: 🔁 counts as 2 -> 21 units"
+    assert oi.button_label("🔁" + "א" * 18, "change") == "🔁" + "א" * 18, "exactly 20 UTF-16 units fits"
+    assert oi.buttons_body("קמפיין חדש מחכה לאישורך") == "קמפיין חדש מחכה לאישורך\nבחר פעולה:"
+    assert oi.buttons_body("") == "בחר פעולה:"
 
 
 def test_only_registered_actions_offered_and_public_payload_hides_commands():

@@ -62,6 +62,7 @@ exit 0
 class Box:
     def __init__(self, tmp: Path):
         self.dir = tmp / "fake"
+        self.audit = tmp / "audit" / "restart_guard_audit.jsonl"
         self.real = tmp / "realbin"
         self.shimbin = tmp / "shimbin"
         self.empty = tmp / "emptybin"
@@ -85,6 +86,7 @@ class Box:
         e = {k: v for k, v in os.environ.items() if not k.startswith(("RESTART_GUARD", "PRE_RESTART"))}
         e["PATH"] = f"{self.shimbin}:{self.real}:/usr/local/bin:/usr/bin:/bin"
         e["FAKE_DIR"] = str(self.dir)
+        e["RESTART_GUARD_AUDIT_LOG"] = str(self.audit)
         e.update(extra)
         return e
 
@@ -367,3 +369,37 @@ def test_restart_workers_stop_refuses_unless_preflight_is_safe(monkeypatch, caps
         raise RuntimeError("redis down")
     monkeypatch.setattr(pf, "evaluate", boom)
     assert rw.cmd_stop() == 4
+
+
+# ---- #158: every decision is durably recorded with the COMPLETE preflight output ---------------------------------
+def _audit(box):
+    return [json.loads(l) for l in box.audit.read_text().splitlines()] if box.audit.exists() else []
+
+
+def test_safe_decision_is_recorded_with_the_full_preflight(box):
+    r = box.guarded(*RESTART)
+    assert r.returncode == 0, r.stderr
+    recs = _audit(box)
+    assert len(recs) == 1
+    rec = recs[0]
+    assert rec["authorized"] is True and rec["op"] == "test_op"
+    assert rec["preflight"]["verdict"] == "SAFE" and rec["preflight"]["nonce"] == rec["nonce"]
+    assert rec["preflight_exit"] == 0 and rec["command"] == ["docker", *RESTART]
+
+
+def test_blocked_decision_is_recorded_with_its_blockers(box):
+    box.mode("blocked")
+    r = box.guarded(*RESTART)
+    assert r.returncode == 4 and box.executed() == []
+    (rec,) = _audit(box)
+    assert rec["authorized"] is False and rec["preflight"]["blockers"] == ["group scan running"]
+    assert rec["preflight_exit"] == 4
+
+
+def test_safe_but_unrecordable_decision_is_refused(box):
+    box.audit.parent.mkdir(parents=True)
+    box.audit.mkdir()                      # the audit path is a directory: the record cannot be written
+    r = box.guarded(*RESTART)
+    assert r.returncode == 4, r.stderr
+    assert box.executed() == [], "an unrecorded restart must not run"
+    assert "could not record the decision" in r.stderr

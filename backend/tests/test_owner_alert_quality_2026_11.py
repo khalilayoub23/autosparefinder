@@ -151,7 +151,8 @@ def test_boaz_alert_for_a_non_email_task_is_not_merged(monkeypatch):
 # ── disk: one alert per storage, wired in the health loop ───────────────────────────────────────────────────
 def test_disk_two_mounts_one_stream_in_the_health_loop_source():
     src = (BACKEND / "BACKEND_API_ROUTES.py").read_text(encoding="utf-8")
-    assert "disk_same_storage(_probe, _k)" in src and "_seen_dev" not in src
+    # #158: the sample is `_disk_sample`; naming it `_probe` shadowed the loop's probe function and killed the loop
+    assert "disk_same_storage(_disk_sample, _k)" in src and "_seen_dev" not in src
 
 
 # ── D. Hebrew + NOA report ──────────────────────────────────────────────────────────────────────────────────
@@ -177,7 +178,7 @@ def test_no_hebrew_task_count_defect_remains_in_owner_alert_sources():
 # ── H. inventory of notification sources ────────────────────────────────────────────────────────────────────
 REGISTERED = {   # file -> {call name: count}; every owner-notification call site in production code
     "BACKEND_AI_AGENTS.py": {"_notify": 2},
-    "BACKEND_API_ROUTES.py": {"_alert_owner": 11, "_wa_send_update": 5, "notify_owner": 29, "resolve_owner_alert": 5},  # +1 #157: single engagement draft alert
+    "BACKEND_API_ROUTES.py": {"_alert_owner": 11, "_wa_send_update": 5, "notify_owner": 30, "resolve_owner_alert": 6},  # +1 #157: single engagement draft alert; +1/+1 #158: health loop failing / recovered
     "boaz_tasks.py": {"notify": 1},
     "db_cleanup_agent.py": {"notify_owner": 2},
     "db_update_agent.py": {"_notify": 4, "_notify_res": 1},
@@ -195,7 +196,7 @@ def test_notification_source_inventory_is_complete():
     """A new owner-notification call site (or a new file) fails here until it is added to REGISTERED AND to
     docs/WHATSAPP_NOTIFICATIONS.md §9 - an unregistered path cannot appear silently."""
     assert notification_inventory.scan() == REGISTERED
-    assert sum(sum(v.values()) for v in REGISTERED.values()) == 74   # +1 #157 (single engagement-draft decision alert)
+    assert sum(sum(v.values()) for v in REGISTERED.values()) == 76   # +1 #157 (single engagement-draft decision alert); +2 #158 (health loop failing/recovered)
 
 
 def test_inventory_is_documented():

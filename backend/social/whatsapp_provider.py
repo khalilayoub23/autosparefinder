@@ -166,7 +166,7 @@ async def _send_interactive(to: str, text: str, poll: dict) -> bool:
         ix = await _oi.create_from_choices(store, list(zip(poll["values"], poll["commands"])), body=text)
         if ix is None:
             return False
-        data = await _post_send({"to": _normalize_bridge_phone(to), "interactive": _oi.bridge_payload(ix, "בחר פעולה:")}, 15.0)
+        data = await _post_send({"to": _normalize_bridge_phone(to), "interactive": _oi.bridge_payload(ix, _oi.buttons_body(poll.get("name", "")))}, 15.0)
         if not data.get("ok"):
             return False
         mid = (data.get("key") or {}).get("id")

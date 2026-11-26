@@ -16,7 +16,7 @@ def _alert():
 def test_roundtrip_and_validation():
     text, poll = op.split(_alert())
     # #157: NOA change (resume to NOA) + own edit (resume) between approve and reject
-    assert poll["values"] == ["✅ אשר ופרסם", "🔁 NOA תשנה", "✏️ ערוך בעצמי", "❌ דחה"]
+    assert poll["values"] == ["✅ אשר ופרסם", "🔁 NOA תשכתב", "✏️ אכתוב נוסח משלי", "❌ דחה"]  # #158 clearer labels
     assert poll["commands"] == ["אשר ab12cd34", "שנהפוסט ab12cd34", "ערוך ab12cd34", "דחה ab12cd34"]
     assert "ASFPOLL" not in text and text.startswith("*📣") and "🆔 ab12cd34" in text
     # one option is not a poll; the alert is the plain text

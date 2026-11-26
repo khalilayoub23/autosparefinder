@@ -115,21 +115,22 @@ def late_footer(text: str, queued_at: str) -> str:
 # Continuation verbs (ערוך / שנהפוסט / ערוךמייל / ערוךתשובה / שאלספק) open a follow-up: the owner's next text returns to
 # the originating agent (owner_interactions.RESUMABLE, agents/owner_continuations.py).
 def post_choices(post_id: str) -> list[Choice]:
-    return [("✅ אשר ופרסם", f"אשר {post_id}"), ("🔁 NOA תשנה", f"שנהפוסט {post_id}"),
-            ("✏️ ערוך בעצמי", f"ערוך {post_id}"), ("❌ דחה", f"דחה {post_id}")]
+    # #158: "NOA rewrites from your notes" vs "your own text replaces it word for word" must be unmistakable.
+    return [("✅ אשר ופרסם", f"אשר {post_id}"), ("🔁 NOA תשכתב", f"שנהפוסט {post_id}"),
+            ("✏️ אכתוב נוסח משלי", f"ערוך {post_id}"), ("❌ דחה", f"דחה {post_id}")]
 
 
 def email_choices(ref: str, *, has_draft: bool) -> list[Choice]:
     out: list[Choice] = [(f"📖 פרטים", f"מייל {ref}")]
     if has_draft:
         out.append(("✅ שלח טיוטה", f"שלחמייל {ref}"))
-        out.append(("✏️ ערוך טיוטה", f"ערוךמייל {ref}"))
+        out.append(("✏️ נוסח משלי", f"ערוךמייל {ref}"))
     out.append(("☑️ סגור", f"סגורמייל {ref}"))
     return out
 
 
 def inbox_choices(item_id: str) -> list[Choice]:
-    return [("✅ שלח תשובה", f"ענה {item_id}"), ("✏️ ערוך תשובה", f"ערוךתשובה {item_id}"), ("⏭️ דלג", f"דלג {item_id}")]
+    return [("✅ שלח תשובה", f"ענה {item_id}"), ("✏️ נוסח משלי", f"ערוךתשובה {item_id}"), ("⏭️ דלג", f"דלג {item_id}")]
 
 
 def supplier_candidate_choices(supplier_id: str) -> list[Choice]:

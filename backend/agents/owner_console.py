@@ -49,7 +49,7 @@ OWNER_PHONE = (os.getenv("OWNER_WHATSAPP_PHONE", "") or "").strip()
 # as 98058566160397@lid, not +972586050155). Match the LID too. Comma-separated digits/LIDs OK.
 OWNER_LIDS = {re.sub(r"[^\d]", "", x) for x in os.getenv("OWNER_WHATSAPP_LID", "").split(",") if x.strip()}
 _HISTORY_KEY = "owner:console:history"
-_HISTORY_MAX = 12  # turns kept for conversational memory
+_HISTORY_MAX = 20  # messages kept for conversational memory (#158: was 12, the prompt saw only 8)
 
 
 def _norm_phone(p: str) -> str:
@@ -318,7 +318,22 @@ def post_publish_meta(external_post_ids) -> tuple:
             meta.get("video_key"))
 
 
-async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
+async def _current_version_is_owner_notes(db, post_id: str) -> bool:
+    """True when the post's latest revision is an owner text that is evidently notes (agents.owner_continuations
+    .looks_like_notes against the version before it). Unknown history -> False (the normal approval path)."""
+    try:
+        from social.campaign_manager import get_revisions
+        from agents.owner_continuations import looks_like_notes
+        revs = await get_revisions(db, str(post_id))
+    except Exception:
+        return False
+    # only text that arrived through WhatsApp can be pasted notes (an admin-panel edit is source "web")
+    if len(revs) < 2 or revs[-1].get("actor") != "owner" or not str(revs[-1].get("source") or "").startswith("whatsapp"):
+        return False
+    return looks_like_notes(str(revs[-1].get("content") or ""), str(revs[-2].get("content") or ""))
+
+
+async def _approve_and_publish(db, post: Dict[str, Any], force: bool = False) -> str:
     """Mark approved + publish to each platform via the registry (same path the admin
     panel uses). Honest per-platform result back to the owner.
 
@@ -339,6 +354,13 @@ async def _approve_and_publish(db, post: Dict[str, Any]) -> str:
     """
     from social.campaign_manager import approve_post_content
     pid = post["id"]
+    if not force and await _current_version_is_owner_notes(db, pid):
+        # #158: the old exact-edit path pasted the owner's NOTES in as the post (3e253a49, 2026-11-26). Publishing
+        # that would post "just address the note I wrote before" to social media. Refuse; NOA rewrites on request.
+        sid = _short(pid)
+        return (f"⛔ לא פרסמתי את {sid}: הנוסח הנוכחי הוא הערות שלך לעריכה, לא פוסט.\n"
+                f"כדי ש-NOA תכתוב גרסה לפי ההערות: *שנהפוסט {sid} <מה לשנות>* (או הכפתור *NOA תשכתב*).\n"
+                f"אם זה בכל זאת הנוסח לפרסום: *אשר {sid} בכוח*")
     was_approved = await approve_post_content(db, post_id=pid, approved_by="owner_whatsapp")
     if not was_approved:
         # approve_post_content only updates rows still in 'pending_approval' —
@@ -482,6 +504,24 @@ async def _save_history(hist: List[Dict[str, str]]) -> None:
         from BACKEND_AUTH_SECURITY import get_redis
         r = await get_redis()
         await r.set(_HISTORY_KEY, json.dumps(hist[-_HISTORY_MAX:], ensure_ascii=False), ex=86400)
+    except Exception:
+        pass
+
+
+_AGENT_KEY_BY_NAME = {"NOA": "social_media_manager_agent", "AVI": "router_agent"}
+
+
+async def record_exchange(owner_text: str, reply: str, agent: str = "", ref: str = "") -> None:
+    """Put an exchange that did NOT go through the console LLM (a button follow-up handled by the originating agent)
+    into the console history, so the next console turn knows what just happened (#158: the owner complained about a
+    NOA edit and AVI had no record of it). Never raises."""
+    try:
+        tag = (agent or "").upper()
+        head = f"[המשך ל-{tag} {ref}]".replace("  ", " ") if tag else ""
+        hist = await _load_history()
+        hist += [{"role": "user", "content": f"{head} {owner_text}".strip()[:800]},
+                 {"role": "assistant", "content": str(reply or "")[:800], "agent": _AGENT_KEY_BY_NAME.get(tag, tag or "router_agent")}]
+        await _save_history(hist)
     except Exception:
         pass
 
@@ -1202,7 +1242,24 @@ _HUMAN_VOICE = (
     "• פנה אליו בשמו לפעמים ('חליל, …'). אמוג'י — 1 עד 2 לכל היותר, רק כשזה מוסיף.\n"
     "• בלי ניסוחים תבניתיים ('אני כאן כדי לעזור', 'שאלה מצוינת', 'להלן'), בלי חזרתיות, "
     "בלי אותו פתיח כל פעם. תשובה אחת — טבעית וישירה — לא ניתוח.\n"
-    "• תישאר מדויק: אם אתה לא בטוח, אמור זאת בפשטות במקום להמציא."
+    "• תישאר מדויק: אם אתה לא בטוח, אמור זאת בפשטות במקום להמציא.\n"
+    "• השם שלו הוא *חליל* — בלי ה' הידיעה (לא 'החליל').\n"
+    "\nהמשכיות השיחה (חובה):\n"
+    "• קרא את ההודעה החדשה בהקשר של ההודעות הקודמות. הודעה קצרה ('ומה עם זה?', 'לא, התכוונתי…') מתייחסת "
+    "לנושא האחרון — אל תתחיל נושא חדש ואל תתחיל את השיחה מחדש.\n"
+    "• אל תחזור על שאלה ששאלת בתשובה הקודמת. אם הוא לא ענה עליה — הוא עבר הלאה; ענה על מה שהוא כתב עכשיו.\n"
+    "• אל תחזור על מידע שכבר נתת, אלא אם הוא ביקש.\n"
+    "• הבחן בין: שאלה (תענה), בקשת שינוי (אשר מה ישתנה), אישור/הוראה לבצע (הפנה לפקודה או לכפתור — "
+    "אתה לא מבצע פעולות בעצמך) ותלונה על משהו שסוכן עשה (הכר בדיוק במה שקרה לפי ההיסטוריה, ואמור מה יהיה אחרת).\n"
+    "• כשהוא מדבר על כיוון/אסטרטגיה/רעיון — דון ברעיון עצמו: קודם תשובה עניינית משלך (2-3 נקודות קונקרטיות לעסק "
+    "הזה), ורק אחר כך, אם צריך ביצוע, ציין במשפט אחד איזה סוכן מבצע. אל תפתח ב'כתוב @...' ואל תדחוף 'תן לי נושא ואכתוב פוסט'.\n"
+    "• כשהוא מתלונן על משהו שסוכן עשה — פתח בהכרה במה שקרה בפועל (לפי ההיסטוריה), אחר כך מה יהיה אחרת.\n"
+    "• אם הוא אומר שההערות שלו נכנסו לתוך פוסט (במקום ש-NOA תתקן לפיהן): זו טעות שלנו. אמור שהנוסח הנוכחי של הפוסט "
+    "הוא ההערות שלו, שהוא *לא* יפורסם, ושהתיקון הוא *שנהפוסט <מזהה> <ההערות>* (או הכפתור NOA תשכתב) — NOA תכתוב "
+    "גרסה חדשה מהפוסט המקורי לפי ההערות. לעולם אל תציע לו לאשר את הפוסט במצב הזה.\n"
+    "• שאלת הבהרה — רק כשחסר פרט הכרחי באמת, ואחת בלבד, קצרה.\n"
+    "• כסף, תשלום או הזמנה מספק: אף סוכן לא מבצע אותם מהצ'אט. אל תכתוב 'פנה ל-X, הוא יטפל' — הדרך היחידה היא "
+    "*רכש* ואז *אשררכש* / *אשרתשלוםספק* אחרי קריאת התנאים."
 )
 
 # When the owner ISSUES AN INSTRUCTION (rather than asking for output), the reply must
@@ -1271,11 +1328,42 @@ _AGENT_TAG = {
 }
 
 
+_MONEY_LEAD = re.compile(r"^\s*(?:[^\s,]{2,12},\s*)?(?P<verb>תעביר|תעבירי|העבר|להעביר|תשלם|תשלמי|שלם|לשלם|תזמין|תזמיני|הזמן|להזמין|"
+                         r"transfer|pay|order)\b(?P<rest>.*)$", re.I | re.S)
+_MONEY_AMOUNT = re.compile(r"\d[\d,.]*\s*(₪|ש\"?ח|שקל|שקלים|\$|€|usd|ils|nis)|(₪|\$|€)\s*\d|כסף|money", re.I)
+_MONEY_SUPPLIER = re.compile(r"(?:^|[\s\-])(ל|מ|מה|ל-|מ-)?ה?ספק|supplier|vendor", re.I)
+_QUESTION_START = ("כמה", "האם", "מה ", "מתי", "למה", "איך", "how", "what", "did", "do ", "is ")
+
+
+def _is_money_action(text: str) -> bool:
+    """An instruction to MOVE money or ORDER from a supplier (#158; expert review: no false positives on questions,
+    NOA writing requests or messages that merely mention a supplier). The message must open with the verb (after an
+    optional addressee), must not be a question, and its object must be money (transfer/pay) or a supplier (order/pay)."""
+    t = (text or "").strip()
+    if not t or "?" in t or t.lower().startswith(_QUESTION_START):
+        return False
+    m = _MONEY_LEAD.match(t)
+    if not m:
+        return False
+    verb, rest = m.group("verb").lower(), m.group("rest")
+    if verb in ("תעביר", "תעבירי", "העבר", "להעביר", "transfer"):
+        return bool(_MONEY_AMOUNT.search(rest))
+    if verb in ("תשלם", "תשלמי", "שלם", "לשלם", "pay"):
+        return bool(_MONEY_AMOUNT.search(rest) or _MONEY_SUPPLIER.search(rest))
+    return bool(_MONEY_SUPPLIER.search(rest))          # order: from a supplier
+
+
+_MONEY_ACTION_REPLY = ("אני לא יכול להעביר כסף או להזמין מספק, וגם אף סוכן אחר לא — זה לא קורה מתוך הודעה בצ'אט.\n"
+                       "תשלום לספק קורה רק דרך רכש קיים: *רכש* מציג מה ממתין, ואחרי שקראת את התנאים — "
+                       "*אשררכש <מזהה>* להזמנה ו-*אשרתשלוםספק <מזהה>* לתשלום.")
+_OWNER_NAME_FIX = re.compile(r"(?<![\u0590-\u05FF])החליל(?![\u0590-\u05FF])")
+
+
 def _clean_wa_reply(text: str) -> str:
     """Post-process an agent reply for WhatsApp: strip any leaked chain-of-thought, and
     convert markdown the app can't render. Belt-and-braces on top of the prompt rules —
     the fallback model in particular still leaks a numbered 'analysis' when Cerebras 429s."""
-    t = (text or "").strip()
+    t = _OWNER_NAME_FIX.sub("חליל", (text or "").strip())   # #158: the model wrote "החליל" ("the Khalil")
     # 1) strip leaked reasoning via the shared customer-flow stripper
     try:
         from BACKEND_AI_AGENTS import _strip_leaked_reasoning
@@ -2020,12 +2108,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         return await _kw_bulk(m_kwb.group(1).lower().replace(" ", "") in ("אשרהכל", "approveall"), m_kwb.group(2))
     if low in ("מילים הבא", "מילים הבאות", "words next", "next words"):
         return await _keywords_list(advance=True)
-    m_ap = re.match(r"^(approve|אשר)\b\s*(\S+)?", msg, re.I)
+    m_ap = re.match(r"^(approve|אשר)\b\s*(\S+)?(\s+(?:בכוח|force)(?!\S))?", msg, re.I)
     if m_ap:
         post = await _resolve_post(db, m_ap.group(2) or "")
         if not post:
             return "לא מצאתי פוסט ממתין לאישור. כתוב *פוסטים* לרשימה."
-        return await _approve_and_publish(db, post)
+        return await _approve_and_publish(db, post, force=bool(m_ap.group(3)))
     m_hist = re.match(r"^(history|היסטוריה|גרסאות)\b\s*(\S+)?\s*$", msg, re.I)
     if m_hist:
         post = await _resolve_post(db, m_hist.group(2) or "") if m_hist.group(2) else None
@@ -2224,6 +2312,14 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         await _noa_guidelines_save(db, clean)
         saved_note = "\n\n📋 שמרתי את ההנחיה ואפעל לפיה מעכשיו. (לצפייה: כתוב *הנחיות*)"
 
+    if _is_money_action(clean):
+        # #158: asked to "transfer 5000 to supplier X", the LLM answered "write @בואז, he'll handle it" - a payment
+        # mechanism that does not exist. Money never moves from a chat sentence; say the real path, deterministically.
+        reply = _MONEY_ACTION_REPLY + saved_note
+        if not _is_group:
+            await _save_history(await _load_history() + [{"role": "user", "content": clean},
+                                                         {"role": "assistant", "content": reply, "agent": agent_key}])
+        return f"\u200f[{_AGENT_TAG.get(agent_key, 'AVI')}] {reply}"
     try:
         from hf_client import hf_text
         status_block = await build_status_snapshot(db)
@@ -2241,7 +2337,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
                 atag = _AGENT_TAG.get(m.get("agent", ""), m.get("agent", "AGENT"))
                 return f"assistant [{atag}]: {m['content']}"
             return f"user: {m['content']}"
-        convo = "\n".join(_fmt_turn(m) for m in hist[-8:])
+        convo = "\n".join(_fmt_turn(m) for m in hist[-12:])
         prompt = (convo + "\n" if convo else "") + f"user: {clean}"
         # Low temperature so the console agents (AVI / NOA / Bone) write clean, human,
         # idiomatic Hebrew — the same fix proven for NOA (owner request 2026-08-04: "make

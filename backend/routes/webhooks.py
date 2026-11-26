@@ -1247,6 +1247,10 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
     body = parsed.get("body", "").strip()
     profile_name = parsed.get("profile_name", "")
     reply_jid = raw_data.get("reply_jid", "")
+    if is_non_chat_jid(reply_jid):
+        # #158 defence in depth (the bridge already drops these): a contact's Status / a broadcast list / a channel is
+        # not a conversation - never route it to an agent and never answer it.
+        return Response(content="<Response/>", media_type="text/xml")
 
     # De-duplicate at ingress (same pattern as the Telegram webhook) — WhatsApp
     # delivers the same message in multiple upserts, which caused every user
@@ -2186,6 +2190,12 @@ async def _telegram_webhook_impl(request: Request, db: AsyncSession):
         }
     finally:
         await _stop_typing()
+
+
+def is_non_chat_jid(jid) -> bool:
+    """Same rule as whatsapp-bridge/jid_policy.js (#158)."""
+    j = str(jid or "").strip().lower()
+    return bool(j) and (j == "status@broadcast" or j.endswith("@broadcast") or j.endswith("@newsletter"))
 
 
 _GROUP_REPLY_TTL_S = 24 * 3600

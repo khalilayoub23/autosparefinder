@@ -40,7 +40,9 @@ Choice = Tuple[str, str]
 
 # ── vocabulary ──────────────────────────────────────────────────────────────────────────────────
 ACTION_LABELS = {
-    "approve": "אישור", "reject": "דחייה", "change": "שינוי", "edit": "עריכה",
+    # change = the agent rewrites from the owner's notes; edit = the owner's own text replaces it word for word.
+    # (#158: "עריכה" read as "editing notes" - the owner's notes were pasted into a post twice on 2026-11-26.)
+    "approve": "אישור", "reject": "דחייה", "change": "שינוי לפי הערות", "edit": "נוסח משלי",
     "details": "פרטים נוספים", "recheck": "בדיקה חוזרת", "continue": "המשך", "cancel": "ביטול",
 }
 # Read-only actions never consume the interaction; the rest are one-shot.
@@ -183,6 +185,18 @@ def idempotency_key(agent: str, task_ref: str, commands: Iterable[str], body: st
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
+MAX_BUTTON_LABEL = 20   # WhatsApp quick-reply limit (whatsapp-bridge/interactive.js MAX_LABEL)
+
+
+def button_label(producer_label: str, action_id: str) -> str:
+    """The producer's own label when it fits a WhatsApp button ("✅ אשר ופרסם", "🔁 NOA תשכתב"), else the generic
+    vocabulary. #158: the generic word was ALWAYS used, so "NOA rewrites" and "I write it myself" both reached the
+    owner as the ambiguous "שינוי"/"עריכה" and his editing notes were pasted into a post."""
+    lab = " ".join(str(producer_label or "").split())
+    units = len(lab.encode("utf-16-le")) // 2        # the bridge cuts by JS (UTF-16) length: an astral emoji counts 2
+    return lab if 0 < units <= MAX_BUTTON_LABEL else ACTION_LABELS[action_id]
+
+
 def build(choices: Sequence[Choice], *, task_ref: str = "", entity_id: str = "", body: str = "",
           ttl_s: int = DEFAULT_TTL_S) -> Optional[Interaction]:
     """Interaction from the existing (label, command) choices, or None when fewer than 1 valid action. Duplicate
@@ -196,7 +210,7 @@ def build(choices: Sequence[Choice], *, task_ref: str = "", entity_id: str = "",
         aid, ag = classify(command)
         if aid == "custom" or any(a.id == aid for a in actions):
             continue
-        actions.append(Action(aid, ACTION_LABELS[aid], command[:200]))
+        actions.append(Action(aid, button_label(_label, aid), command[:200]))
         agents.append(ag)
     if not actions:
         return None
@@ -226,6 +240,13 @@ async def create_from_choices(store: Store, choices: Sequence[Choice], **kw) -> 
     return ix
 
 
+def buttons_body(subject: str) -> str:
+    """Text of the separate buttons message. It names what the buttons decide (#158: it was always just "בחר פעולה:",
+    so two pending decisions showed two identical button blocks)."""
+    subj = " ".join(str(subject or "").split())[:120]
+    return f"{subj}\nבחר פעולה:" if subj else "בחר פעולה:"
+
+
 def bridge_payload(ix: Interaction, body: str) -> dict:
     return {"body": body[:1000], "footer": f"🆔 {ix.task_ref or ix.id}"[:60], "interaction_id": ix.id,
             "actions": [a.public() for a in ix.actions]}
@@ -246,11 +267,12 @@ _EXPIRED = "⌛ הבקשה הזו כבר לא פעילה (פג תוקף, טופ�
 
 
 def followup_hint(ix: Interaction, action_id: str) -> str:
-    what = {"change": "מה לשנות? תאר במילים שלך", "edit": "שלח את הנוסח החדש המלא",
-            "details": "מה תרצה לשאול?"}.get(action_id, "כתוב את התשובה")
+    what = {"change": f"כתוב בהודעה הבאה מה לשנות, במילים שלך. {ix.agent} יכתוב גרסה חדשה לאישורך",
+            "edit": "שלח בהודעה הבאה את הנוסח המלא. הוא יחליף את הקיים מילה במילה (להערות לסוכן: *שינוי לפי הערות*)",
+            "details": "מה תרצה לשאול? כתוב בהודעה הבאה"}.get(action_id, "כתוב את התשובה בהודעה הבאה")
     mins = max(1, FOLLOWUP_TTL_S // 60)
-    return (f"✏️ {what} בהודעה הבאה (או השב בציטוט להודעה הזו) — זה יחזור ל-{ix.agent} לבקשה {ix.task_ref or ix.id}. "
-            f"לביטול: *בטל*. ממתין {mins} דק'.")
+    return (f"✏️ {what}.\n"
+            f"אפשר גם להשיב בציטוט להודעה הזו. ביטול: *בטל* · ממתין {mins} דק' · בקשה {ix.task_ref or ix.id}")
 
 
 async def resolve_response(store: Store, resp: dict, *, sender_is_owner: bool) -> Resolution:

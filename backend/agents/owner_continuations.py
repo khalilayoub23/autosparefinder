@@ -20,6 +20,7 @@ Last Updated: 2026-11-26
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 from dataclasses import dataclass, field
@@ -91,8 +92,78 @@ async def noa_edit(db, ref: str, text: str) -> Result:
         cur = str(post.get("content") or "").strip()
         return Result(True, f"✏️ עריכת פוסט {sid}. הנוסח הנוכחי:\n\n{cur[:900]}\n\n"
                             f"שלח את הנוסח החדש המלא (או *ערוך {sid} <הטקסט החדש>*). הפוסט יחכה לאישור מחדש.")
+    verdict = notes_verdict(text, str(post.get("content") or "")) if FROM_BUTTON_FOLLOWUP.get() else "post"
+    if verdict == "notes":
+        # #158: notes sent after the "own wording" button are not the post - NOA rewrites instead of pasting them in.
+        # The typed `ערוך <id> <text>` never comes here (always exact), so the hint below really works.
+        res = await noa_change(db, ref, text)
+        if res.ok:
+            res.text = (res.text + f"\n\nℹ️ ההודעה שלך נראתה כמו הערות ולא כמו פוסט, אז NOA שכתבה לפיהן. "
+                        f"להחלפה מילה במילה: *ערוך {sid} <הנוסח המלא>*")
+        return res
+    if verdict == "ask":
+        return Result(False, f"🤔 לא שיניתי כלום בפוסט {sid}: לא ברור אם זה הנוסח המלא או הערות "
+                             f"(חסרים בו המחיר/הקישור/התגיות של הפוסט, או שהוא קצר בהרבה).\n"
+                             f"• אם אלה הערות ל-NOA: *שנהפוסט {sid} <ההערות>*\n"
+                             f"• אם זה הנוסח המלא: *ערוך {sid} <הנוסח המלא>*")
     ok, msg, ver = await _edit_post(db, post["id"], text, source="whatsapp", actor="owner")
     return _post_result(sid, ver, text.strip(), "✏️ הפוסט עודכן לנוסח שלך") if ok else Result(False, msg)
+
+
+_NOTE_OPENERS = ("הערה", "הערות", "תשנ", "שנה", "שני", "תקצר", "קצר", "תוסיף", "תוסיפי", "הוסף", "הוסיפי", "תוריד",
+                 "תורידי", "הורד", "בלי ", "אל ת", "תכתוב", "תכתבי", "תעשה", "תעשי", "תדגיש", "תדגישי", "במקום", "צריך",
+                 "לא צריך", "פשוט ת", "notes", "note:", "make it", "shorter", "add ", "remove ")
+# words that talk ABOUT a post's wording (a post never calls itself "the note" or discusses "the words")
+_META_RE = re.compile(r"הער(ה|ות|תי)|תתייחס|תתקנ|תקני|ניסוח|המילים|מילים שלא")
+_FACT_RE = re.compile(r"₪|\d+\s*ש\"?ח|autosparefinder|https?://|#\S+", re.I)
+SHORT_NOTE_CHARS = 60
+
+# True only while a BUTTON follow-up (owner_interaction_flow.handle_owner_text) runs the continuation. A typed
+# `ערוך <id> <text>` is always the owner's exact text (#158 expert review: the typed escape hatch must stay exact).
+FROM_BUTTON_FOLLOWUP: contextvars.ContextVar = contextvars.ContextVar("owner_followup_from_button", default=False)
+
+
+def notes_verdict(text: str, current: str) -> str:
+    """'notes' | 'ask' | 'post' for a text sent after the "own wording" button.
+    notes = strong evidence it is editing notes: talks about notes/wording (real cases, post 3e253a49 2026-11-26:
+            "...מילים שלא קשורות..." and "פשוט תתייחסי להערה שרשמתי מקודם"), or a SHORT instruction.
+    ask   = weak evidence (the post's price/link/hashtags are gone, or it is far shorter): change nothing, ask.
+    post  = a replacement post."""
+    t, cur = (text or "").strip(), (current or "").strip()
+    if not t:
+        return "post"
+    if _META_RE.search(t) or (len(t) < SHORT_NOTE_CHARS and t.lower().startswith(_NOTE_OPENERS)):
+        return "notes"
+    cur_facts = bool(_FACT_RE.search(cur))
+    if cur_facts and not _FACT_RE.search(t):
+        return "ask"                                   # the post's price/link/hashtags are gone
+    if not cur_facts and len(cur) >= 200 and len(t) < 0.35 * len(cur):
+        return "ask"                                   # nothing to compare but the size: far shorter
+    return "post"
+
+
+def looks_like_notes(text: str, current: str) -> bool:
+    """Strong evidence only (used to rebase rewrites and to refuse publishing pasted notes)."""
+    return notes_verdict(text, current) == "notes"
+
+
+async def _rewrite_base(db, post: dict) -> Tuple[str, List[str]]:
+    """(text NOA should rewrite, the owner's earlier notes on this post). Newest revisions that are owner notes pasted
+    in by the old exact-edit path are notes, not the post: the base is the last real version before them."""
+    cur = str(post.get("content") or "").strip()
+    try:
+        from social.campaign_manager import get_revisions
+        revs = await get_revisions(db, str(post["id"]))
+    except Exception:
+        return cur, []
+    notes: List[str] = []
+    for i in range(len(revs) - 1, 0, -1):
+        r, prev = revs[i], revs[i - 1]
+        if r.get("actor") == "owner" and looks_like_notes(str(r.get("content") or ""), str(prev.get("content") or "")):
+            notes.insert(0, str(r.get("content") or "").strip())
+            continue
+        return str(r.get("content") or cur).strip(), notes
+    return (str(revs[0].get("content") or cur).strip() if revs else cur), notes
 
 
 async def noa_change(db, ref: str, request: str) -> Result:
@@ -102,7 +173,7 @@ async def noa_change(db, ref: str, request: str) -> Result:
     if not post:
         return Result(False, "פורמט: *שנהפוסט <מזהה> <מה לשנות>* (המזהה מהרשימה: *פוסטים*). לא נמצא פוסט ממתין.")
     sid = _short(post["id"])
-    cur = str(post.get("content") or "").strip()
+    cur, earlier_notes = await _rewrite_base(db, post)
     if not request:
         return Result(True, f"🔁 שינוי פוסט {sid} על ידי NOA. הנוסח הנוכחי:\n\n{cur[:900]}\n\n"
                             f"מה לשנות? (למשל: קצר יותר, טון מצחיק יותר, להדגיש את המחיר). NOA תכתוב גרסה חדשה לאישורך.")
@@ -111,9 +182,13 @@ async def noa_change(db, ref: str, request: str) -> Result:
     if g:
         system += "\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g
     prompt = ("זה פוסט שכתבת וממתין לאישור הבעלים:\n<<<\n" + cur[:3000] + "\n>>>\n\n"
-              "הבעלים ביקש את השינוי הבא:\n<<<\n" + request[:1000] + "\n>>>\n\n"
+              + ("הערות קודמות של הבעלים על הפוסט הזה (גם אותן צריך לקיים):\n<<<\n" + "\n---\n".join(earlier_notes)[:1500]
+                 + "\n>>>\n\n" if earlier_notes else "")
+              + "הבעלים ביקש את השינוי הבא:\n<<<\n" + request[:1000] + "\n>>>\n\n"
               "כתבי מחדש את הפוסט לפי הבקשה. שמרי על כל העובדות (מוצר, מחיר, דגם רכב, קישורים) בדיוק כפי שהם — "
-              "אל תמציאי מחיר, הנחה או מבצע. החזירי רק את הטקסט הסופי של הפוסט, בלי הסברים.")
+              "אל תמציאי מחיר, הנחה או מבצע. כתבי עברית טבעית ונכונה: כל משפט חייב להיות קשור לחלק ולשימוש בו, "
+              "בלי ביטויים חסרי משמעות או מטאפורות מאולצות. אם הבעלים ציטט מילים שלא קשורות — הן לא יופיעו בנוסח החדש. "
+              "החזירי רק את הטקסט הסופי של הפוסט, בלי הסברים.")
     try:
         raw = await _llm(prompt, system)
     except Exception as exc:

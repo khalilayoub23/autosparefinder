@@ -217,6 +217,10 @@ Rules:
   A "normalizer" whose only working path pushes data into the catch-all destroys good data.
 
 ### Background Jobs
+- **A loop's outer `except` must count consecutive failures and alert (2026-11-26, #158).** `_health_monitor_loop` rebound its own
+  nested `_probe` function to a dict; every pass after the first died before any check ran, 164x, and the outer `except`
+  printed one line. Never rebind a nested function's name (AST guard `tests/test_no_nested_function_rebind.py`); 3 dead
+  passes in a row = one critical owner alert.
 - **No LLMs in background cron loops.** Every background LLM task must be gated by an env toggle
   defaulting to 0. Three mandatory limits: small batch (`CLEANUP_LLM_BATCH=25`), minimum interval,
   daily ceiling (`CLEANUP_LLM_DAILY_MAX_CALLS=150`).
@@ -343,6 +347,10 @@ Rules:
   promise it, the same way a claimed discount must exist in the DB before an agent states it.**
 
 ### Deployment & Config
+- **Pin WhatsApp-protocol libraries exactly; verify messaging by a DELIVERED message (2026-11-26, #158).** Baileys `^6.7.0`
+  resolved to 6.17.16 (higher number, older code, no LID-group addressing) and every group send failed `not-acceptable`
+  while the group feature was reported live. The bridge is pinned `6.7.24`; the bridge container runs `npm install` at
+  start, so a dependency change must be proven a no-op offline in `node:20-alpine` before the swap.
 - **Live supplier traffic is OFF outside production (2026-10-22, #100).** `outbound_policy.external_suppliers_enabled()` is the one rule:
   `ENABLE_EXTERNAL_SUPPLIERS` explicit on/off wins; unset → on ONLY when `ENVIRONMENT=production`; any other value → off. The
   supplier registry (`services/supplier_aggregator`) and the search fan-out both ask it. Tests: `tests/network_guard.py` (installed
