@@ -466,6 +466,8 @@ def test_approve_refuses_to_publish_owner_notes(monkeypatch):
 
 # expert review (#158): real-shaped replacement posts must never be treated as notes
 REAL_POSTS = [
+    "בלי כאב ראש: רפידות לקורולה ב-₪198 #בלמים",
+    "שנה חדשה, בלמים חדשים! ₪198 #בלמים",
     "במקום לחפש שעות במוסכים – רפידות בלם לקורולה 2018 מ-₪198, התאמה מאומתת לפי מספר רישוי. autosparefinder.co.il #רפידות",
     "צריך מסנן שמן לקיה פיקנטו? ₪49 בלבד, משלוח מהיר. חפשו לפי מספר רישוי ב-autosparefinder.co.il #קיה #מסנן_שמן",
     "בלי הפתעות במוסך: מצמד מקורי למאזדה 3 ב-₪1,290, כולל אחריות 12 חודשים. #מאזדה #מצמד",

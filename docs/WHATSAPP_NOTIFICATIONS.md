@@ -486,3 +486,12 @@ just happened. History keeps 20 messages, the prompt sees 12.
 ### 14.6 Notification policy - unchanged
 Routine -> 09:30 IL digest; decisions immediate (1:1); critical immediate; quiet hours 09:00-21:00 IL. #158 also restores
 the health monitor itself (it had been failing every cycle since the 08:47 deploy).
+
+### 14.7 Delivery evidence and deploy order
+* `whatsapp-bridge/receipt_log.js`: `[ConnLog] RECEIPT scope=group|dm kind=delivery|read|played id=<last 6 of our message id>`
+  (from `messages.update` / `message-receipt.update`) and `RETRY_RECV scope=... id=...` (raw retry receipt = the recipient could
+  not decrypt). No JID, participant or text. "Sent OK" is only the server ack; a group message counts as delivered only with a
+  `RECEIPT scope=group` for its id and no `RETRY_RECV`.
+* Bridge dependency change order (the container runs `npm install` at start; the new lock fetches libsignal from git, which
+  `node:20-alpine` lacks): prove `npm install` is a no-op offline -> preflight SAFE -> snapshots -> guarded stop -> swap
+  node_modules + package files -> guarded start. Rollback: restore node_modules + package files, KEEP the live `auth_info`.

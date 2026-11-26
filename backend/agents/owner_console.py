@@ -1328,10 +1328,10 @@ _AGENT_TAG = {
 }
 
 
-_MONEY_LEAD = re.compile(r"^\s*(?:[^\s,]{2,12},\s*)?(?P<verb>תעביר|תעבירי|העבר|להעביר|תשלם|תשלמי|שלם|לשלם|תזמין|תזמיני|הזמן|להזמין|"
+_MONEY_LEAD = re.compile(r"^\s*(?:@\S+\s+|[^\s,]{2,12},\s*)?(?:אני רוצה ש|בבקשה\s+|please\s+)?(?P<verb>תעביר|תעבירי|העבר|להעביר|תשלם|תשלמי|שלם|לשלם|תזמין|תזמיני|הזמן|להזמין|"
                          r"transfer|pay|order)\b(?P<rest>.*)$", re.I | re.S)
 _MONEY_AMOUNT = re.compile(r"\d[\d,.]*\s*(₪|ש\"?ח|שקל|שקלים|\$|€|usd|ils|nis)|(₪|\$|€)\s*\d|כסף|money", re.I)
-_MONEY_SUPPLIER = re.compile(r"(?:^|[\s\-])(ל|מ|מה|ל-|מ-)?ה?ספק|supplier|vendor", re.I)
+_MONEY_SUPPLIER = re.compile(r"(?:^|[\s\-])(ל|מ|מה|ל-|מ-)?ה?ספק|supplier|vendor|(?:^|\s)(?:ל|מ)-?[A-Za-z]", re.I)
 _QUESTION_START = ("כמה", "האם", "מה ", "מתי", "למה", "איך", "how", "what", "did", "do ", "is ")
 
 

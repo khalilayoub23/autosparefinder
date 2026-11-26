@@ -132,7 +132,8 @@ def notes_verdict(text: str, current: str) -> str:
     t, cur = (text or "").strip(), (current or "").strip()
     if not t:
         return "post"
-    if _META_RE.search(t) or (len(t) < SHORT_NOTE_CHARS and t.lower().startswith(_NOTE_OPENERS)):
+    if _META_RE.search(t) or (len(t) < SHORT_NOTE_CHARS and t.lower().startswith(_NOTE_OPENERS)
+                              and not _FACT_RE.search(t)):     # a short post with a price/hashtag is a post
         return "notes"
     cur_facts = bool(_FACT_RE.search(cur))
     if cur_facts and not _FACT_RE.search(t):

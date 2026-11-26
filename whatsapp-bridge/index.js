@@ -17,6 +17,7 @@ const {
 
 import { Boom } from '@hapi/boom'
 import { isNonChatJid } from './jid_policy.js'
+import { statusLines, receiptLines, retryLine } from './receipt_log.js'
 import axios from 'axios'
 import express from 'express'
 import qrcode from 'qrcode-terminal'
@@ -654,6 +655,17 @@ async function startBot() {
       await axios.post(BACKEND_WEBHOOK, { from: 'whatsapp:group', body: '', message_id: '', group_update: { group_jid: id, action } }, { timeout: 15000 })
     } catch (err) { console.error('[Bridge] group update forward error:', maskNumbers(err.message)) }
   })
+
+  // Delivery evidence for our own messages, content-free (receipt_log.js, #158): "Sent OK" is only the server ack.
+  sock.ev.on('messages.update', (updates) => {
+    try { for (const l of statusLines(updates)) logEvent('RECEIPT', l) } catch {}
+  })
+  sock.ev.on('message-receipt.update', (updates) => {
+    try { for (const l of receiptLines(updates)) logEvent('RECEIPT', l) } catch {}
+  })
+  try {
+    sock.ws.on('CB:receipt', (node) => { try { const l = retryLine(node); if (l) logEvent('RETRY_RECV', l) } catch {} })
+  } catch {}
 
   sock.ev.on('creds.update', () => {
     const serialized = JSON.stringify(state.creds, BufferJSON.replacer)
