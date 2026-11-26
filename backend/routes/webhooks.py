@@ -1268,8 +1268,46 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
     media_caption = str(parsed.get("media_caption") or "").strip()
     media_too_large = bool(parsed.get("media_too_large"))
 
-    if not sender_phone or (not body and not media_kind and not raw_data.get("interactive_response")):
+    if not sender_phone or (not body and not media_kind and not raw_data.get("interactive_response")
+                            and not raw_data.get("group_update")):
         return Response(content="<Response/>", media_type="text/xml")
+
+    # ── GROUP MENTION / OWNER BUTTON TAP (owner_interactions.py, owner_interaction_flow.py) ──────────────────────────
+    # Group traffic and button taps NEVER reach the customer path: with their switch off they are dropped here.
+    _gm = raw_data.get("group_message")
+    _ir = raw_data.get("interactive_response")
+    if _gm or sender_phone == "whatsapp:group":
+        try:
+            import owner_interaction_flow as _oif
+            if raw_data.get("group_update"):   # bridge: membership changed -> drop cached participants
+                from routes.wa_group import invalidate as _inv
+                _inv(str((raw_data.get("group_update") or {}).get("group_jid") or ""))
+                return Response(content="<Response/>", media_type="text/xml")
+            if _gm and _oif.group_inbound_enabled():
+                import owner_interactions as _oi
+                from agents.owner_console import is_owner as _is_owner
+                return await _handle_group_mention(_gm, body, _is_owner, _oi, None)
+        except Exception as _ge:
+            print(f"[group_mention] webhook error: {_ge}", flush=True)
+        return Response(content="<Response/>", media_type="text/xml")
+    _ir_command = ""
+    if _ir:
+        if os.getenv("WA_INTERACTIVE_ENABLED", "0") != "1":
+            return Response(content="<Response/>", media_type="text/xml")
+        try:
+            import owner_interaction_flow as _oif
+            from agents.owner_console import is_owner as _is_owner, OWNER_PHONE as _OP, process_owner_message as _pom
+            from social.whatsapp_provider import send_message as _s_ir
+            _ir_sender = sender_phone.replace("whatsapp:", "").strip()
+            _ir_command = await _oif.handle_tap(
+                _oif.pg_store(), _ir, sender_is_owner=_is_owner(_ir_sender), owner_dest=_OP or sender_phone,
+                send=_s_ir, console=lambda c: _pom(c, source="whatsapp_button")) or ""
+        except Exception as _ie:
+            print(f"[owner_interactions] tap error: {_ie}", flush=True)
+            _ir_command = ""
+        if not _ir_command:
+            return Response(content="<Response/>", media_type="text/xml")
+        body = _ir_command
 
     try:
         from social.whatsapp_provider import send_typing as wa_typing
@@ -1278,35 +1316,6 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
         pass
 
     phone_e164 = sender_phone.replace("whatsapp:", "").strip()
-
-    # ── OWNER INTERACTIVE TAP / GROUP MENTION (owner_interactions.py; WA_INTERACTIVE_ENABLED, default off) ──────────
-    # A button tap resolves to the EXACT typed command registered for it and then flows through the normal owner console
-    # below as if typed; a pending change/edit follow-up binds the owner's next text to its interaction.
-    _ir = raw_data.get("interactive_response")
-    _gm = raw_data.get("group_message")
-    if (_ir or _gm) and os.getenv("WA_INTERACTIVE_ENABLED", "0") == "1":
-        try:
-            from agents.owner_console import is_owner as _is_owner
-            import owner_interactions as _oi
-            from owner_interactions_store import PgStore
-            from BACKEND_DATABASE_MODELS import pii_session_factory
-            _store = PgStore(pii_session_factory)
-            if _ir:
-                _res = await _oi.resolve_response(_store, _ir, sender_is_owner=_is_owner(sender_phone.replace("whatsapp:", "").strip()))
-                if _res.status == "ignored":
-                    return Response(content="<Response/>", media_type="text/xml")
-                if _res.status == "execute":
-                    body = _res.command
-                else:
-                    from social.whatsapp_provider import send_message as _s
-                    await _s(to=sender_phone, text=_res.reply)
-                    return Response(content="<Response/>", media_type="text/xml")
-            else:
-                return await _handle_group_mention(_gm, body, _is_owner, _oi, _store)
-        except Exception as _ie:
-            print(f"[owner_interactions] webhook error: {_ie}", flush=True)
-            return Response(content="<Response/>", media_type="text/xml")
-
 
     # ── OWNER COMMAND CONSOLE ─────────────────────────────────────────────────
     # The owner's WhatsApp messages are NOT customer traffic — route them to his
@@ -1324,21 +1333,24 @@ async def _whatsapp_webhook_impl(request: Request, db: AsyncSession):
             # otherwise block the webhook and time out the bridge.
             _dest = OWNER_PHONE or sender_phone
             _body = body
-            try:  # a pending change/edit follow-up binds this text to its interaction (owner_interactions.take_followup)
-                if os.getenv("WA_INTERACTIVE_ENABLED", "0") == "1" and not _body.strip().split(" ", 1)[0] in ("אשר", "דחה"):
-                    import owner_interactions as _oi2
-                    from owner_interactions_store import PgStore as _PS
-                    from BACKEND_DATABASE_MODELS import pii_session_factory as _psf
-                    _fu = await _oi2.take_followup(_PS(_psf), _body)
-                    if _fu:
-                        _body = _fu[1]
-            except Exception as _fe:
-                print(f"[owner_interactions] follow-up bind failed: {_fe}", flush=True)
             _quoted = str(raw_data.get("quoted_text") or "")[:1500]
+
+            _quoted_id = str(raw_data.get("quoted_message_id") or "")[:80]
+            _from_tap = bool(_ir_command)
 
             async def _owner_reply_bg():
                 try:
                     from social.whatsapp_provider import send_message as _send
+                    # Resume Interaction: a pending Change/Edit/More-info follow-up binds this private text to its
+                    # interaction and returns it to the ORIGINATING agent (owner_interaction_flow.handle_owner_text).
+                    if not _from_tap and os.getenv("WA_INTERACTIVE_ENABLED", "0") == "1":
+                        try:
+                            import owner_interaction_flow as _oif
+                            if await _oif.handle_owner_text(_oif.pg_store(), _body, _quoted_id, owner_dest=_dest,
+                                                            send=_send, run_continuation=_oif.run_continuation):
+                                return
+                        except Exception as _fe:
+                            print(f"[owner_interactions] follow-up failed, routing normally: {_fe}", flush=True)
                     try:
                         # A hung provider call must not turn into SILENCE. Without a
                         # deadline the task waits forever and the owner simply never
@@ -2181,12 +2193,23 @@ _GROUP_SEEN: dict = {}  # message_id -> monotonic ts; one answer per group messa
 
 
 async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
-    """A group message that mentions THIS account. Mention = routing/context only: an approval/consequential command is
-    refused here (it runs only from the owner's private chat or a button tap); only the owner's JID is answered, once per
-    message (dedupe), and our own messages never reach this path (the bridge drops fromMe)."""
+    """A group message that mentions THIS account (bridge forwards only those; WA_GROUP_INBOUND_ENABLED). Mention =
+    conversation routing only: any console command (approval, revision, continuation, work trigger) is refused here -
+    it runs only from the owner's private chat or a button tap there. Only the configured AUTOSPAREFINDER group and
+    only the owner's JID (phone or LID, never a display name) are answered, once per message; the reply is generated
+    in the background (the bridge must not wait on the LLM) and addressed to the group."""
     ok = Response(content="<Response/>", media_type="text/xml")
+    group = str(gm.get("group_jid") or "")
+    try:
+        from routes.wa_group import configured_group_jid
+        if group != await configured_group_jid():
+            print("[group_mention] not the configured group - ignored", flush=True)
+            return ok
+    except Exception as _e:
+        print(f"[group_mention] no configured group ({str(_e)[:60]}) - ignored", flush=True)
+        return ok
     sender = str(gm.get("sender_jid") or "")
-    if not is_owner(sender.split("@")[0] if sender else ""):
+    if not is_owner(sender.split("@")[0].split(":")[0] if sender else ""):
         print("[group_mention] sender is not the owner - ignored", flush=True)
         return ok
     import time as _t
@@ -2202,13 +2225,24 @@ async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
     if not text:
         return ok
     from social.whatsapp_provider import send_message as _s
-    group = str(gm.get("group_jid") or "")
     if not oi.can_route_group_text(text):
-        await _s(to=group, text="🔒 אישורים וביצוע פעולות רק מהצ'אט הפרטי או בלחיצה על כפתור. אזכור בקבוצה הוא לשיחה בלבד.")
+        await _s(to=group, text="🔒 אישורים, עריכות והפעלת פעולות רק מהצ'אט הפרטי או בלחיצה על כפתור שם. אזכור בקבוצה הוא לשיחה בלבד.")
         return ok
-    from agents.owner_console import process_owner_message
-    # Addressing: process_owner_message already routes a leading "נועה"/"noa" to NOA, default AVI.
-    reply = await asyncio.wait_for(process_owner_message(text, source="whatsapp_group"), timeout=_OWNER_REPLY_TIMEOUT_S)
-    if (reply or "").strip():
-        await _s(to=group, text=reply)
+
+    async def _group_reply_bg():
+        try:
+            from agents.owner_console import process_owner_message
+            # Addressing: process_owner_message routes a leading "נועה"/"noa" to NOA, default AVI.
+            reply = await asyncio.wait_for(process_owner_message(text, source="whatsapp_group"), timeout=_OWNER_REPLY_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            reply = "⚠️ לקח לי יותר מדי זמן לענות. נסה שוב."
+        except Exception as _e:
+            print(f"[group_mention] reply failed: {_e}", flush=True)
+            return
+        if (reply or "").strip():
+            await _s(to=group, text=reply)
+
+    _t2 = asyncio.create_task(_group_reply_bg())
+    _OWNER_REPLY_TASKS.add(_t2)
+    _t2.add_done_callback(_OWNER_REPLY_TASKS.discard)
     return ok

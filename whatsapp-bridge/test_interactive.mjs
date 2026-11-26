@@ -3,8 +3,7 @@ import assert from 'assert'
 import { createRequire } from 'module'
 import {
   buildInteractiveMessage, buttonId, parseButtonId, extractInteractiveResponse, responseContext,
-  extractMentions, validateMentions, wrapForRelay,
-} from './interactive.js'
+  extractMentions, validateMentions, wrapForRelay, shapeParticipants } from './interactive.js'
 const require = createRequire(import.meta.url)
 const b = require('@whiskeysockets/baileys')
 const { proto, generateWAMessageContent } = b
@@ -65,4 +64,11 @@ const wr = roundTrip(full.message)
 const un = b.normalizeMessageContent(wr)
 assert.equal(un.interactiveMessage.nativeFlowMessage.buttons.length, 3)
 assert.ok(full.key.id)
+// 7. Participant list for the composer (#157): our own account flagged by PN or LID, phone/LID passed through, no names invented.
+const sp = shapeParticipants([
+  { id: '98058566160397@lid', lid: '98058566160397@lid', phoneNumber: '972586050155@s.whatsapp.net', admin: 'admin' },
+  { id: '22222222222222@lid', phoneNumber: '972532426920@s.whatsapp.net' },
+  { id: '972500000001@s.whatsapp.net' }], ['972532426920:12@s.whatsapp.net', '33333333333333:4@lid'])
+assert.deepEqual(sp.map((p) => p.is_me), [false, true, false])
+assert.equal(sp[0].phone, '972586050155@s.whatsapp.net'); assert.equal(sp[0].name, ''); assert.equal(sp[2].lid, null)
 console.log(`ok test_interactive (Baileys ${ver})`)

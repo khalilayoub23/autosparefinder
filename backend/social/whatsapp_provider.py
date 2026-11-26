@@ -162,7 +162,8 @@ async def _send_interactive(to: str, text: str, poll: dict) -> bool:
         from BACKEND_DATABASE_MODELS import pii_session_factory
         from owner_interactions_store import PgStore
         store = PgStore(pii_session_factory)
-        ix = await _oi.create_from_choices(store, list(zip(poll["values"], poll["commands"])))
+        # body = the displayed text: buttons are bound to THIS version; a revised proposal supersedes the old buttons
+        ix = await _oi.create_from_choices(store, list(zip(poll["values"], poll["commands"])), body=text)
         if ix is None:
             return False
         data = await _post_send({"to": _normalize_bridge_phone(to), "interactive": _oi.bridge_payload(ix, "בחר פעולה:")}, 15.0)

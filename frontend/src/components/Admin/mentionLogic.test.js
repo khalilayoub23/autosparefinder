@@ -30,3 +30,13 @@ describe('mentionLogic', () => {
     expect(toWireText('שלום', M)).toEqual({ text: 'שלום', mentions: [] })
   })
 })
+
+describe('groupErrorText', () => {
+  it('maps the group API failure modes', async () => {
+    const { groupErrorText } = await import('./mentionLogic')
+    expect(groupErrorText(409, 'configured group is not the AutoSpareFinder group')).toMatch(/אינה קבוצת/)
+    expect(groupErrorText(409, 'no AutoSpareFinder group configured')).toMatch(/לא הוגדרה/)
+    expect(groupErrorText(503)).toMatch(/לא מחובר/)
+    expect(groupErrorText(500)).toBe('')
+  })
+})

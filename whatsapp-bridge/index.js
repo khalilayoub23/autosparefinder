@@ -24,7 +24,7 @@ import { createSendJournal } from './send_journal.js'
 import { createPollRegistry } from './poll_votes.js'
 import { candidatePairs, tryDecryptVote } from './poll_decrypt.js'
 import { createHash } from 'crypto'
-import { wrapForRelay, buildInteractiveMessage, extractInteractiveResponse, responseContext, extractMentions, validateMentions, parseButtonId } from './interactive.js'
+import { wrapForRelay, buildInteractiveMessage, extractInteractiveResponse, responseContext, extractMentions, validateMentions, parseButtonId, shapeParticipants } from './interactive.js'
 import { installSafeConsoleFilter, createSafeBaileysLogger, jidHint, maskNumbers } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
@@ -425,10 +425,8 @@ app.get('/groups/:jid/participants', async (req, res) => {
   if (!/^[0-9-]+@g\.us$/.test(gjid)) return res.status(400).json({ ok: false, error: 'bad group jid' })
   try {
     const meta = await waSocket.groupMetadata(gjid)
-    const participants = (meta.participants || []).map((p) => ({
-      jid: p.id, lid: p.lid || null, admin: p.admin || null, name: p.name || p.notify || '',
-    }))
-    res.json({ ok: true, subject: meta.subject || '', participants })
+    res.json({ ok: true, subject: meta.subject || '', size: (meta.participants || []).length,
+      participants: shapeParticipants(meta.participants, [waSocket.user?.id, waSocket.user?.lid]) })
   } catch (err) {
     res.status(500).json({ ok: false, error: String(err && err.message || err) })
   }
@@ -640,6 +638,15 @@ async function startBot() {
   // truncating writeFile() — see atomic_write.js. A write failure is logged,
   // never thrown into the event emitter (an unhandled rejection here would
   // crash the whole bridge process over a transient disk issue).
+  // Membership changed (add/remove/promote/demote): tell the backend to drop its cached participant list so the
+  // composer never offers a removed member. Fire-and-forget; carries no message content.
+  sock.ev.on('group-participants.update', async ({ id, action }) => {
+    try {
+      logEvent('GROUP_PARTICIPANTS', `action=${action}`)
+      await axios.post(BACKEND_WEBHOOK, { from: 'whatsapp:group', body: '', message_id: '', group_update: { group_jid: id, action } }, { timeout: 15000 })
+    } catch (err) { console.error('[Bridge] group update forward error:', maskNumbers(err.message)) }
+  })
+
   sock.ev.on('creds.update', () => {
     const serialized = JSON.stringify(state.creds, BufferJSON.replacer)
     atomicWriteFile(CREDS_PATH, serialized).catch((err) => {

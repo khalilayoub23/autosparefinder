@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Loader2, Send, RefreshCw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import api from '../../api/client'
-import { activeMention, filterMembers, insertMention, toWireText } from './mentionLogic'
+import { activeMention, filterMembers, groupErrorText, insertMention, toWireText } from './mentionLogic'
 
 // Composer for the WhatsApp updates group with real @mention autocomplete. Members come from the live group metadata
 // (GET /admin/whatsapp/group-members); the server maps the opaque tokens to real WhatsApp mention JIDs.
@@ -10,6 +10,7 @@ export default function GroupMentionComposer() {
   const [members, setMembers] = useState([])
   const [subject, setSubject] = useState('')
   const [state, setState] = useState('loading') // loading | ready | disabled | error
+  const [errorText, setErrorText] = useState('')
   const [text, setText] = useState('')
   const [chosen, setChosen] = useState([])
   const [mention, setMention] = useState(null)
@@ -24,7 +25,9 @@ export default function GroupMentionComposer() {
       const { data } = await api.get('/admin/whatsapp/group-members', { params: { refresh } })
       setMembers(data.members || []); setSubject(data.subject || ''); setState('ready')
     } catch (e) {
-      setState(e?.response?.status === 403 ? 'disabled' : 'error')
+      const st = e?.response?.status
+      setErrorText(groupErrorText(st, e?.response?.data?.detail))
+      setState(st === 403 ? 'disabled' : 'error')
     }
   }, [])
   useEffect(() => { load() }, [load])
@@ -56,7 +59,8 @@ export default function GroupMentionComposer() {
       toast.success(wire.mentions.length ? `נשלח (${wire.mentions.length} אזכורים)` : 'נשלח')
       setText(''); setChosen([]); setMention(null)
     } catch (e) {
-      toast.error(e?.response?.data?.detail === 'unknown or removed participant' ? 'משתתף שהוזכר כבר לא בקבוצה — רענן את הרשימה' : 'השליחה נכשלה')
+      if (e?.response?.data?.detail === 'unknown or removed participant') { toast.error('משתתף שהוזכר כבר לא בקבוצה — הרשימה רועננה'); load(true) }
+      else toast.error(groupErrorText(e?.response?.status, e?.response?.data?.detail) || 'השליחה נכשלה')
     } finally { setSending(false) }
   }
 
@@ -69,6 +73,7 @@ export default function GroupMentionComposer() {
           {state === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} רענן
         </button>
       </div>
+      {state === 'error' && <p role="alert" className="text-sm text-red-400">{errorText || 'טעינת החברים נכשלה — לחץ רענן'}</p>}
       <div className="relative">
         <textarea
           id={`${listId}-ta`} ref={ref} rows={3} value={text} maxLength={2000} dir="auto"
@@ -86,7 +91,7 @@ export default function GroupMentionComposer() {
           <ul id={listId} role="listbox" aria-label="חברי הקבוצה"
               className="absolute z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-brand-border bg-brand-200 shadow-lg">
             {state === 'loading' && <li className="px-3 py-3 text-sm text-slate-400">טוען…</li>}
-            {state === 'error' && <li className="px-3 py-3 text-sm text-red-400">טעינת החברים נכשלה — לחץ רענן</li>}
+            {state === 'error' && <li className="px-3 py-3 text-sm text-red-400">{errorText || 'טעינת החברים נכשלה — לחץ רענן'}</li>}
             {state === 'ready' && !options.length && <li className="px-3 py-3 text-sm text-slate-400">אין חבר קבוצה תואם</li>}
             {options.map((m, i) => (
               <li key={m.token} id={`${listId}-o${i}`} role="option" aria-selected={i === active}

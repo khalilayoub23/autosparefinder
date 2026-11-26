@@ -6709,6 +6709,10 @@ class SocialMediaManagerAgent(BaseAgent):
                                     severity="info",
                                     alert_key=f"campaign_ready_{campaign_id}",
                                     cooldown_s=86400,  # per-campaign: at most one approval nag/day
+                                    # an approval request (immediate); the button only LISTS the pending posts -
+                                    # each post is approved on its own (no campaign-wide batch approval)
+                                    choices=__import__("owner_poll").list_choices("פוסטים", "📝 פוסטים ממתינים"),
+                                    decision=True,
                                 )
                             except Exception as _e:
                                 logger.debug("GAP-A owner notify failed: %s", _e)

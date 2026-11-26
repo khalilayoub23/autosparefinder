@@ -439,24 +439,31 @@ async def post_history_text(db, post_id: str) -> str:
     return "\n".join(lines)
 
 
-async def edit_post_text(db, post_id: str, new_text: str, source: str = "whatsapp") -> str:
-    """Owner edit of a NOA post — the ONE edit path for the WhatsApp `ערוך` command and the Telegram
-    "✏️ ערוך" button. Delegates to campaign_manager.update_post_content, which bumps content_version and
-    resets the post to pending_approval (a stale approval can never publish the edited text); nothing is
-    published until the owner approves again."""
+async def _edit_post(db, post_id: str, new_text: str, source: str = "whatsapp", actor: str = "owner") -> tuple:
+    """(ok, message, content_version). The ONE edit primitive for NOA posts (owner text, NOA rewrite on the owner's
+    request, Telegram button). campaign_manager.update_post_content bumps content_version and resets the post to
+    pending_approval, so a stale approval can never publish the edited text; nothing is published here."""
     from social.campaign_manager import update_post_content
     new_text = (new_text or "").strip()
     if not new_text:
-        return "הטקסט המתוקן ריק — לא שיניתי כלום."
+        return False, "הטקסט המתוקן ריק — לא שיניתי כלום.", None
     try:
-        res = await update_post_content(db, post_id=post_id, new_content=new_text, source=source, actor="owner")
+        res = await update_post_content(db, post_id=post_id, new_content=new_text, source=source, actor=actor)
     except Exception as exc:
         await db.rollback()
-        return f"⚠️ העריכה נכשלה: {str(exc)[:120]}"
+        return False, f"⚠️ העריכה נכשלה: {str(exc)[:120]}", None
     if not res:
-        return f"⚠️ לא ניתן לערוך את הפוסט ({_short(post_id)}) — לא נמצא או שכבר פורסם."
-    return (f"✏️ הפוסט עודכן ({_short(post_id)}, גרסה {res['content_version']}) וממתין לאישור מחדש.\n"
-            f"לפרסום: *אשר {_short(post_id)}* · לדחייה: *דחה {_short(post_id)}*\n\n{new_text[:600]}")
+        return False, f"⚠️ לא ניתן לערוך את הפוסט ({_short(post_id)}) — לא נמצא או שכבר פורסם.", None
+    return True, "", res["content_version"]
+
+
+async def edit_post_text(db, post_id: str, new_text: str, source: str = "whatsapp") -> str:
+    """Owner edit of a NOA post (WhatsApp typed/returned post, Telegram "✏️ ערוך" button) - see _edit_post."""
+    ok, msg, ver = await _edit_post(db, post_id, new_text, source=source)
+    if not ok:
+        return msg
+    return (f"✏️ הפוסט עודכן ({_short(post_id)}, גרסה {ver}) וממתין לאישור מחדש.\n"
+            f"לפרסום: *אשר {_short(post_id)}* · לדחייה: *דחה {_short(post_id)}*\n\n{new_text.strip()[:600]}")
 
 
 # ── rolling conversation memory (Redis) ───────────────────────────────────────
@@ -850,6 +857,7 @@ _HELP = (
     "• *פוסטים* — פוסטים של NOA שממתינים לאישור\n"
     "• *אשר [מזהה]* / *דחה [מזהה]* — אשר/דחה פוסט\n"
     "• *ערוך <מזהה> <טקסט מתוקן>* — מחליף את תוכן הפוסט וממתין לאישור מחדש\n"
+    "• *שנהפוסט <מזהה> <מה לשנות>* — NOA כותבת גרסה חדשה לפי הבקשה, לאישורך\n"
     "• *קמפיין [נושא]* — SHIRA בונה קמפיין, NOA מייצרת תוכן לאישורך\n"
     "• *ביצועים [מזהה]* — SHIRA מנתחת נתוני ביצועים אמיתיים ומחליטה על צעד המשך\n"
     "• *טוקן טיקטוק* — מצב אישור טיקטוק לאיסוף ביצועים, ואם צריך — קישור לאישור\n"
@@ -1935,9 +1943,16 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
     low = msg.lower()
 
     # Inert button self-test (maintenance/wa_interactive_selftest.py): proves a tap reached the console. No side effects.
-    _m_st = re.match(r"^בדיקת(אישור|דחייה|שינוי)\s+(\S+)\s*$", msg)
+    _m_st = re.match(r"^בדיקת(אישור|דחייה)\s+(\S+)\s*$", msg)
     if _m_st:
         return f"✅ בדיקת כפתורים: התקבלה הבחירה *{_m_st.group(1)}* ({_m_st.group(2)}). לא בוצעה שום פעולה."
+
+    # Resume Interaction continuations (agents/owner_continuations.py): the originating agent's own revise/ask path.
+    # A button follow-up, a poll vote and a typed command reach the same handler; a revision never approves anything.
+    from agents import owner_continuations as _oc
+    _cont = await _oc.run(msg, db)
+    if _cont is not None:
+        return _cont.render()
 
     # ── leave the current agent session → back to neutral console ─────────────
     if low in ("יציאה", "צא", "exit", "quit", "סיום", "חזרה", "back"):
@@ -2017,17 +2032,6 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         if not post:
             return "פורמט: *היסטוריה <מזהה>* (המזהה מהרשימה: *פוסטים*)."
         return await post_history_text(db, post["id"])
-    m_ed = re.match(r"^(edit|ערוך)\b\s*(\S+)?\s*(.*)$", msg, re.I | re.S)
-    if m_ed:
-        post = await _resolve_post(db, m_ed.group(2) or "") if m_ed.group(2) else None
-        if not post:
-            return "פורמט: *ערוך <מזהה> <הטקסט המתוקן>* (המזהה מהרשימה: *פוסטים*)."
-        if not (m_ed.group(3) or "").strip():
-            _cur = str(post.get("content") or post.get("caption") or "").strip()
-            return (f"✏️ עריכת פוסט {_short(post['id'])}. הנוסח הנוכחי:\n\n{_cur[:900]}\n\n"
-                    f"שלח את הנוסח החדש כך: *ערוך {_short(post['id'])} <הטקסט החדש>* "
-                    f"(או השב בציטוט להודעה הזו). הפוסט יחכה לאישור מחדש.")
-        return await edit_post_text(db, post["id"], m_ed.group(3))
     # An edited post returned WITHOUT the `ערוך <id>` prefix (id in the text, or clearly a revision of one pending
     # post) is that post's next version - never free chat (2026-11-13; agents/returned_post.py).
     from agents.returned_post import could_be_returned_post, match_returned_post
@@ -2195,8 +2199,13 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
     # STICKY SESSION: an explicit @agent switches AND pins the agent; an unprefixed
     # message continues with whoever you're already talking to (not a forced fall to AVI).
     switched = False
-    active = await _get_active_agent()
-    if explicit:
+    # A group @mention (routes/webhooks._handle_group_mention) is a separate conversation: it never reads or writes the
+    # owner's PRIVATE console history and never changes the private chat's sticky agent (#157 - no context leakage).
+    _is_group = source == "whatsapp_group"
+    active = None if _is_group else await _get_active_agent()
+    if _is_group:
+        pass
+    elif explicit:
         switched = (active != agent_key)
         await _set_active_agent(agent_key)
     elif active:
@@ -2211,7 +2220,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
     # "I told AVI guidelines for NOA — did NOA get them?": now she really does.)
     saved_note = ""
     is_directive = bool(_SAVE_INTENT.search(clean))
-    if is_noa and is_directive:
+    if is_noa and is_directive and not _is_group:   # standing guidelines are saved only from the private chat
         await _noa_guidelines_save(db, clean)
         saved_note = "\n\n📋 שמרתי את ההנחיה ואפעל לפיה מעכשיו. (לצפייה: כתוב *הנחיות*)"
 
@@ -2226,7 +2235,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
             g = await _noa_guidelines_get(db)
             if g:
                 system += ("\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g)
-        hist = await _load_history()
+        hist = [] if _is_group else await _load_history()
         def _fmt_turn(m):
             if m["role"] == "assistant":
                 atag = _AGENT_TAG.get(m.get("agent", ""), m.get("agent", "AGENT"))
@@ -2249,7 +2258,8 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply, "agent": agent_key}]
-        await _save_history(hist2)
+        if not _is_group:
+            await _save_history(hist2)
         tag = _AGENT_TAG.get(agent_key, "AVI")
         # On an explicit switch, confirm who you're now talking to (and how to leave).
         if switched:

@@ -34,18 +34,19 @@ def test_console_routes_quote_to_the_quoted_post(monkeypatch):
     async def fake_list(db, limit=25):
         return [{"id": A, "content": "old", "platforms": ["telegram"]}, {"id": B, "content": "other", "platforms": ["x"]}]
 
-    async def fake_edit(db, post_id, new_text, source="whatsapp"):
+    async def fake_edit(db, post_id, new_text, source="whatsapp", actor="owner"):
         calls.append((post_id, new_text))
-        return "EDITED"
+        return True, "", len(calls) + 1
 
     monkeypatch.setattr(oc, "_list_pending_posts", fake_list)
-    monkeypatch.setattr(oc, "edit_post_text", fake_edit)
+    # #157: the quoted revision becomes `ערוך <id> <text>` -> NOA's continuation handler -> `_edit_post`
+    monkeypatch.setattr(oc, "_edit_post", fake_edit)
     for txt in (LONG, LONG + " v2", LONG + " v3"):                       # several successive revisions
-        assert asyncio.run(oc._process_owner_message(txt, None, "whatsapp", NOTIF)) == "EDITED"
+        assert "ממתין לאישורך מחדש" in asyncio.run(oc._process_owner_message(txt, None, "whatsapp", NOTIF))
     assert [c[0] for c in calls] == [A, A, A]
     calls.clear()                                                         # unknown quoted id: nothing changes
     out = asyncio.run(oc._process_owner_message(LONG, None, "whatsapp", "x deadbeef y"))
-    assert calls == [] and out != "EDITED"
+    assert calls == [] and "ממתין לאישורך מחדש" not in out
 
 
 def test_bridge_and_webhook_forward_quote_context():

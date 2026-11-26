@@ -518,10 +518,14 @@ async def gate_paid_order(order, order_items, *, store=None, auth_store=None, no
         created += int(res["created"])
     if created and notify:
         try:
+            import owner_poll as _owner_poll
             await notify("orders", f"רכש ממתין לאישורך — {order.order_number}",
                          f"התקבל תשלום לקוח להזמנה {order.order_number}. הוכנו {created} הזמנות רכש לספקים "
                          "— שום דבר לא הוזמן ולא שולם. כתוב *רכש* לפרטים ולאישור.",
-                         severity="warning", alert_key=f"procurement_{order.id}", cooldown_s=30 * 86400)
+                         severity="warning", alert_key=f"procurement_{order.id}", cooldown_s=30 * 86400,
+                         # an owner decision request: delivered now (not the digest); the buttons are READ-ONLY -
+                         # approving a purchase order / payment stays the typed אשררכש / אשרתשלוםספק after the terms
+                         choices=_owner_poll.procurement_choices(), decision=True)
         except Exception:
             pass
     for r in await store.for_order(str(order.id)):

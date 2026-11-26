@@ -212,6 +212,13 @@ services:
       # 2FA delivery: WhatsApp (Baileys bridge) primary, Twilio SMS auto-fallback.
       WHATSAPP_2FA_PRIMARY: ${WHATSAPP_2FA_PRIMARY:-1}
       WHATSAPP_BRIDGE_URL: ${WHATSAPP_BRIDGE_URL:-http://whatsapp-bridge:3001/send}
+      # Owner interactive decisions / Resume Interaction / group mentions (#156/#157). All default OFF.
+      WA_INTERACTIVE_ENABLED: ${WA_INTERACTIVE_ENABLED:-0}
+      WA_GROUP_INBOUND_ENABLED: ${WA_GROUP_INBOUND_ENABLED:-0}
+      WA_GROUP_COMPOSER_ENABLED: ${WA_GROUP_COMPOSER_ENABLED:-0}
+      WA_COMPOSER_GROUP_JID: ${WA_COMPOSER_GROUP_JID:-}
+      WA_GROUP_EXPECTED_SUBJECT: ${WA_GROUP_EXPECTED_SUBJECT:-AutoSpareFinder}
+      OWNER_FOLLOWUP_TTL_S: ${OWNER_FOLLOWUP_TTL_S:-1800}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       STRIPE_ISSUING_WEBHOOK_SECRET: ${STRIPE_ISSUING_WEBHOOK_SECRET}
@@ -549,6 +556,9 @@ services:
     # the owner's PERSONAL number, which silently cut off every customer messaging
     # the business line. The bridge now refuses to pretend that is fine.
     - WHATSAPP_EXPECTED_NUMBER=972532426920
+    # Interactive owner buttons + group-mention inbound (#156/#157); default OFF = text + polls exactly as before.
+    - WA_INTERACTIVE_ENABLED=${WA_INTERACTIVE_ENABLED:-0}
+    - WA_GROUP_INBOUND_ENABLED=${WA_GROUP_INBOUND_ENABLED:-0}
     command: sh -c "npm install --silent && node index.js"
     ports:
     # LOCALHOST ONLY. POST /send has no authentication, so a 0.0.0.0 binding

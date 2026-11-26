@@ -34,3 +34,12 @@ export function toWireText(text, chosen) {
   }
   return { text: out, mentions: [...seen] }
 }
+
+/** Owner-facing text for the group API's failure modes (no group configured / wrong group / bridge down). */
+export function groupErrorText(status, detail) {
+  if (status === 409 && /not the AutoSpareFinder group/.test(String(detail || ''))) return 'הקבוצה המוגדרת אינה קבוצת AutoSpareFinder — לא נשלח כלום'
+  if (status === 409) return 'לא הוגדרה קבוצת AutoSpareFinder לשליחה'
+  if (status === 503) return 'WhatsApp לא מחובר כרגע — נסה שוב בעוד רגע'
+  if (status === 502) return 'קריאת חברי הקבוצה נכשלה — לחץ רענן'
+  return ''
+}

@@ -84,16 +84,18 @@ def test_concurrent_taps_execute_once():
     assert [r.status for r in run(both())].count("execute") == 1
 
 
-def test_followup_binds_next_text_then_reopens():
+def test_edit_tap_opens_resume_followup_bound_to_the_originating_task():
+    """Replaces the 2026-11-25 test that pinned the defective design (the follow-up text went to the generic console
+    with a context prefix). Now: the tap runs the read-only prompt, the next text resumes `<verb> <ref> <text>` once."""
     s = MemoryStore()
-    ix = run(oi.create_from_choices(s, [("a", "אשר p1")]))
-    ix.actions.append(oi.Action("change", "שינוי", ""))   # a change action without a command -> structured follow-up
-    r = tap(s, ix, "change")
-    assert r.status == "followup" and ix.state == "awaiting_input"
-    got = run(oi.take_followup(s, "תקצר את הכותרת"))
-    assert got and got[0].id == ix.id and "תקצר את הכותרת" in got[1] and "אל תבצע" in got[1]
-    assert ix.state == "open", "the revised proposal can be approved afterwards"
-    assert run(oi.take_followup(s, "הודעה אחרת")) is None, "no second binding"
+    ix = _mk(s)
+    r = tap(s, ix, "edit")
+    assert r.status == "followup" and r.command == "ערוך ab12cd34" and ix.state == "awaiting_input"
+    assert ix.continuation == {"verb": "ערוך", "ref": "ab12cd34", "agent": "NOA", "action": "edit"}
+    b = run(oi.bind_followup(s, "טקסט חדש לפוסט"))
+    assert b.status == "bound" and b.command == "ערוך ab12cd34 טקסט חדש לפוסט" and ix.state == "completed"
+    assert run(oi.bind_followup(s, "הודעה אחרת")) is None, "no second binding"
+    assert tap(s, ix, "approve").status == "reply", "the v1 buttons are dead once the revision was requested"
 
 
 def test_idempotent_creation_returns_same_open_interaction():
@@ -105,7 +107,9 @@ def test_idempotent_creation_returns_same_open_interaction():
 def test_group_text_never_carries_approvals():
     assert not oi.can_route_group_text("@972500 אשר ab12cd34")
     assert not oi.can_route_group_text("שלחמייל m1")
-    assert oi.can_route_group_text("נועה מה הסטטוס של הפוסטים?")
+    assert oi.can_route_group_text("נועה מה דעתך על הפוסטים של השבוע?")
+    for cmd in ("שנהפוסט ab12 קצר", "ערוךמייל m1 x", "ערוך ab12 x", "@972500 נועה עצור", "סטטוס", "הרץ משימה x", "מקורות"):
+        assert not oi.can_route_group_text(cmd), cmd
 
 
 # ── provider ────────────────────────────────────────────────────────────────────────────────────

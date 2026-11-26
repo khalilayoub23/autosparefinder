@@ -18,19 +18,22 @@ def _run(msg, monkeypatch, pending=(POST,)):
     async def fake_list(db, limit=25):
         return list(pending)
 
-    async def fake_edit(db, post_id, new_text):
+    async def fake_edit(db, post_id, new_text, source="whatsapp", actor="owner"):
         calls.append((post_id, new_text))
-        return "EDITED"
+        return True, "", 2
 
     monkeypatch.setattr(oc, "_list_pending_posts", fake_list)
-    monkeypatch.setattr(oc, "edit_post_text", fake_edit)
+    # #157: typed `ערוך` goes through the continuation handler -> the ONE edit primitive `_edit_post`
+    monkeypatch.setattr(oc, "_edit_post", fake_edit)
     reply = asyncio.run(oc._process_owner_message(msg, db=None))
     return reply, calls
 
 
 def test_whatsapp_edit_command_replaces_text(monkeypatch):
     reply, calls = _run("ערוך ce982985 טקסט חדש\nשורה שנייה", monkeypatch)
-    assert reply == "EDITED"
+    import owner_poll as _op
+    text, poll = _op.split(reply)
+    assert "גרסה 2" in text and "טקסט חדש" in text and poll["commands"][0] == "אשר ce982985", "revised proposal + new buttons"
     assert calls == [(POST["id"], "טקסט חדש\nשורה שנייה")]
 
 

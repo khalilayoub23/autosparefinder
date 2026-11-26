@@ -4517,6 +4517,7 @@ async def notify_owner(
     choices: "list | None" = None,
     event_keys: "list | None" = None,
     group: str = "",
+    decision: bool = False,
 ) -> dict:
     """The one function every proactive owner alert must call — health, harvest,
     orders, social, supplier. Gives every message a consistent
@@ -4598,8 +4599,6 @@ async def notify_owner(
     import owner_poll as _op
     if ref or choices:
         text = _op.layout(header, body, ref=ref)       # decision alerts only; every other alert is unchanged
-        if choices:
-            text = _op.attach(text, title, choices)
     else:
         text = f"{header}\n\n{body}" if body else header
     # Root-fix 2026-09-01: severity="critical" must bypass quiet hours.
@@ -4612,10 +4611,16 @@ async def notify_owner(
         # 2026-09-09) so a persistent condition that re-queues every sampling
         # cycle all night collapses to one delivery instead of bursting at 09:00.
         text = _omf.cap_message(text, int(os.getenv("OWNER_MSG_MAX_CHARS", "1200")), "(המשך בקונסולה)")
+        if choices:
+            # the choice trailer goes on AFTER the cap: capping first cut the trailer off every long alert (a NOA
+            # post longer than the cap lost its buttons/poll) - 2026-11-26
+            text = _op.attach(text, title, choices)
         import owner_digest as _od
         import owner_interactions as _oix
-        # An interactive DECISION (alert with choices, buttons enabled) is delivered now, never parked for the morning digest.
-        _interactive_decision = bool(choices) and _oix.enabled()
+        # An owner DECISION request is delivered now, never parked for the morning digest: an alert whose choices
+        # include a decision action (approve/reject/edit/change/cancel), or a caller-declared decision (e.g. procurement
+        # waiting for approval). Read-only list buttons alone do not make a routine alert immediate.
+        _interactive_decision = _oix.enabled() and (bool(decision) or _oix.has_decision(choices))
         if not _is_critical and not _interactive_decision and _od.enabled():
             # ROUTINE alert -> the durable morning digest (mission 3, 2026-11-25). Only severity "critical" keeps the
             # immediate path below. Redis down -> recorded=None and the alert is sent directly (never lost).
@@ -4950,14 +4955,38 @@ async def _noa_engagement_loop():
                 # WhatsApp every 15 min as long as ANYTHING was pending. The owner
                 # sees one notification per hour at most; the drafted count updates
                 # naturally if more arrive within the hour.
-                await notify_owner(
-                    "social",
-                    f"NOA — {drafted} תגובות ממתינות לתשובה",
-                    "לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*",
-                    severity="info",
-                    alert_key="noa_engagement_pending_reply",
-                    cooldown_s=3600,
-                )
+                # ONE pending draft = a record-level decision: show it in full and give it its own buttons (send /
+                # edit -> back to NOA's draft / skip). Several = the aggregate alert (no batch approval). 2026-11-26
+                _one_item, _eng_choices = None, None
+                try:
+                    async with async_session_factory() as _edb:
+                        _pend = await _eng.pending_for_owner(_edb, limit=2)
+                    if len(_pend) == 1:
+                        _one_item = _pend[0]
+                        _eng_choices = _owner_poll.inbox_choices(str(_one_item["id"]).replace("-", "")[:8])
+                except Exception as _pe:
+                    logger.debug("[noa_engagement] single-draft lookup skipped: %s", _pe)
+                if _one_item:
+                    await notify_owner(
+                        "social",
+                        f"NOA — תגובה ממתינה לאישורך ({_one_item.get('platform')})",
+                        f"👤 {_one_item.get('author') or 'לקוח'}\n💬 {str(_one_item.get('message') or '')[:300]}\n"
+                        f"✍️ טיוטת NOA: {str(_one_item.get('reply_text') or '')[:500]}",
+                        severity="info",
+                        alert_key=f"noa_engagement_item_{_one_item['id']}",
+                        cooldown_s=86400,
+                        ref=str(_one_item["id"]).replace("-", "")[:8],
+                        choices=_eng_choices,
+                    )
+                else:
+                    await notify_owner(
+                        "social",
+                        f"NOA — {drafted} תגובות ממתינות לתשובה",
+                        "לצפייה: כתוב *תגובות* · לאישור: *ענה <מזהה>*",
+                        severity="info",
+                        alert_key="noa_engagement_pending_reply",
+                        cooldown_s=3600,
+                    )
         except Exception as exc:
             logger.error("[noa_engagement] cycle failed: %s", exc)
         await asyncio.sleep(interval)

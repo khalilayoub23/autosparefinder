@@ -141,7 +141,7 @@ Severities: `critical` (immediate, bypasses quiet hours) · `error` 🟠 · `war
 | 18 | supplier country problem | `supplier_country_problem` | warning |
 | 19 | learned keywords (`db_cleanup_agent`) | `notify_backlog` | info |
 | 20 | NOA: post ready, pending posts, weekly brief, plan failed, coherence streak, campaign ready / publish failed, autonomous gate | per post / week / campaign | info / warning |
-| 21 | NOA engagement drafts | `noa_engagement_pending_reply`, 1 h (unchanged) | info |
+| 21 | NOA engagement drafts | `noa_engagement_pending_reply`, 1 h (N>1); #157: exactly one pending draft -> `noa_engagement_item_<id>`, 24 h, record-level buttons (decision, immediate) | info |
 | 22 | NOA daily Facebook report | per day; quiet day = `noa_eod_no_activity` (fingerprint, weekly reminder) | info |
 | 23 | Facebook session expired / restored | **`fb_session_expired`**, fingerprint = reason, 3 d reminder, resolved | warning |
 | 24 | group scan: discoveries, empty, not run, group comment result | `group_scan_*`; "not run" is skipped while #23 is open | info / warning |
@@ -162,7 +162,7 @@ remove **that payload** (`_WA_QUIET_REMOVE_LUA`) or update its attempts only whi
 
 ## 9. Verified inventory of owner-notification call sites (2026-11-24, #152)
 
-Counted with an AST scan (2026-11-25 update: **73 call sites** - three direct `_wa_send_update` report sends became digest events, see §11; the table below shows the 2026-11-24 count of 76 before that change) (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
+Counted with an AST scan (2026-11-26 #157: **74 call sites** - +1 single engagement-draft decision alert; 2026-11-25 update: 73 call sites - three direct `_wa_send_update` report sends became digest events, see §11; the table below shows the 2026-11-24 count of 76 before that change) (`tests/notification_inventory.py`: `notify_owner`, `_alert_owner`, `notify_backlog`,
 `resolve_owner_alert`, `_notify`, `_notify_res`, `_wa_send_update`, and the injected `notify` callable) over production
 code (tests/devtests/legacy excluded). The earlier "57 sites" and the audit's "69 call lines" were both stale/partial:
 the true number is **76 call sites in 12 files**. `tests/test_owner_alert_quality_2026_11.py::test_notification_source_inventory_is_complete`
@@ -327,7 +327,7 @@ agent keeps its own gate (`אשר`, `שלחמייל`, ...): a button is never a 
 approval of the revised proposal. Every response and every rejection reason is an `owner_interaction_events` row. Actions: approve אישור, reject דחייה,
 change שינוי, edit עריכה, details פרטים נוספים, recheck בדיקה חוזרת, continue המשך, cancel ביטול - only those backed by a registered command are offered.
 
-### 12.3 Agent coverage (verified by grep, not assumed)
+### 12.3 Agent coverage (verified by grep, not assumed) - SUPERSEDED by 13.3 (#157)
 | Agent / workflow | Owner request today | Buttons |
 |---|---|---|
 | NOA - post approval (`BACKEND_API_ROUTES.py` ~5788, `post_choices`) | typed `אשר/ערוך/דחה <id>` + poll | **YES** approve / edit / reject |
@@ -365,4 +365,80 @@ Rollback: unset the flags (instant: back to text+poll, no restart needed for the
 Dry run by default (prints the 3 actions אישור/דחייה/שינוי, sends nothing). Sending needs `--send --owner-approved <ref>`, `WA_INTERACTIVE_ENABLED=1`, migration 0043 and the new bridge build. The
 commands are inert (`בדיקתאישור|בדיקתדחייה|בדיקתשינוי <ref>` answer with a fixed acknowledgement, no LLM, no agent action). After the owner taps one button: `--verify <interaction_id>` prints the audit trail
 (created -> response, consumed action, WhatsApp message id). Pass = the right action id is recorded once and a second tap is refused.
-**Known limits:** a follow-up (`change`/`edit` without a registered command) binds the owner's next text to the interaction and hands the revised request to the console agent; there is no generic "resume task" API, so the originating agent continues only through its existing typed commands.
+**Known limits (#156) - FIXED in #157, see section 13.1:** the follow-up went to the generic console agent instead of the originating agent.
+
+## 13. Resume Interaction, group mentions completed, full decision coverage (mission 7, #157, 2026-11-26)
+
+### 13.1 Resume Interaction (Change / Edit / More info return to the ORIGINATING agent and task)
+Defect fixed: in #156 an Edit tap consumed the interaction and ran `ערוך <id>` (which only displays the text); a Change follow-up
+was handed to the generic console LLM with a context prefix. The originating agent never received the owner's change request.
+
+Lifecycle (`owner_interactions.py`, `owner_interaction_flow.py`, `agents/owner_continuations.py`, PII table `owner_interactions`):
+1. A button whose command verb is a **continuation verb** (`RESUMABLE` = `ערוך`, `שנהפוסט`, `ערוךתשובה`, `ערוךמייל`, `שאלספק`, `בדיקתשינוי`)
+   is NOT consumed by the tap. The tap runs the verb with only its ref (a read-only prompt that shows the current proposal), sends it with a
+   hint, and moves the row `open -> awaiting_input` with a persisted `continuation = {verb, ref, agent, action}`, `followup_expires_at`
+   (`OWNER_FOLLOWUP_TTL_S`, 30 min) and `prompt_message_id` (the WhatsApp id of the prompt).
+2. The owner's NEXT private text (`bind_followup`): a console command (`סטטוס`, `מיילים`, `אשר ...`, `@נועה ...`, any registered verb) passes through
+   untouched; `בטל` cancels (`awaiting_input -> open`, buttons usable again); a quote-reply to the prompt (or the original buttons) binds exactly
+   that interaction; exactly one pending request binds; **two or more without a quote = nothing is executed, the owner is asked to quote**.
+3. Binding is an atomic `awaiting_input -> completed` UPDATE (a redelivered message resumes once) and yields `<verb> <ref> <text>`, which the
+   **originating agent's own handler** runs (`agents/owner_continuations.py`), the same code a typed command reaches:
+   | verb | agent | what the text does | never does |
+   |---|---|---|---|
+   | `ערוך <post> <text>` | NOA | owner's exact new text -> `update_post_content` (version bump, back to pending) | publish |
+   | `שנהפוסט <post> <request>` | NOA | NOA rewrites from her owner-mode prompt + saved guidelines + the request, through `_finalize_noa_post` (G8 guards), attributed `actor=noa` | publish, invent prices |
+   | `ערוךתשובה <item> <text>` | NOA | replaces the engagement reply DRAFT | send it |
+   | `ערוךמייל <ref> <text>` | Email Agent | `owner_flow.revise_draft`: new Gmail draft (POST /drafts, allowlisted) in the same thread, same recipient + subject, read back and verified, then `replace_draft` swaps the row (conditional on the shown draft still being current; clears any earlier send approval). Refused when halted / sent / closed. The superseded draft stays in Gmail as a draft (no delete endpoint is allowed). | send (`שלחמייל` only) |
+   | `שאלספק <supplier> <question>` | NIR | answers from the candidate's stored record only (`supplier_sourcing.candidate_record`, secrets stripped); says when it does not know | activate, contact, order |
+   | `בדיקתשינוי <ref> <text>` | self-test | inert acknowledgement | anything |
+4. The revised proposal is returned with a choice trailer, so the WhatsApp chokepoint creates a **new interaction** whose idempotency key includes
+   the hash of the displayed text, and **supersedes** (expires) every older open interaction of the same agent + entity: a tap on a v1 message
+   can never approve v2. If the agent fails, the interaction is released (`completed -> open`) and the owner is told the request is still open.
+5. Group taps, non-owner taps and group text never bind or resume. An approval / commercial verb is never resumable (test pins it).
+Persistence: everything above is in Postgres; a backend restart between the tap and the text resumes correctly (real-Postgres test).
+
+### 13.2 Group participants, autocomplete and mentions
+* Bridge `GET /groups/:jid/participants` returns `{subject, size, participants:[{jid, lid, phone, admin, name, is_me}]}` from live `groupMetadata`
+  (`interactive.shapeParticipants`). WhatsApp group metadata carries no contact names: names are never guessed; the backend labels the owner
+  from the configured owner phone/LID, everyone else "משתתף N"; our own account (`is_me`) is excluded.
+* The ONE group: `WA_COMPOSER_GROUP_JID` (set to `120363428683447639@g.us`), else the updates group. Its LIVE subject must contain
+  `WA_GROUP_EXPECTED_SUBJECT` ("AutoSpareFinder") or the API answers 409 - a wrong JID is never used silently. The updates-group routing of
+  routine alerts (`owner:updates_group_jid`) is NOT changed by this.
+* Cache 60 s; the bridge posts `group_update` on `group-participants.update` and the backend drops the cache; a send always re-reads live
+  metadata and the bridge re-validates every mention JID (a removed participant = 400, cache dropped, composer refreshes).
+* Bridge down -> 503 (not cached); the composer shows the reason (no group / wrong group / not connected).
+* Inbound (`WA_GROUP_INBOUND_ENABLED`): only messages that mention THIS account, only in the configured group, only from the owner's JID (PN or
+  LID); conversation only - any console command, approval, revision, continuation or work trigger (`עצור`, `הרץ`, `מקורות` ...) is refused with
+  a pointer to the private chat. The reply is generated in the background. Group messages and taps never reach the customer chat path, flags on or off.
+
+### 13.3 Owner decision coverage (evidence: grep of every `notify_owner` producer, 2026-11-26)
+"Immediate" = bypasses the 09:30 digest (an alert with a decision action, or `decision=True`); quiet hours 09:00-21:00 still apply; critical unchanged.
+| Workflow / decision point | Existing behaviour | Owner interaction now | Status | Test |
+|---|---|---|---|---|
+| NOA post ready (`BACKEND_API_ROUTES` NOA loop, `post_choices`) | typed אשר/ערוך/דחה + buttons | approve / **NOA change (resume)** / **edit (resume)** / reject; buttons bound to the displayed version | DONE | test_owner_resume (NOA change/edit, supersede) |
+| NOA engagement reply drafts (`_noa_engagement_loop`) | aggregate "N drafts" (inbox_choices had no caller) | exactly ONE pending draft: shown in full + send / **edit draft (resume)** / skip; N>1: aggregate (no batch approval) | DONE | test_has_decision; test_engagement_edit_replaces_the_draft_and_never_sends |
+| NOA campaign ready (`BACKEND_AI_AGENTS` GAP-A) | text only, routine | decision (immediate) + read-only "pending posts" list; each post approved on its own | DONE | coexistence test (decision flag) |
+| NOA FB group-scan summary, EOD report, no-activity, week-plan failed | informational | none - no decision (drafts are approved per draft with `אשרתגובה`) | NO DECISION | - |
+| Email Agent important mail (`owner_flow.process_owner_updates`) | details / send / close | + **edit draft (resume, new verified Gmail draft)** | DONE | test_email_edit_* |
+| NIR sourcing candidate (`_supplier_sourcing_loop`) | one named candidate: approve / reject / list | approve / reject / **ask NIR (resume, read-only)** | DONE | test_nir_question_* |
+| BOAZ escalation (`boaz_tasks._alert`) | read-only buttons, routine digest | read-only (mail, task list), now `decision=True` (immediate) | DONE | coexistence test |
+| BOAZ procurement after a customer payment (`procurement.gate_paid_order`) | text, routine (would wait for 09:30) | `decision=True` (immediate) + read-only "רכש" details; **approving a PO / supplier payment stays typed** `אשררכש` / `אשרתשלוםספק` after reading the exact terms | DONE | test_choice_sets_are_record_bound |
+| Category keyword (verification, `db_cleanup_agent`) | daily batch text | exactly ONE new word: approve / reject / list (approve runs `אשרמילה <word>`, the evidence gate still decides); batch / reminder: digest, never a batch approval | DONE | test_has_decision |
+| Facebook session / FB group targets | owner action outside WhatsApp (cookie import) / `אשרגרופ` typed from the list | none: no record-level alert exists for group targets; cookie import is a server action | NO DECISION | - |
+| Marketing / advertising budget | admin API budget confirmation (`routes/admin.py`) | none in WhatsApp: no owner command exists; a budget button would be a new permission bound to an amount | NO DECISION (by design) | - |
+| AVI | conversational console; no approvals of its own | none (a button would be a new permission) | NO DECISION | - |
+| Health / harvest / orders monitor alerts | informational; manual-handling orders need work outside the system | none | NO DECISION | - |
+| Supplier outreach standing approval (`אשרפניותספקים`) | typed, no proactive alert | unchanged (commercial standing permission stays typed) | NO DECISION | - |
+
+### 13.4 Other defects fixed in #157
+* `notify_owner` capped the message (1200 chars) AFTER attaching the choice trailer - every long NOA post alert lost its buttons and poll. Cap first, then attach (test).
+* Read-only list buttons made a routine alert "immediate" (any `choices`); now only a decision action or `decision=True` does (test).
+* With `WA_GROUP_INBOUND_ENABLED=1` and the backend interactive flag off, a group mention fell through to the CUSTOMER chat path as sender "group"; a tap with the flag off did the same with an empty body. Both are dropped before the customer path now (webhook tests with a DB that fails on any use).
+* A group mention reused the owner's PRIVATE console history in its prompt (and could repeat private turns into the group), extended that history and moved the private chat's sticky agent; NOA directives from the group were saved as standing guidelines. Group conversations now never read/write private history, never change the sticky agent and never save guidelines (test).
+* The bridge's `group_update` (empty body) was dropped by the webhook's empty-message guard before cache invalidation; let through (test asserts the cache is dropped).
+* The group-mention reply blocked the webhook for up to 120 s (bridge timeout 90 s): now background with a strong reference.
+
+### 13.5 Configuration (all default OFF in docker-compose; production values live in `.env`)
+backend: `WA_INTERACTIVE_ENABLED`, `WA_GROUP_INBOUND_ENABLED`, `WA_GROUP_COMPOSER_ENABLED`, `WA_COMPOSER_GROUP_JID`, `WA_GROUP_EXPECTED_SUBJECT`, `OWNER_FOLLOWUP_TTL_S`;
+bridge: `WA_INTERACTIVE_ENABLED`, `WA_GROUP_INBOUND_ENABLED` (bridge reads them at start). Migration: PII `0043_owner_interactions` (amended
+before its first production apply: continuation columns + `completed` state).

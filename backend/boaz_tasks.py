@@ -265,7 +265,8 @@ async def _alert(notify, task: Dict[str, Any], text_: str) -> None:
         await notify("supplier", f"BOAZ צריך החלטה שלך — {str(task.get('title') or '')[:60]}",
                      f"{_he_boaz_reason(text_)}\nמשימה {task['id'][:8]} · כתוב *משימות בועז* לרשימה.",
                      severity="info", alert_key=f"boaz_task_{task['id']}", cooldown_s=30 * 86400, event_keys=keys,
-                     choices=_owner_poll.boaz_task_choices(art.get("email_ref") or "") or None)
+                     choices=_owner_poll.boaz_task_choices(art.get("email_ref") or "") or None,
+                     decision=True)   # "BOAZ needs your decision": immediate, not the digest (buttons read-only)
     except Exception:
         pass
 

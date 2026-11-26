@@ -6,8 +6,9 @@ Process: 1. refuses to send unless `--send` AND `--owner-approved <ref>` are giv
             WA_INTERACTIVE_ENABLED=1 in this process; 2. persists a SELFTEST interaction (אישור / דחייה / שינוי, inert commands
             `בדיקתאישור|בדיקתדחייה|בדיקתשינוי <ref>`) BEFORE sending; 3. sends one plain text + the buttons to OWNER_WHATSAPP_PHONE;
             4. `--verify <interaction_id>` reads the audit trail and the consumed action (no WhatsApp traffic).
+         The שינוי button opens a Resume follow-up: the owner's next text returns as `בדיקתשינוי <ref> <text>` (inert).
 Data Imported/Modified: PII DB owner_interactions / owner_interaction_events (one SELFTEST row) - only with --send.
-Data Sources: none. Missing Data Delegation: n/a. Last Updated: 2026-11-25
+Data Sources: none. Missing Data Delegation: n/a. Last Updated: 2026-11-26
 Prerequisites (deployment, owner approval): migration 0043 applied, bridge running the interactive.js build with WA_INTERACTIVE_ENABLED=1,
 backend with WA_INTERACTIVE_ENABLED=1. Nothing here executes an agent action: the commands only return an acknowledgement text.
 """
@@ -22,12 +23,13 @@ async def _verify(iid: str) -> int:
     from sqlalchemy import text
     from BACKEND_DATABASE_MODELS import pii_session_factory
     async with pii_session_factory() as s:
-        row = (await s.execute(text("SELECT id,agent,state,consumed_action,wa_message_id FROM owner_interactions WHERE id=:i"), {"i": iid})).mappings().first()
+        row = (await s.execute(text("SELECT id,agent,state,consumed_action,pending_action,wa_message_id,prompt_message_id,continuation "
+                                    "FROM owner_interactions WHERE id=:i"), {"i": iid})).mappings().first()
         ev = (await s.execute(text("SELECT kind, detail, at FROM owner_interaction_events WHERE interaction_id=:i ORDER BY at"), {"i": iid})).mappings().all()
     print("interaction:", dict(row) if row else None)
     for e in ev:
         print(" event:", e["kind"], e["detail"], e["at"])
-    return 0 if row and row["state"] == "consumed" else 1
+    return 0 if row and row["state"] in ("consumed", "completed") else 1
 
 
 async def _main(a) -> int:
@@ -35,7 +37,8 @@ async def _main(a) -> int:
         return await _verify(a.verify)
     import owner_interactions as oi
     ref = "T" + secrets.token_hex(3)
-    choices = [("אישור", f"בדיקתאישור {ref}"), ("דחייה", f"בדיקתדחייה {ref}"), ("שינוי", f"בדיקתשינוי {ref}")]
+    import owner_poll
+    choices = owner_poll.selftest_choices(ref)
     ix = oi.build(choices, task_ref=ref)
     print("agent:", ix.agent, "| actions:", [(x.id, x.label) for x in ix.actions], "| ref:", ref)
     if not a.send:

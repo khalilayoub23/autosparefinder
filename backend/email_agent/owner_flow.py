@@ -502,6 +502,55 @@ async def approve_and_send(store, client, todos, token: str, approver: str = "ow
             + (f" · {he_count(done, 'task')} נסגרו" if done else ""))
 
 
+async def revise_draft(store, client, token: str, new_body: str, *, mailbox: str,
+                       editor: str = "owner_whatsapp") -> tuple:
+    """The owner's revised reply text for ONE email (Resume Interaction, 2026-11-26). Creates a NEW Gmail draft in the
+    same thread with the same recipient and subject (POST /drafts - allowlisted; drafts are never updated or deleted,
+    so the superseded draft stays in Gmail as a draft), reads it back and verifies it, and only then swaps the row's
+    gmail_draft_id/draft_body. Nothing is sent: sending stays `שלחמייל <ref>` (owner approval). Returns (ok, text)."""
+    from email_agent import drafts as _drafts
+    from email_agent.normalize import normalize_message
+    row, err = await _one(store, token)
+    if err:
+        return False, err
+    r = ref(row)
+    if row.get("sent_at"):
+        return False, f"המייל {r} כבר נשלח — אין טיוטה לערוך."
+    if row.get("owner_closed_at"):
+        return False, f"המייל {r} סומן כטופל — אין טיוטה לערוך."
+    if not row.get("gmail_draft_id"):
+        return False, f"למייל {r} אין טיוטה ב-Gmail, לכן אין מה לערוך. אפשר לענות ישירות מ-Gmail ואז *סגורמייל {r}*."
+    body = (new_body or "").strip()
+    if not body:
+        return False, "הטקסט החדש ריק — לא שיניתי כלום."
+    if len(body) > 5000:
+        return False, "הטקסט ארוך מדי (מעל 5,000 תווים) — לא שיניתי כלום."
+    if not _control.read_control()["running"]:
+        return False, "סוכן המיילים עצור (halt) — לא נוצרה טיוטה חדשה."
+    try:
+        email = normalize_message(await asyncio.to_thread(client.get_message, row["gmail_message_id"]), mailbox)
+        if not email.reply_address:
+            return False, f"למייל {r} אין כתובת להשבה — לא נוצרה טיוטה."
+        draft = _drafts.Draft(to=email.reply_address, subject=row.get("draft_subject") or _drafts._reply_subject(email.subject),
+                              body=body, language=_drafts.detect_language(body), action="owner_edit",
+                              reason="owner revised the draft text", facts_used={})
+        created = await asyncio.to_thread(client.create_draft, _drafts.build_rfc822(draft, email, mailbox), email.thread_id)
+        draft_id = str(created["id"])
+        verified = _drafts.verify_gmail_draft(await asyncio.to_thread(client.get_draft, draft_id), draft, email, draft_id)
+    except _control.Halted:
+        return False, "סוכן המיילים נעצר באמצע — הטיוטה הקודמת נשארה."
+    except GmailError as e:
+        return False, f"❌ יצירת הטיוטה המתוקנת נכשלה: {safe_error(e, 160)}. הטיוטה הקודמת נשארה."
+    if not verified.get("ok"):
+        return False, (f"❌ הטיוטה המתוקנת ל-{r} לא עברה בדיקה אחרי יצירה ({', '.join(k for k, v in verified.get('checks', {}).items() if not v)}). "
+                       "הטיוטה הקודמת נשארה בתוקף.")
+    if not await store.replace_draft(row["id"], draft_id, body, previous_draft_id=row["gmail_draft_id"],
+                                     verification=verified, editor=editor):
+        return False, f"המייל {r} טופל בינתיים — הטיוטה החדשה לא נקשרה אליו."
+    return True, (f"✏️ הטיוטה למייל {r} עודכנה ({row.get('sender_email') or '?'}) — עדיין לא נשלחה.\n\n{body[:900]}\n\n"
+                  f"לשליחה: *שלחמייל {r}* · לעריכה נוספת: *ערוךמייל {r}*")
+
+
 async def open_tasks_text(todos) -> str:
     rows = await todos.open_email_tasks(15)
     if not rows:

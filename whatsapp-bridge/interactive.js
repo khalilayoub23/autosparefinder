@@ -95,3 +95,15 @@ export function wrapForRelay(msg) {
   const inner = typeof msg.toJSON === 'function' ? msg.toJSON() : msg
   return { viewOnceMessage: { message: { messageContextInfo: { deviceListMetadata: {}, deviceListMetadataVersion: 2 }, ...inner } } }
 }
+
+// Participant list for the mention composer: the JID WhatsApp uses as the mention target, the LID and phone-number
+// forms when the server provides them, admin flag, and whether it is THIS account. No guessed names: group metadata
+// carries none (p.name/p.notify are passed through only if a client ever supplies them).
+export function shapeParticipants(participants, meIds = []) {
+  const me = new Set(meIds.filter(Boolean).map((x) => String(x).split(':')[0].split('@')[0]))
+  return (participants || []).map((p) => {
+    const ids = [p.id, p.lid, p.phoneNumber].filter(Boolean).map((x) => String(x).split(':')[0].split('@')[0])
+    return { jid: p.id, lid: p.lid || null, phone: p.phoneNumber || null, admin: p.admin || null,
+      name: p.name || p.notify || '', is_me: ids.some((x) => me.has(x)) }
+  })
+}

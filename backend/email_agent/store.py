@@ -165,6 +165,15 @@ class InMemoryStore:
         if requires_human:
             r["requires_human"] = True
 
+    async def replace_draft(self, row_id: str, draft_id: str, body: str, *, previous_draft_id: str,
+                            verification: Dict[str, Any], editor: str) -> bool:
+        r = self._by_id(row_id)
+        if r.get("sent_at") or r.get("owner_closed_at") or r.get("gmail_draft_id") != previous_draft_id:
+            return False
+        r.update(gmail_draft_id=draft_id, draft_body=body, send_approved_at=None, send_approved_by=None, send_error=None)
+        r.setdefault("owner_edits", []).append({"by": editor, "previous_draft_id": previous_draft_id, "ok": verification.get("ok")})
+        return True
+
     async def mark_send_approved(self, row_id: str, by: str) -> None:
         r = self._by_id(row_id)
         r["send_approved_at"], r["send_approved_by"] = self._now(), by
@@ -364,6 +373,25 @@ class PgStore:
         await self._exec("UPDATE email_agent_messages SET supplier_route = CAST(:r AS jsonb), supplier_routed_at = NOW(), "
                          "requires_human = requires_human OR :h, updated_at = NOW() WHERE id = CAST(:i AS uuid)",
                          {"i": row_id, "r": json.dumps(route, default=str), "h": bool(requires_human)})
+
+    async def replace_draft(self, row_id: str, draft_id: str, body: str, *, previous_draft_id: str,
+                            verification: Dict[str, Any], editor: str) -> bool:
+        """Swap to the owner's revised, verified Gmail draft. Conditional on the draft the owner was shown still being
+        the current one and the mail still open; clears any earlier send approval (it approved other text)."""
+        import json as _json
+        from sqlalchemy import text
+        edit = _json.dumps([{"by": editor[:40], "previous_draft_id": previous_draft_id, "draft_id": draft_id,
+                             "checks": verification.get("checks", {}), "at": datetime.now(timezone.utc).isoformat()}])
+        async with self._session() as db:
+            res = await db.execute(text(
+                "UPDATE email_agent_messages SET gmail_draft_id = :d, draft_body = :b, send_approved_at = NULL, "
+                "send_approved_by = NULL, send_error = NULL, updated_at = NOW(), "
+                "verification = jsonb_set(COALESCE(verification, '{}'::jsonb), '{owner_edits}', "
+                "COALESCE(verification->'owner_edits', '[]'::jsonb) || CAST(:e AS jsonb)) "
+                "WHERE id = CAST(:i AS uuid) AND gmail_draft_id = :p AND sent_at IS NULL AND owner_closed_at IS NULL"),
+                {"d": draft_id, "b": body, "e": edit, "i": row_id, "p": previous_draft_id})
+            await db.commit()
+            return (res.rowcount or 0) == 1
 
     async def mark_send_approved(self, row_id: str, by: str) -> None:
         await self._exec("UPDATE email_agent_messages SET send_approved_at = NOW(), send_approved_by = :b, "

@@ -405,6 +405,28 @@ async def _one_candidate(conn, id_prefix: str, *, pending_only: bool):
     return rows[0], None
 
 
+async def candidate_record(id_prefix: str, conn=None) -> dict:
+    """Read-only: the full stored record of ONE NIR candidate (for the owner's "more info" question). Never changes it."""
+    own = False
+    if conn is None:
+        conn = await _connect(); own = True
+    try:
+        row, err = await _one_candidate(conn, id_prefix, pending_only=False)
+        if err:
+            return {"ok": False, "error": err}
+        r = await conn.fetchrow(
+            """SELECT id::text AS id, name, website, country, reliability_score, is_active, created_at,
+                      credentials - 'api_key' - 'token' - 'password' - 'secret' AS credentials
+               FROM suppliers WHERE id = CAST($1 AS uuid)""", row["id"])
+        out = dict(r)
+        cred = out.get("credentials")
+        out["credentials"] = json.loads(cred) if isinstance(cred, str) else (cred or {})
+        return {"ok": True, "record": out}
+    finally:
+        if own:
+            await conn.close()
+
+
 async def approve_supplier(id_prefix: str, conn=None, *, approved_by: str = "owner_whatsapp",
                            auth_store=None) -> dict:
     """Owner activation of ONE NIR candidate. Records a supplier_activation authorization (the owner's command

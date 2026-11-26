@@ -112,30 +112,54 @@ def late_footer(text: str, queued_at: str) -> str:
 
 
 # ── choice sets (labels are the taps; commands are the SAME typed commands) ─────────────────
+# Continuation verbs (ערוך / שנהפוסט / ערוךמייל / ערוךתשובה / שאלספק) open a follow-up: the owner's next text returns to
+# the originating agent (owner_interactions.RESUMABLE, agents/owner_continuations.py).
 def post_choices(post_id: str) -> list[Choice]:
-    return [("✅ אשר ופרסם", f"אשר {post_id}"), ("✏️ ערוך", f"ערוך {post_id}"),
-            ("❌ דחה", f"דחה {post_id}")]
+    return [("✅ אשר ופרסם", f"אשר {post_id}"), ("🔁 NOA תשנה", f"שנהפוסט {post_id}"),
+            ("✏️ ערוך בעצמי", f"ערוך {post_id}"), ("❌ דחה", f"דחה {post_id}")]
 
 
 def email_choices(ref: str, *, has_draft: bool) -> list[Choice]:
     out: list[Choice] = [(f"📖 פרטים", f"מייל {ref}")]
     if has_draft:
         out.append(("✅ שלח טיוטה", f"שלחמייל {ref}"))
+        out.append(("✏️ ערוך טיוטה", f"ערוךמייל {ref}"))
     out.append(("☑️ סגור", f"סגורמייל {ref}"))
     return out
 
 
 def inbox_choices(item_id: str) -> list[Choice]:
-    return [("✅ שלח תשובה", f"ענה {item_id}"), ("⏭️ דלג", f"דלג {item_id}")]
+    return [("✅ שלח תשובה", f"ענה {item_id}"), ("✏️ ערוך תשובה", f"ערוךתשובה {item_id}"), ("⏭️ דלג", f"דלג {item_id}")]
 
 
 def supplier_candidate_choices(supplier_id: str) -> list[Choice]:
     """NIR: ONE named candidate (activation never implies messaging, ordering or paying - see supplier_authorization)."""
     ref = str(supplier_id or "")[:8]
-    return [("✅ הפעל ספק", f"אשרספק {ref}"), ("❌ דחה", f"דחהספק {ref}"), ("📋 ספקים", "ספקים")] if ref else []
+    return [("✅ הפעל ספק", f"אשרספק {ref}"), ("❌ דחה", f"דחהספק {ref}"), ("❓ שאל את NIR", f"שאלספק {ref}")] if ref else []
 
 
 def boaz_task_choices(email_ref: str) -> list[Choice]:
     """BOAZ escalation about a supplier's mail: read it, or re-list BOAZ's open tasks. Read-only commands; any reply,
     offer, purchase order or payment stays a separate typed owner approval (supplier_authorization)."""
     return [("📖 קרא את המייל", f"מייל {email_ref}"), ("🔁 משימות בועז", "משימות בועז")] if email_ref else []
+
+
+def procurement_choices() -> list[Choice]:
+    """Procurement prepared after a customer payment: read-only details. Approving a purchase order or a supplier
+    payment stays the typed `אשררכש <id>` / `אשרתשלוםספק <id>` after the owner has read the exact terms."""
+    return [("📋 פרטי הרכש", "רכש"), ("🔁 משימות בועז", "משימות בועז")]
+
+
+def keyword_choices(word: str) -> list[Choice]:
+    """ONE new category keyword (record-level). A batch alert gets only the list button - never a batch approval."""
+    w = " ".join(str(word or "").split())
+    return [("✅ אשר מילה", f"אשרמילה {w}"), ("❌ דחה מילה", f"דחהמילה {w}"), ("📋 כל המילים", "מילים")] if w else []
+
+
+def list_choices(command: str, label: str) -> list[Choice]:
+    """A single read-only 'show me the list' action for an aggregate alert (N items): no record is decided from it."""
+    return [(label, command), ("📊 סטטוס", "סטטוס")]
+
+
+def selftest_choices(ref: str) -> list[Choice]:
+    return [("אישור", f"בדיקתאישור {ref}"), ("דחייה", f"בדיקתדחייה {ref}"), ("שינוי", f"בדיקתשינוי {ref}")]

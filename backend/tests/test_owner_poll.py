@@ -15,8 +15,9 @@ def _alert():
 
 def test_roundtrip_and_validation():
     text, poll = op.split(_alert())
-    assert poll["values"] == ["✅ אשר ופרסם", "✏️ ערוך", "❌ דחה"]
-    assert poll["commands"] == ["אשר ab12cd34", "ערוך ab12cd34", "דחה ab12cd34"]
+    # #157: NOA change (resume to NOA) + own edit (resume) between approve and reject
+    assert poll["values"] == ["✅ אשר ופרסם", "🔁 NOA תשנה", "✏️ ערוך בעצמי", "❌ דחה"]
+    assert poll["commands"] == ["אשר ab12cd34", "שנהפוסט ab12cd34", "ערוך ab12cd34", "דחה ab12cd34"]
     assert "ASFPOLL" not in text and text.startswith("*📣") and "🆔 ab12cd34" in text
     # one option is not a poll; the alert is the plain text
     assert op.attach("t", "n", [("a", "b")]) == "t"
@@ -43,7 +44,7 @@ def test_late_footer_keeps_poll_last():
     routes = importlib.import_module("BACKEND_API_ROUTES")
     out = routes._late_footer(_alert(), "13/11 02:01")
     text, poll = op.split(out)
-    assert text.rstrip().endswith("_🌙 נשמר משעות הלילה 13/11 02:01_") and poll and len(poll["values"]) == 3
+    assert text.rstrip().endswith("_🌙 נשמר משעות הלילה 13/11 02:01_") and poll and len(poll["values"]) == 4
     assert not text.startswith("🌙"), "late note is a footer, not a leading bracket line"
     plain = routes._late_footer("hello", "13/11 02:01")
     assert plain == "🌙 [נשלח מאוחר — נשמר משעות הלילה 13/11 02:01]\nhello", "legacy banner unchanged for non-poll"

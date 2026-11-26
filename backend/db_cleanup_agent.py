@@ -736,7 +736,13 @@ async def _notify_owner_pending_keywords(pending: list, *, now_ts: float | None 
             title = f"תזכורת: {plan['total']:,} מילות סיווג ממתינות לאישורך"
             body = ((f"אין מילים חדשות מאז {since_txt}. " if since_txt else "אין מילים חדשות. ")
                     + f"הוותיקה ממתינה מ-{oldest}.\n{top}{legend}\nכתוב *מילים* לרשימה ואישור.")
-        res = await notify_owner("harvest", title, body, severity="info")
+        # Exactly ONE new word = a record-level decision with its own buttons (approve runs the same `אשרמילה <word>`,
+        # so the evidence gate still decides). A batch or a reminder keeps the digest path - never a batch approval.
+        _kw_choices = None
+        if plan["send"] == "new" and len(plan["new"]) == 1:
+            import owner_poll as _op
+            _kw_choices = _op.keyword_choices(plan["new"][0])
+        res = await notify_owner("harvest", title, body, severity="info", choices=_kw_choices)
         if (res or {}).get("ok"):
             await _nb.save_state(redis_client, "keywords", current, plan, now_ts=now_ts)
         return plan
