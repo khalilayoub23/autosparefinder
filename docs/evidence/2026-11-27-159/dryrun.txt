@@ -1,0 +1,4 @@
+ Container autospare_backend Recreate 
+ Container autospare_backend Recreated 
+ Container 8659956b0855_autospare_backend Starting 
+ Container 8659956b0855_autospare_backend Started 

@@ -1,0 +1,11 @@
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=deploy-159: preflight SAFE (fresh, nonce verified)
+time="2026-11-27T13:22:17+01:00" level=warning msg="volume \"autosparefinder_meili_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-27T13:22:17+01:00" level=warning msg="volume \"autosparefinder_redis_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-27T13:22:17+01:00" level=warning msg="volume \"autosparefinder_upload_files\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-27T13:22:17+01:00" level=warning msg="volume \"autosparefinder_postgres_pii_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+time="2026-11-27T13:22:17+01:00" level=warning msg="volume \"autosparefinder_postgres_catalog_data\" already exists but was not created by Docker Compose. Use `external: true` to use an existing volume"
+ Container autospare_backend Recreate 
+ Container autospare_backend Recreated 
+ Container autospare_backend Starting 
+ Container autospare_backend Started 

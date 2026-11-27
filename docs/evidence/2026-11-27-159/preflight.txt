@@ -1,0 +1,16 @@
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=pre_restart: preflight SAFE (fresh, nonce verified)
+=== PRE-RESTART CAPTURE ===
+{
+  "jobs": null,
+  "workers": [],
+  "timestamp": "2026-11-27T12:21:59Z"
+}
+[pre_restart] 0 worker(s) recorded with exact arguments in /app/state/worker_state.json
+
+State saved to /tmp/restart_state.json
+Closing in-flight jobs (job_registry running → superseded)...
+  marked superseded
+Sending SIGTERM to active importers...
+[restart_workers] stop: no managed importer/scraper process is running
+=== PRE-RESTART COMPLETE ===

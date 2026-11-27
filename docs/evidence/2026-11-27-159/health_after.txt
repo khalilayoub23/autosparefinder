@@ -1,0 +1,4 @@
+[HealthMonitor] Pass complete — all services OK
+[HealthMonitor] ALERT: worker stalled — המחזור המתוכנן של 05:00 לא התחיל (מחזורים: 01:00,03:00,05:00) (night job: None)
+[HealthMonitor] Pass complete — all services OK
+[HealthMonitor] ALERT: worker stalled — המחזור המתוכנן של 05:00 לא התחיל (מחזורים: 01:00,03:00,05:00) (night job: None)
