@@ -4848,6 +4848,21 @@ DB_AGENT_RUN_TIMES_IL = os.getenv("DB_AGENT_RUN_TIMES_IL", "01:00,03:00,05:00")
 # A missed slot (backend down / lock busy / deferred) is caught up only this long after it; later
 # than that the cycle waits for the next slot instead of running at an unplanned hour.
 DB_AGENT_CATCHUP_WINDOW_S = float(os.getenv("DB_AGENT_CATCHUP_WINDOW_S", "7200"))
+# A slot held back ONLY because a memory-heavy night-pipeline job was running (owner option A,
+# 2026-11-27) may still start after its catch-up window, as soon as that job ends, but never
+# after this Israel time on the slot's own date. Without it, category_discovery (~2 h) outlasted
+# the 2 h window and one of the three night cycles was lost or late almost every night since
+# the 2026-11-18 move to 01:00/03:00/05:00.
+DB_AGENT_DEFER_CUTOFF_IL = os.getenv("DB_AGENT_DEFER_CUTOFF_IL", "07:30")
+
+
+def _defer_cutoff_utc(slot: datetime) -> datetime:
+    """DB_AGENT_DEFER_CUTOFF_IL on the slot's own Israel calendar date, as aware UTC."""
+    from datetime import time as _dtime
+    from local_schedule import parse_times, LOCAL_TZ
+    (h, m), = parse_times(DB_AGENT_DEFER_CUTOFF_IL)
+    day = slot.astimezone(LOCAL_TZ).date()
+    return datetime.combine(day, _dtime(h, m), tzinfo=LOCAL_TZ).astimezone(timezone.utc)
 
 
 async def _last_run_started(get_db_fn) -> Optional[datetime]:
@@ -4861,9 +4876,12 @@ async def _last_run_started(get_db_fn) -> Optional[datetime]:
 
 
 def _due_slot(times, last_started: Optional[datetime], served: Optional[datetime],
-              now: Optional[datetime] = None) -> Optional[datetime]:
+              now: Optional[datetime] = None,
+              night_deferred: Optional[datetime] = None) -> Optional[datetime]:
     """The slot to run now, or None. Due = the most recent slot, no run started at/after it, not
-    already attempted by this process, and still inside the catch-up window."""
+    already attempted by this process, and still inside the catch-up window — or, when this
+    process held that very slot back for a night-pipeline job (`night_deferred`), not yet past
+    DB_AGENT_DEFER_CUTOFF_IL on the slot's date."""
     from local_schedule import last_slot_utc
     now = now or datetime.now(timezone.utc)
     slot = last_slot_utc(times, now)
@@ -4872,7 +4890,8 @@ def _due_slot(times, last_started: Optional[datetime], served: Optional[datetime
     if last_started is not None and last_started >= slot:
         return None
     if (now - slot).total_seconds() > DB_AGENT_CATCHUP_WINDOW_S:
-        return None
+        if night_deferred != slot or now > _defer_cutoff_utc(slot):
+            return None
     return slot
 
 
@@ -4884,16 +4903,20 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     # Give container_start.sh time to clear stale Redis locks before first run
     await asyncio.sleep(90)
     times = parse_times(DB_AGENT_RUN_TIMES_IL)
-    logger.info("DB update agent background loop started (slots %s Israel, catch-up window %.0f min)",
-                ",".join(f"{h:02d}:{m:02d}" for h, m in times), DB_AGENT_CATCHUP_WINDOW_S / 60)
+    parse_times(DB_AGENT_DEFER_CUTOFF_IL)   # a malformed cutoff fails here, not mid-night
+    logger.info("DB update agent background loop started (slots %s Israel, catch-up window %.0f min, "
+                "night-pipeline deferral until %s Israel)",
+                ",".join(f"{h:02d}:{m:02d}" for h, m in times), DB_AGENT_CATCHUP_WINDOW_S / 60,
+                DB_AGENT_DEFER_CUTOFF_IL)
     served: Optional[datetime] = None
+    night_deferred: Optional[datetime] = None   # slot this process held back for a night job
     while True:
         try:
             last_started = await _last_run_started(get_db_fn)
         except Exception as _lexc:          # unknown history: only the in-process memory applies
             logger.warning("run_all_tasks: could not read last start (%s)", _lexc)
             last_started = None
-        slot = _due_slot(times, last_started, served)
+        slot = _due_slot(times, last_started, served, night_deferred=night_deferred)
         if slot is None:
             nxt = next_slot_utc(times)
             wait = max(1.0, (nxt - datetime.now(timezone.utc)).total_seconds())
@@ -4935,7 +4958,10 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
                 import night_pipeline as _np
                 _np_job = await _np.running_job()
                 if _np_job in _np.MEM_HEAVY_JOBS:
-                    logger.info("run_all_tasks deferred — night pipeline is running %s", _np_job)
+                    night_deferred = slot
+                    logger.info("run_all_tasks deferred — night pipeline is running %s "
+                                "(slot %s may still start until %s Israel)", _np_job,
+                                slot.astimezone(LOCAL_TZ).strftime("%H:%M"), DB_AGENT_DEFER_CUTOFF_IL)
                     await asyncio.sleep(600)
                     continue
             except Exception as _npexc:     # never let the guard stop maintenance

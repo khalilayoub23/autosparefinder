@@ -6923,11 +6923,24 @@ async def _health_monitor_loop():
                                 f"עבודת הלילה *{_np_blocker}*, שעדיין רצה.\n"
                                 f"לכל עבודת לילה יש מגבלת זמן והיא תבוטל אוטומטית אם תחרוג ממנה.")
                         else:
-                            _alert_title = "Worker db_update_agent: תקוע באמת"
-                            _alert_msg = (
-                                f"db_update_agent: {_stall_reason}.\n"
-                                f"פעולה: docker restart autospare_backend"
-                            )
+                            # 2026-11-27: this used to say "docker restart" for both cases. A
+                            # restart never runs a missed slot (it is outside the catch-up window),
+                            # and a raw restart is refused by the restart guard anyway.
+                            if _hb_row and str(_hb_row[0]) == "running":
+                                _alert_title = "Worker db_update_agent: תקוע באמת"
+                                _alert_msg = (
+                                    f"db_update_agent: {_stall_reason}.\n"
+                                    f"ה-watchdog יסמן את המחזור כנכשל אוטומטית. הפעלה מחדש רק דרך "
+                                    f"pre_restart.sh ו-guarded_restart.sh.")
+                            else:
+                                import db_update_agent as _dua2
+                                from local_schedule import parse_times as _pt2, next_slot_utc as _ns2, LOCAL_TZ as _ltz2
+                                _nxt = _ns2(_pt2(_dua2.DB_AGENT_RUN_TIMES_IL)).astimezone(_ltz2)
+                                _alert_title = "db_update_agent: מחזור מתוכנן הוחמץ"
+                                _alert_msg = (
+                                    f"db_update_agent: {_stall_reason}.\n"
+                                    f"המחזור הבא ירוץ אוטומטית ב-{_nxt:%H:%M}. אין צורך בהפעלה מחדש: "
+                                    f"היא לא מריצה מחזור שהוחמץ.")
                         print(f"[HealthMonitor] ALERT: worker stalled — {_stall_reason} (night job: {_np_blocker})")
                         # A persisting condition: first alert, then a reminder every 6 h (was
                         # hourly), and one "recovered" message when it clears.

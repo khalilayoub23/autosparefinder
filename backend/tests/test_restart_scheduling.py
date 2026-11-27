@@ -84,7 +84,7 @@ def test_both_loops_use_the_restart_safe_delay():
     # more strictly: the run decision comes from job_registry history (_last_run_started) and the slot
     # schedule (_due_slot: catch-up only inside the window) — never from the container start.
     assert "interval_hours * 3600" not in body
-    assert "_last_run_started(get_db_fn)" in body and "_due_slot(times, last_started, served)" in body
+    assert "_last_run_started(get_db_fn)" in body and "_due_slot(times, last_started, served, night_deferred=night_deferred)" in body
     assert body.index("await asyncio.sleep(90)") < body.index("_due_slot(")             # lock-clear settle kept
     assert "job_name = 'run_all_tasks'" in agent
 

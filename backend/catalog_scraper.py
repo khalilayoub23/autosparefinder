@@ -3910,6 +3910,40 @@ async def _search_category_query_multisource(
     return results
 
 
+# category_discovery's own log (owner, 2026-11-27). On 2026-11-27 the job ran 4.5 h instead of its
+# usual 2 h and was cancelled by the night pipeline's deadline; its stdout died with the 09:03
+# backend recreate, so nothing showed WHERE it spent the time. The file lives on the worker_state
+# volume (survives restarts); every search is logged before and after it runs, so a hang shows up
+# as a "start" line with no matching "done" line.
+CATEGORY_DISCOVERY_LOG = os.getenv("CATEGORY_DISCOVERY_LOG", "/app/state/logs/category_discovery.log")
+_cd_file_logger: Optional[logging.Logger] = None
+
+
+def _cd_log(msg: str) -> None:
+    """One line to stdout and to CATEGORY_DISCOVERY_LOG (rotating, 5 MB x 3), Israel time.
+    Never raises: a logging problem must not stop the job."""
+    global _cd_file_logger
+    print(f"[CategoryDiscovery] {msg}")
+    try:
+        if _cd_file_logger is None:
+            from logging.handlers import RotatingFileHandler
+            Path(CATEGORY_DISCOVERY_LOG).parent.mkdir(parents=True, exist_ok=True)
+            _lg = logging.getLogger("category_discovery_file")
+            _lg.propagate = False
+            _lg.setLevel(logging.INFO)
+            _target = os.path.abspath(CATEGORY_DISCOVERY_LOG)
+            if not any(getattr(h, "baseFilename", None) == _target for h in _lg.handlers):
+                _h = RotatingFileHandler(CATEGORY_DISCOVERY_LOG, maxBytes=5_000_000, backupCount=3,
+                                         encoding="utf-8")
+                _h.setFormatter(logging.Formatter("%(message)s"))
+                _lg.addHandler(_h)
+            _cd_file_logger = _lg
+        from local_schedule import LOCAL_TZ
+        _cd_file_logger.info(f"{datetime.now(LOCAL_TZ):%Y-%m-%d %H:%M:%S %Z} {msg}")
+    except Exception:
+        pass
+
+
 async def _run_category_discovery() -> Dict[str, Any]:
     """Ensure each active manufacturer has a minimum amount of core categories."""
     if not CATEGORY_DISCOVERY_ENABLED:
@@ -3953,6 +3987,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
     if _cd_job_id:
         _cd_hb_task = asyncio.create_task(_cd_heartbeat_loop(), name="category_discovery_hb")
     _cd_status, _cd_err = "dead", None
+    _cd_started = datetime.utcnow()
 
     try:
         async with scraper_session_factory() as db:
@@ -3985,11 +4020,15 @@ async def _run_category_discovery() -> Dict[str, Any]:
                 _rot = datetime.utcnow().toordinal() % len(manufacturers)
                 manufacturers = manufacturers[_rot:] + manufacturers[:_rot]
             report["manufacturers_total"] = len(manufacturers)
+            _cd_log(f"start: {len(manufacturers)} manufacturers, budget {_budget_s}s, "
+                    f"memory floor {_min_avail_mb:.0f} MB, first={manufacturers[0] if manufacturers else '-'}")
 
-            for manufacturer in manufacturers:
+            for _m_idx, manufacturer in enumerate(manufacturers, 1):
                 if _time.monotonic() - _t0 > _budget_s:
                     report["truncated"] = f"time budget {_budget_s}s reached"
                     break
+                _cd_log(f"manufacturer {_m_idx}/{len(manufacturers)} {manufacturer} "
+                        f"(elapsed {_time.monotonic() - _t0:.0f}s, inserted so far {report['total_inserted']})")
                 try:
                     from night_pipeline import _read_host_avail_mb
                     _avail = _read_host_avail_mb()
@@ -4012,6 +4051,7 @@ async def _run_category_discovery() -> Dict[str, Any]:
                     # minimum — and any hit would have written a Hebrew display name into the
                     # column. Count and write the canonical slug instead.
                     category_slug = categorize_on_ingest(category_he)
+                    need = 0
                     try:
                         current_count = int((await db.execute(
                             text(
@@ -4045,12 +4085,16 @@ async def _run_category_discovery() -> Dict[str, Any]:
 
                                 await asyncio.sleep(SCRAPE_REQUEST_DELAY + random.uniform(0, 0.6))
                                 query = f"{search_term} {manufacturer}".strip()
+                                _cd_log(f"search start: {manufacturer} / {category_slug} / {query!r} (need {need})")
+                                _q0 = _time.monotonic()
                                 candidates = await _search_category_query_multisource(
                                     query,
                                     manufacturer,
                                     category_he,
                                     max_parts=20,
                                 )
+                                _cd_log(f"search done: {query!r} -> {len(candidates)} candidates "
+                                        f"in {_time.monotonic() - _q0:.1f}s")
 
                                 for part in candidates:
                                     sku_clean = (part.get("part_number") or "").upper().replace(" ", "")
@@ -4098,12 +4142,12 @@ async def _run_category_discovery() -> Dict[str, Any]:
                                         break
                     except Exception as exc:
                         report["errors"] += 1
-                        print(f"[CategoryDiscovery] {manufacturer} / {category_he}: error: {exc}")
+                        _cd_log(f"{manufacturer} / {category_he}: error: {str(exc)[:300]}")
 
-                    print(
-                        f"[CategoryDiscovery] {manufacturer} / {category_he}: "
-                        f"found {inserted_for_category} parts"
-                    )
+                    if need > 0:
+                        _cd_log(f"{manufacturer} / {category_he}: needed {need}, inserted {inserted_for_category}")
+                    else:
+                        print(f"[CategoryDiscovery] {manufacturer} / {category_he}: found 0 parts (not short)")
                     m_report[category_he] = inserted_for_category
 
                 report["manufacturers"][manufacturer] = m_report
@@ -4112,10 +4156,16 @@ async def _run_category_discovery() -> Dict[str, Any]:
         report["finished_at"] = datetime.utcnow().isoformat()
         _cd_status = "completed"
         return report
+    except asyncio.CancelledError:
+        _cd_err = "cancelled (night-pipeline deadline or shutdown)"
+        raise
     except Exception as exc:
         _cd_err = str(exc)[:500]
         raise
     finally:
+        _cd_log(f"end: status={_cd_status} after {(datetime.utcnow() - _cd_started).total_seconds():.0f}s, "
+                f"inserted={report['total_inserted']} errors={report['errors']} "
+                f"truncated={report.get('truncated') or '-'} error={_cd_err or '-'}")
         if _cd_hb_task is not None:
             _cd_hb_task.cancel()
         if _cd_job_id:

@@ -872,7 +872,7 @@ def _category(monkeypatch, counts=None, env=None, avail=5000.0, manufacturers=("
           "categorize_on_ingest": lambda he: {"בלמים": "brakes", "מצבר": "electrical"}[he],
           "db_upsert_part": _noop, "resolve_aftermarket_brand": _noop,
           "job_registry_start": _noop, "job_heartbeat": _noop, "job_registry_finish": _noop,
-          "print": lambda *a, **k: None}
+          "print": lambda *a, **k: None, "_cd_log": lambda *a, **k: None}
     try:
         fn = _load_fn(CS_PATH, "_run_category_discovery", ns)
         report = run(fn())

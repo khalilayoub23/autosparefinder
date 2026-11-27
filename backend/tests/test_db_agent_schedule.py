@@ -129,3 +129,66 @@ def test_health_monitor_uses_the_schedule_not_a_fixed_silence():
     assert "silence_mins > 300" not in block
     assert "slot_missed" in block and "DB_AGENT_RUN_TIMES_IL" in block and "DB_AGENT_CATCHUP_WINDOW_S" in block
     assert 'status) == "running" and silence_mins > 30' in block.replace("_hb_row[0]", "status")
+
+
+# ── option A (owner 2026-11-27): a slot held back for a night-pipeline job ────
+# Incident: category_discovery ran 04:20-08:50 IL on 2026-11-27; run_all_tasks deferred its 05:00
+# slot to it and dropped the slot when the 2 h catch-up window closed at 07:00. Since the
+# 2026-11-18 move to 01:00/03:00/05:00 one cycle was lost or late almost every night.
+
+PROD = ls.parse_times("01:00,03:00,05:00")
+SLOT_05 = il(2026, 11, 27, 5, 0)
+RAN_03 = il(2026, 11, 27, 3, 0)
+
+
+def test_default_defer_cutoff_is_before_customer_hours_and_inside_the_alarm_grace():
+    assert dua.DB_AGENT_DEFER_CUTOFF_IL == "07:30"
+    assert dua._defer_cutoff_utc(SLOT_05) == il(2026, 11, 27, 7, 30)
+    # the health monitor's "missed" alarm must not fire while a deferred slot may still start
+    assert dua._defer_cutoff_utc(SLOT_05) <= SLOT_05 + timedelta(seconds=GRACE)
+
+
+def test_night_deferred_slot_runs_after_the_window_until_the_cutoff():
+    now = il(2026, 11, 27, 7, 10)                     # window closed at 07:00
+    assert dua._due_slot(PROD, RAN_03, None, now) is None                       # old behaviour
+    assert dua._due_slot(PROD, RAN_03, None, now, night_deferred=SLOT_05) == SLOT_05
+    assert dua._due_slot(PROD, RAN_03, None, il(2026, 11, 27, 7, 30), night_deferred=SLOT_05) == SLOT_05
+
+
+def test_night_deferred_slot_is_dropped_after_the_cutoff():
+    assert dua._due_slot(PROD, RAN_03, None, il(2026, 11, 27, 7, 31), night_deferred=SLOT_05) is None
+    assert dua._due_slot(PROD, RAN_03, None, il(2026, 11, 27, 11, 0), night_deferred=SLOT_05) is None
+
+
+def test_deferral_of_another_slot_does_not_extend_this_one():
+    # 03:00 was the deferred slot; by 07:10 the current slot is 05:00, never deferred -> no run
+    assert dua._due_slot(PROD, il(2026, 11, 27, 1, 0), None, il(2026, 11, 27, 7, 10),
+                         night_deferred=il(2026, 11, 27, 3, 0)) is None
+    # yesterday's deferred 05:00 does not make today's 05:00 eligible after its window
+    assert dua._due_slot(PROD, RAN_03, None, il(2026, 11, 27, 7, 10),
+                         night_deferred=il(2026, 11, 26, 5, 0)) is None
+
+
+def test_deferred_slot_still_respects_served_and_a_started_run():
+    now = il(2026, 11, 27, 7, 10)
+    assert dua._due_slot(PROD, RAN_03, SLOT_05, now, night_deferred=SLOT_05) is None
+    assert dua._due_slot(PROD, il(2026, 11, 27, 6, 30), None, now, night_deferred=SLOT_05) is None
+
+
+def test_loop_records_the_night_pipeline_deferral():
+    import inspect
+    loop = inspect.getsource(dua._agent_loop)
+    i = loop.index("_np.MEM_HEAVY_JOBS")
+    assert "night_deferred = slot" in loop[i:i + 200]
+    assert "night_deferred=night_deferred" in loop
+    # the job-queue deferral is NOT covered by option A
+    j = loop.index("queue_busy")
+    assert "night_deferred" not in loop[j:i]
+
+
+def test_missed_slot_alert_no_longer_advises_a_raw_restart():
+    src = Path(dua.__file__).with_name("BACKEND_API_ROUTES.py").read_text(encoding="utf-8")
+    i = src.index("Check 3: worker silent")
+    block = src[i:i + 12000]
+    assert "פעולה: docker restart autospare_backend" not in block
+    assert "מחזור מתוכנן הוחמץ" in block and "next_slot_utc" in block
