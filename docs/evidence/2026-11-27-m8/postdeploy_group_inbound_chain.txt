@@ -1,0 +1,6 @@
+== inbound chain 09:11:34 IL
+[ConnLog] 2026-11-27T07:05:45.734Z | GROUP_INBOUND | mentioned_jid_present=true mentions_me=true forwarded=true
+[ConnLog] 2026-11-27T07:11:10.410Z | GROUP_INBOUND | mentioned_jid_present=true mentions_me=true typed_mention=false forwarded=true
+[ConnLog] 2026-11-27T07:11:25.379Z | GROUP_INBOUND | mentioned_jid_present=false mentions_me=false typed_mention=false forwarded=false
+[group_mention] received mid=…ADD325 owner=1 typed=False has_text=True
+[group_mention] replied mid=…ADD325 agent=AVI sent_ok=True id=…782C16

@@ -1,0 +1,10 @@
+== receipt fix deploy 09:37:50 IL
+HEAD 1c8a084
+=== PRE-RESTART COMPLETE ===
+preflight exit=0
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=m8_bridge_restart4_receipts: preflight SAFE (fresh, nonce verified)
+whatsapp_bridge
+exit=0
+[ConnLog] 2026-11-27T07:38:14.092Z | PROCESS_START | pid=1
+[ConnLog] 2026-11-27T07:38:15.578Z | CONNECTED

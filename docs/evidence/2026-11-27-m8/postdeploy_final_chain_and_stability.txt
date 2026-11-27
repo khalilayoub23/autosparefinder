@@ -1,0 +1,17 @@
+== final inbound chain 09:40:41 IL
+[ConnLog] 2026-11-27T07:38:26.514Z | RECEIPT_RAW | scope=group type=delivery participant=true items=0 id=FE8CE6
+[ConnLog] 2026-11-27T07:39:43.509Z | RECEIPT_RAW | scope=group type=read participant=true items=0 id=FE8CE6
+[ConnLog] 2026-11-27T07:39:43.523Z | RECEIPT | scope=group kind=read id=FE8CE6
+[ConnLog] 2026-11-27T07:40:06.256Z | GROUP_INBOUND | mentioned_jid_present=true mentions_me=true typed_mention=false forwarded=true
+[ConnLog] 2026-11-27T07:40:32.951Z | RECEIPT_RAW | scope=group type=delivery participant=true items=0 id=4AB841
+[ConnLog] 2026-11-27T07:40:41.282Z | RECEIPT_RAW | scope=group type=read participant=true items=0 id=4AB841
+[ConnLog] 2026-11-27T07:40:41.298Z | RECEIPT | scope=group kind=read id=4AB841
+[group_mention] received mid=…593613 owner=1 typed=False has_text=True
+[group_mention] replied mid=…593613 agent=AVI sent_ok=True id=…4AB841
+== stability
+0
+autospare_backend Up 31 minutes (healthy)
+whatsapp_bridge Up 2 minutes
+sandbox_backend Up 4 weeks
+0
+7

@@ -1,0 +1,10 @@
+== diag deploy 09:34:35 IL
+HEAD 6ac86b6
+=== PRE-RESTART COMPLETE ===
+preflight exit=0
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=m8_bridge_restart3_diag: preflight SAFE (fresh, nonce verified)
+whatsapp_bridge
+exit=0
+[ConnLog] 2026-11-27T07:34:56.523Z | PROCESS_START | pid=1
+[ConnLog] 2026-11-27T07:34:57.747Z | CONNECTED

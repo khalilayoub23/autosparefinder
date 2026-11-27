@@ -1,0 +1,11 @@
+group configured: True
+send ok: True id_tail: 34974B error: None
+[Bridge] Sent OK to ...0397
+[Bridge] Sent interactive to ...0397 | actions: 2
+[ConnLog] 2026-11-27T07:03:18.413Z | RECEIPT | scope=dm kind=delivery id=8C8EEB
+[Bridge] Sent OK to ...7639
+[ConnLog] 2026-11-27T07:03:54.646Z | RETRY_RECV | scope=group id=34974B
+[ConnLog] 2026-11-27T07:03:55.468Z | RECEIPT | scope=group kind=delivery id=34974B
+[ConnLog] 2026-11-27T07:04:00.483Z | RECEIPT | scope=group kind=read id=34974B
+explain send ok: True id_tail: 008F7B
+request send ok: True id_tail: 1E9FFB

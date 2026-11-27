@@ -1,0 +1,11 @@
+== runtime identity 09:03:34 IL
+agents.owner_console: LOADED_MATCH loaded_sha256=a5801ac794b9b34d4eae190d316fe0a10269b44ecd3b0174ceb5f7c942a450b0 disk_sha256=a5801ac794b9b34d4eae190d316fe0a10269b44ecd3b0174ceb5f7c942a450b0 path=/app/agents/owner_console.py pid=1 start=343206765 host=0c23873636dc loaded_utc=2026-11-27T07:02:49+00:00 loads=1
+== live DB checks (read-only)
+[runtime_identity] agents.owner_console sha256=a5801ac794b9b34d4eae190d316fe0a10269b44ecd3b0174ceb5f7c942a450b0 pid=49 start=343211900 path=/app/agents/owner_console.py
+3e253a49 notes= True
+a6daabff notes= True
+90bb938d notes= False
+grounding lines: ['• פוסט 3e253a49: הנוסח הנוכחי הוא הערות של חליל, לא פוסט. הו', '• פוסט a6daabff: הנוסח הנוכחי הוא הערות של חליל, לא פוסט. הו']
+approve a6daabff -> ⛔ לא פרסמתי את a6daabff: הנוסח הנוכחי הוא הערות שלך לעריכה, לא פוסט.
+כדי ש-NOA תכתוב גרסה 
+gate on original failure: [('@NOA תכתוב גרסה חדשה של הפוסט לפי ההערות שלך ותשלח לך לבדיקה.', 'agent_promise'), ('אם זה בסדר, שלח "אשר".', 'bare_approve')]

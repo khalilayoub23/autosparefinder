@@ -1,0 +1,8 @@
+== post-redeploy 09:09:42 IL backend=healthy
+started=2026-11-27T07:09:05.498263237Z restarts=0
+[ConnLog] 2026-11-27T07:08:58.362Z | PROCESS_START | pid=1
+[ConnLog] 2026-11-27T07:08:59.383Z | CONNECTED
+✅ WhatsApp connected
+agents.owner_console: LOADED_MATCH
+webhooks has bare reply: True
+disk vs container webhooks: e375fda44996 e375fda44996

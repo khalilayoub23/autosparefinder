@@ -490,8 +490,12 @@ the health monitor itself (it had been failing every cycle since the 08:47 deplo
 ### 14.7 Delivery evidence and deploy order
 * `whatsapp-bridge/receipt_log.js`: `[ConnLog] RECEIPT scope=group|dm kind=delivery|read|played id=<last 6 of our message id>`
   (from `messages.update` / `message-receipt.update`) and `RETRY_RECV scope=... id=...` (raw retry receipt = the recipient could
-  not decrypt). No JID, participant or text. "Sent OK" is only the server ack; a group message counts as delivered only with a
-  `RECEIPT scope=group` for its id and no `RETRY_RECV`.
+  not decrypt). No JID, participant or text. "Sent OK" is only the server ack. A group message counts as delivered with a
+  `RECEIPT_RAW scope=group type=delivery|read` or a `RECEIPT scope=group` for its id; a `RETRY_RECV` before it means the first copy
+  could not be decrypted and was re-sent (record it). **Why RECEIPT_RAW (2026-11-27):** the processed `RECEIPT` line misses group
+  DELIVERY receipts - Baileys 6.7.24 emits them with `receiptTimestamp: NaN` (fixed by key) and, when the stanza carries a
+  `recipient` attribute, with `fromMe=false` (receipt_log still requires fromMe - open follow-up). `RECEIPT_RAW` is the raw
+  `<receipt>` stanza, which WhatsApp sends only to the message's sender; logged for group stanzas only (content-free).
 * Bridge dependency change order (the container runs `npm install` at start; the new lock fetches libsignal from git, which
   `node:20-alpine` lacks): prove `npm install` is a no-op offline -> preflight SAFE -> snapshots -> guarded stop -> swap
   node_modules + package files -> guarded start. Rollback: restore node_modules + package files, KEEP the live `auth_info`.

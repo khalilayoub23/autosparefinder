@@ -1,0 +1,10 @@
+diag send ok: True id_tail: 10BDCF
+[Bridge] Sent OK to ...0397 
+[Bridge] Sent OK to ...7639
+[ConnLog] 2026-11-27T07:35:11.134Z | RECEIPT_RAW | scope=group type=delivery participant=true items=0 id=10BDCF
+[ConnLog] 2026-11-27T07:35:31.406Z | RECEIPT_RAW | scope=group type=read participant=true items=0 id=10BDCF
+[ConnLog] 2026-11-27T07:35:31.416Z | RECEIPT | scope=group kind=read id=10BDCF
+[ConnLog] 2026-11-27T07:35:36.824Z | RECEIPT_RAW | scope=dm type=read participant=false items=0 id=116DE5
+[ConnLog] 2026-11-27T07:35:36.830Z | RECEIPT | scope=dm kind=read id=116DE5
+receipt-fix send ok: True id_tail: FE8CE6
+[ConnLog] 2026-11-27T07:38:26.514Z | RECEIPT_RAW | scope=group type=delivery participant=true items=0 id=FE8CE6

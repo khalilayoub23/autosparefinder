@@ -1,0 +1,22 @@
+== redeploy preflight 09:08:32 IL
+[restart_workers] stop: no managed importer/scraper process is running
+=== PRE-RESTART COMPLETE ===
+preflight exit=0
+== ff 09:08:36 IL
+ create mode 100644 docs/evidence/2026-11-27-m8/deploy_step6_backend.txt
+ create mode 100644 docs/evidence/2026-11-27-m8/predeploy_baseline.txt
+ create mode 100644 whatsapp-bridge/test_typed_mention.mjs
+HEAD 35fe486
+== bridge restart
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=m8_bridge_restart2: preflight SAFE (fresh, nonce verified)
+whatsapp_bridge
+exit=0
+== backend recreate
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=m8_backend_recreate2: preflight SAFE (fresh, nonce verified)
+ Container autospare_backend Recreate 
+ Container autospare_backend Recreated 
+ Container autospare_backend Starting 
+ Container autospare_backend Started 
+exit=0
