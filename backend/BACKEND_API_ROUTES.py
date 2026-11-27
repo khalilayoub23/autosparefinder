@@ -4733,13 +4733,13 @@ def _format_cart_items_for_whatsapp(item_lines: list[str], max_items: int = 3) -
     return summary
 
 
-def _cart_recovery_url(user_id) -> str:
+def _cart_recovery_url(user_id, password_hash) -> str:
     """A one-tap link that logs the RECIPIENT into their own account and lands on their
     cart (see /api/v1/customers/cart/recover). Used instead of a bare /cart URL, which
     would show whoever is logged into the device — not the person the reminder is for."""
     from BACKEND_AUTH_SECURITY import create_cart_recovery_token
     base = os.getenv("FRONTEND_URL", "https://autosparefinder.co.il").rstrip("/")
-    return f"{base}/api/v1/customers/cart/recover?token={create_cart_recovery_token(str(user_id))}"
+    return f"{base}/api/v1/customers/cart/recover?token={create_cart_recovery_token(str(user_id), password_hash)}"
 
 
 def _build_abandoned_cart_whatsapp_message(
@@ -7596,7 +7596,7 @@ async def _abandoned_cart_loop():
                         # For a single-item cart we have a direct /pay/ link; otherwise fall
                         # back to a recipient-scoped cart-recovery link (NOT a bare /cart, which
                         # would open whoever is logged into the device — the "shows my cart" bug).
-                        recovery_url = _cart_recovery_url(user.id)
+                        recovery_url = _cart_recovery_url(user.id, user.password_hash)
                         wa_message = _build_abandoned_cart_whatsapp_message(
                             full_name=user.full_name,
                             item_lines=item_lines,

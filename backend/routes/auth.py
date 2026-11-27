@@ -40,8 +40,10 @@ from BACKEND_AUTH_SECURITY import (
     get_redis, check_rate_limit, generate_device_fingerprint,
     create_access_token, create_refresh_token, create_session,
     verify_email_verification_token, send_verification_email,
-    verify_cart_recovery_token,
+    verify_cart_recovery_token, security, password_fingerprint,
 )
+from hmac import compare_digest as _hmac_compare
+from fastapi.security import HTTPAuthorizationCredentials
 import secrets as _secrets
 from fastapi.responses import RedirectResponse as _RedirectResponse
 
@@ -204,13 +206,17 @@ async def recover_cart(token: str, request: Request,
         allowed = await check_rate_limit(redis, f"rate:cart_recover:{ip}", 20, 300)
         if not allowed:
             return _RedirectResponse(url=f"{site}/login?cart=busy", status_code=302)
-    user_id = verify_cart_recovery_token(token)
-    if not user_id:
+    verified = verify_cart_recovery_token(token)
+    if not verified:
         # Expired or tampered — send them to log in normally; their cart is server-side.
         return _RedirectResponse(url=f"{site}/login?next=/cart&cart=expired", status_code=302)
     try:
+        user_id, pw_fp = verified
         user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
         if not user or not getattr(user, "is_active", True):
+            return _RedirectResponse(url=f"{site}/login?next=/cart&cart=expired", status_code=302)
+        if not _hmac_compare(pw_fp, password_fingerprint(user.password_hash)):
+            # issued before a password change/reset (#162): no password-less login any more
             return _RedirectResponse(url=f"{site}/login?next=/cart&cart=expired", status_code=302)
         # Mint a normal, revocable session (same path as login) so the recipient is truly
         # signed into THEIR account and can browse/checkout.
@@ -621,8 +627,12 @@ async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSes
 # ==============================================================================
 
 @router.post("/api/v1/auth/change-password")
-async def change_password_ep(data: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_pii_db)):
-    await change_password(current_user, data.current_password, data.new_password, db)
+async def change_password_ep(data: ChangePasswordRequest, current_user: User = Depends(get_current_user),
+                             credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+                             db: AsyncSession = Depends(get_pii_db)):
+    # Other sessions are revoked; this request's session (its access token) stays signed in.
+    await change_password(current_user, data.current_password, data.new_password, db,
+                          current_token=credentials.credentials if credentials else None)
     return {"message": "הסיסמה שונתה בהצלחה"}
 
 

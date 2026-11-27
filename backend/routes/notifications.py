@@ -4,12 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
+from typing import List, Optional
+from fastapi.security import HTTPAuthorizationCredentials
 import asyncio
 from datetime import datetime
 
 from BACKEND_DATABASE_MODELS import get_pii_db, Notification, User
-from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user, get_redis
+from BACKEND_AUTH_SECURITY import get_current_user, get_current_verified_user, get_redis, security, session_is_active
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ _SSE_HEARTBEAT_INTERVAL = 30  # seconds
 async def notifications_stream(
     current_user: User = Depends(get_current_verified_user),
     redis=Depends(get_redis),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ):
     """SSE stream: subscribe to user:{user_id}:notifications Redis Pub/Sub channel."""
     user_id = str(current_user.id)
@@ -38,6 +40,10 @@ async def notifications_stream(
             while True:
                 now = asyncio.get_running_loop().time()
                 if now - last_heartbeat >= _SSE_HEARTBEAT_INTERVAL:
+                    # a session revoked after connect (logout, password change #162) ends the stream
+                    if not (credentials and await session_is_active(credentials.credentials)):
+                        yield {"event": "revoked", "data": ""}
+                        break
                     yield {"event": "heartbeat", "data": ""}
                     last_heartbeat = now
                 message = await pubsub.get_message(

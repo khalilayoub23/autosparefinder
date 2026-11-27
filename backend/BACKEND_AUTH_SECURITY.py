@@ -30,7 +30,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from BACKEND_DATABASE_MODELS import (
@@ -602,10 +602,69 @@ async def create_session(
         expires_at=datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
         last_used_at=datetime.utcnow(),
     )
+    # Race guard (#162): lock the user row (FOR SHARE) and confirm the password is still the one this login was
+    # authenticated with. A concurrent password change holds the row lock until it commits: either it commits
+    # first (we then see the new hash and refuse) or it waits for this commit (its revocation then sees this row).
+    locked = (await db.execute(
+        select(User.password_hash).where(User.id == user.id).with_for_update(read=True)
+    )).one_or_none()
+    if locked is None or locked[0] != user.password_hash:
+        await db.rollback()
+        raise HTTPException(status_code=401, detail="Password changed - please sign in again")
     db.add(session)
     await db.commit()
     await db.refresh(session)
     return session
+
+
+async def invalidate_after_password_change(user_id, db: AsyncSession, *, keep_token: Optional[str] = None) -> int:
+    """THE single enforcement point for "a password change ends everything opened with the old one" (FIXES_TRACKER #162).
+
+    In the caller's transaction (no commit here - the caller commits the new hash and all of this together):
+      * revokes every active session of the user (access + refresh pair; trusted devices included), except the
+        session whose access token is `keep_token` (the request that changed the password stays signed in);
+      * consumes every other unused password-reset link of the user;
+      * expires every pending 2FA code of the user (a login started with the old password cannot be completed).
+    Every code path that writes `password_hash` of an EXISTING user must call this (AST guard:
+    tests/test_password_change_revokes_sessions.py). Returns the number of sessions revoked.
+    """
+    now = datetime.utcnow()
+    await db.flush()   # the UPDATE users (row lock) is issued BEFORE the revocation - see create_session()
+    conditions = [UserSession.user_id == user_id, UserSession.revoked_at.is_(None)]
+    if keep_token:
+        conditions.append(UserSession.token != keep_token)
+    result = await db.execute(
+        update(UserSession).where(and_(*conditions)).values(revoked_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await db.execute(
+        update(PasswordReset).where(and_(PasswordReset.user_id == user_id, PasswordReset.used_at.is_(None)))
+        .values(used_at=now).execution_options(synchronize_session=False)
+    )
+    await db.execute(
+        update(TwoFactorCode).where(and_(TwoFactorCode.user_id == user_id, TwoFactorCode.verified_at.is_(None),
+                                         TwoFactorCode.expires_at > now))
+        .values(expires_at=now).execution_options(synchronize_session=False)
+    )
+    return result.rowcount or 0
+
+
+async def session_is_active(token: str) -> bool:
+    """True when `token` has a user_sessions row that is not revoked (logout, password change).
+
+    For long-lived connections (SSE stream, WebSocket) that authenticate once and must notice a later revocation.
+    Checks revocation only, not the access token's 15-minute expiry (the connection authenticated when it opened;
+    the WebSocket also decodes the token at connect). Uses its own short PII session (the request's session may be
+    gone while a stream runs). Fails closed.
+    """
+    try:
+        from BACKEND_DATABASE_MODELS import pii_session_factory
+        async with pii_session_factory() as db:
+            row = (await db.execute(select(UserSession.id).where(
+                and_(UserSession.token == token, UserSession.revoked_at.is_(None))))).first()
+            return row is not None
+    except Exception:
+        return False
 
 
 async def revoke_session(token: str, db: AsyncSession):
@@ -774,6 +833,10 @@ async def refresh_access_token(refresh_token_str: str, db: AsyncSession) -> Tupl
     payload = decode_refresh_token(refresh_token_str)
     user_id = payload.get("sub")
 
+    # Race guard (#162): lock the user row FIRST. A concurrent password change holds it until it commits, so the
+    # session check below then sees its revocation instead of refreshing a session it is about to revoke.
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update(read=True))
+
     # Verify session exists and is not revoked
     result = await db.execute(
         select(UserSession).where(
@@ -847,34 +910,44 @@ def verify_email_verification_token(token: str) -> Optional[str]:
         return None
 
 
-def create_cart_recovery_token(user_id: str, hours: int = 72) -> str:
+def password_fingerprint(password_hash: Optional[str]) -> str:
+    """Short keyed fingerprint of the current password hash; changes whenever the password changes (#162)."""
+    import hmac as _hmac, hashlib as _hl
+    return _hmac.new(JWT_SECRET_KEY.encode(), ("pw." + (password_hash or "")).encode(), _hl.sha256).hexdigest()[:16]
+
+
+def create_cart_recovery_token(user_id: str, password_hash: Optional[str], hours: int = 72) -> str:
     """Signed, purpose-scoped ('cart') recovery token (HMAC over user_id + expiry, keyed by
     JWT_SECRET_KEY). Lets an abandoned-cart email/WhatsApp link open the RECIPIENT's own cart
     by logging them into their own account — regardless of which session the browser currently
     holds (a plain /cart link shows whoever is logged into that device, not the recipient).
     Short 72h TTL bounds a forwarded-email window. Purpose tag prevents replaying an
-    email-verification token here (and vice-versa)."""
+    email-verification token here (and vice-versa). Bound to the password (#162): a link issued before a
+    password change or reset no longer logs anyone in."""
     import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
     exp = int(_t.time()) + hours * 3600
-    msg = f"cart.{user_id}.{exp}"
+    msg = f"cart2.{user_id}.{exp}.{password_fingerprint(password_hash)}"
     sig = _hmac.new(JWT_SECRET_KEY.encode(), msg.encode(), _hl.sha256).hexdigest()[:32]
     return _b64.urlsafe_b64encode(f"{msg}.{sig}".encode()).decode().rstrip("=")
 
 
-def verify_cart_recovery_token(token: str) -> Optional[str]:
-    """Return the user_id if the token is a valid, unexpired, purpose='cart' token, else None."""
+def verify_cart_recovery_token(token: str) -> Optional[Tuple[str, str]]:
+    """Return (user_id, password_fingerprint) for a valid, unexpired purpose='cart2' token, else None.
+
+    The caller must compare the fingerprint with password_fingerprint(user.password_hash). Legacy 'cart' tokens
+    (no password binding, issued before #162) are refused."""
     import hmac as _hmac, hashlib as _hl, base64 as _b64, time as _t
     try:
         pad = "=" * (-len(token) % 4)
         raw = _b64.urlsafe_b64decode((token + pad).encode()).decode()
         body, sig = raw.rsplit(".", 1)
-        purpose, user_id, exp = body.split(".", 2)
-        if purpose != "cart":
+        purpose, user_id, exp, pw_fp = body.split(".", 3)
+        if purpose != "cart2":
             return None
         if int(exp) < int(_t.time()):
             return None
         expected = _hmac.new(JWT_SECRET_KEY.encode(), body.encode(), _hl.sha256).hexdigest()[:32]
-        return user_id if _hmac.compare_digest(sig, expected) else None
+        return (user_id, pw_fp) if _hmac.compare_digest(sig, expected) else None
     except Exception:
         return None
 
@@ -947,14 +1020,18 @@ async def use_password_reset_token(token: str, new_password: str, db: AsyncSessi
 
     user.password_hash = hash_password(new_password)
     reset.used_at = datetime.utcnow()
+    await invalidate_after_password_change(user.id, db)  # a reset proves nothing about other devices: revoke all
     await db.commit()
     return True
 
 
-async def change_password(user: User, current_password: str, new_password: str, db: AsyncSession) -> bool:
+async def change_password(user: User, current_password: str, new_password: str, db: AsyncSession,
+                          current_token: Optional[str] = None) -> bool:
+    """Change the password and revoke every OTHER session of the user (the caller's `current_token` stays valid)."""
     if not verify_password(current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     user.password_hash = hash_password(new_password)
+    await invalidate_after_password_change(user.id, db, keep_token=current_token)
     await db.commit()
     return True
 

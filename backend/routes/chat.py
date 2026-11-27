@@ -19,7 +19,7 @@ from BACKEND_DATABASE_MODELS import (
 )
 from BACKEND_AUTH_SECURITY import (
     get_current_user, get_current_verified_user, get_current_admin_user, get_redis, check_rate_limit,
-    decode_access_token,
+    decode_access_token, session_is_active,
 )
 from BACKEND_AI_AGENTS import process_user_message, process_agent_response_for_message, get_checkout_link_metrics_snapshot, load_owned_conversation
 from jose import JWTError
@@ -950,6 +950,9 @@ async def chat_websocket(websocket: WebSocket, token: Optional[str] = None, db: 
             raise JWTError("No user id in token")
     except (JWTError, Exception):
         await websocket.close(code=4003, reason="Invalid or expired token")
+        return
+    if not await session_is_active(token):   # revoked session (logout, password change #162)
+        await websocket.close(code=4003, reason="Session has been revoked")
         return
 
     await websocket.accept()
