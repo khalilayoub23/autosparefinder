@@ -1,7 +1,7 @@
 // #158: receipt lines are content-free (no JID, no phone digits, no text). Run: node test_receipt_log.mjs
 import assert from 'assert'
 import fs from 'fs'
-import { statusLines, receiptLines, retryLine, idTail } from './receipt_log.js'
+import { rawReceiptLine, statusLines, receiptLines, retryLine, idTail } from './receipt_log.js'
 
 const G = '120363428683447639@g.us', OWNER = '98058566160397@lid', PHONE = '972586050155@s.whatsapp.net'
 const ID = '3EB0C37244203410E1F9E4640B127320'
@@ -24,3 +24,11 @@ for (const line of [...r, ...s, retryLine({ attrs: { type: 'retry', from: G, id:
 const src = fs.readFileSync(new URL('./index.js', import.meta.url), 'utf8')
 assert.ok(src.includes("sock.ev.on('message-receipt.update'") && src.includes("CB:receipt"), 'listeners wired')
 console.log('PASS receipt_log')
+
+{
+  const l = rawReceiptLine({ attrs: { from: '120363428683447639@g.us', participant: '98058566160397@lid', id: '3EB0ABCDEF12', type: 'read' } })
+  assert.equal(l, 'scope=group type=read participant=true items=0 id=CDEF12')
+  assert.ok(!/\d{7,}/.test(l), 'no JID digits in the raw receipt line')
+  assert.equal(rawReceiptLine({ attrs: { from: '972500000000@s.whatsapp.net', id: 'X1' } }), 'scope=dm type=delivery participant=false items=0 id=X1')
+  console.log('rawReceiptLine: ok')
+}

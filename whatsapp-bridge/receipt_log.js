@@ -44,3 +44,11 @@ export function retryLine(node) {
   if (a.type !== 'retry') return ''
   return `scope=${scopeOf(a.from)} id=${idTail(a.id)}`
 }
+
+// raw <receipt> stanza of ANY type (diagnostic, #158 follow-up 2026-11-27: after the first group message no group receipt
+// was logged at all). Content-free: scope, receipt type, whether a participant is named, number of extra ids, our id tail.
+export function rawReceiptLine(node) {
+  const a = node?.attrs || {}
+  const items = Array.isArray(node?.content) ? (node.content[0]?.content || []).length : 0
+  return `scope=${scopeOf(a.from)} type=${a.type || 'delivery'} participant=${!!a.participant} items=${items} id=${idTail(a.id)}`
+}

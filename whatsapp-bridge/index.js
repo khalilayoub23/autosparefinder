@@ -17,7 +17,7 @@ const {
 
 import { Boom } from '@hapi/boom'
 import { isNonChatJid } from './jid_policy.js'
-import { statusLines, receiptLines, retryLine } from './receipt_log.js'
+import { statusLines, receiptLines, retryLine, rawReceiptLine } from './receipt_log.js'
 import axios from 'axios'
 import express from 'express'
 import qrcode from 'qrcode-terminal'
@@ -664,7 +664,10 @@ async function startBot() {
     try { for (const l of receiptLines(updates)) logEvent('RECEIPT', l) } catch {}
   })
   try {
-    sock.ws.on('CB:receipt', (node) => { try { const l = retryLine(node); if (l) logEvent('RETRY_RECV', l) } catch {} })
+    sock.ws.on('CB:receipt', (node) => {
+      try { const l = retryLine(node); if (l) logEvent('RETRY_RECV', l) } catch {}
+      try { logEvent('RECEIPT_RAW', rawReceiptLine(node)) } catch {}
+    })
   } catch {}
 
   sock.ev.on('creds.update', () => {
