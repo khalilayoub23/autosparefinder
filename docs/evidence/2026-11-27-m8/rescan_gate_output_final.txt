@@ -14,6 +14,13 @@ round4/out_r4_run3 first agent_promise | שלח *@NOA* עם נושא או קו �
 round4/out_r4_run3 reply wrong_command | להוציא את זה לפועל, שלח פקודה *פוסטים* או כתוב @NOA עם ההוראה.
 round4/out_r4_run3 first self_promise | * נבצע ניתוח מילות מפתח של הקטגוריות הכי חמות במלאי ונבנה קו נושא לכל קמפיין.
 round4/out_r4_run3 first self_promise | * נבצע תזמון פוסטים לפי שעות פעילות קהל היעד (בוקר/ערב).
+round5/out_r5_run1 first agent_promise | 2. NOA תייצר טקסטים קצרים, ויזואליים וממוקדים למעורבות.
+round5/out_r5_run1 first self_promise | 3. נבצע סקירה שבועית של ביצועים ונעדכן לפי תובנות.
+round5/out_r5_run1 reply agent_promise | שלח @שירה כדי לקבל אסטרטגיה, ו‑@נועה כדי להכין פוסטים תואמים.
+round5/out_r5_run1 first self_promise | מה בדיוק תרצה שאבצע?
+round5/out_r5_run2 first agent_promise | 2️⃣ NOA תייצר פוסטים קצרים, ויזואליים עם קריאה לפעולה.
+round5/out_r5_run3 first agent_promise | שלח לי את הנושא או הקמפיין הרצוי, ואז @NOA תכין טיוטה ראשונה.
+round5/out_r5_run3 first agent_promise | 2. *תוכן ייחודי* – NOA תכתוב טקסט קצר, עם טיפים פרקטיים, תמונות איכותיות וקישור למוצר רלוונטי.
 h/o_eval_after reply self_promise | 3. ניצור סדרת פוסטים חינוכיים (טיפים תחזוקה, מדריכים) עם קריאה לפעולה ברורה.
 h/o_eval_after reply bare_approve | אם זה מה שאתה רוצה, תוכל לאשר / אשר.
 h/er_rule_run1 reply self_promise | 3. נריץ A/B testing על פורמטים של פוסטים (וידאו קצר vs.
@@ -26,4 +33,4 @@ h/er_rule_run2 reply bare_approve | אם זה תקין, שלח "אשר".
 h/er_rule_run2 reply invented_command | השתמש ב‑`מחיקה_כל_הלקוחות` או פנה ל‑@Bone לקבלת סיוע.*
 h/_eval_before reply wrong_command | ‏[AVI] חליל, כדי להתחיל בייצור פוסטים חדשים, שלח פקודה *פוסטים* עם הפרטים הרצויים – נוכל להגדיר נושא, תדירות וקהל יעד.
 h/_eval_before reply agent_promise | ‏[AVI] חליל, אם רוצים לשנות אסטרטגיית השיווק ולבנות קמפיין פוסטים מושך, כתוב @שירה עם הרעיונות או הדרישות – היא תדאג לתכ
-texts 334 flagged sentences 28
+texts 459 flagged sentences 35

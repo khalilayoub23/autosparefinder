@@ -74,8 +74,8 @@ _GATE = {}
 if hasattr(con, "_enforce_action_integrity"):
     _real_gate = con._enforce_action_integrity
 
-    async def _gate(reply, regen):
-        out, how = await _real_gate(reply, regen)
+    async def _gate(reply, regen, **kw):
+        out, how = await _real_gate(reply, regen, **kw)
         _GATE.update(how=how, first_draft=reply)
         return out, how
     con._enforce_action_integrity = _gate

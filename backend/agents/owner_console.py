@@ -1231,6 +1231,7 @@ _COMMAND_CONTEXT = re.compile(r"פקוד|שלח|השתמש|הקלד|כתוב|\b(
 _ADDRESSING = re.compile(
     rf"(?<![{_HEB}])(?:ו)?(?:כתוב|תכתוב|שלח|תשלח|פנה|תפנה)\s+(?:ל[-‑]?\s*|אל\s+)?@?"
     rf"(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|Bone|בון|בוני|AVI|אבי)(?![\w{_HEB}])", re.I)
+_ADDRESS_FOR_ACTION = re.compile(r"כדי\s+(?:ש\S+\s+)?ל?(?:הכין|ליצור|לייצר|לכתוב|לפרסם|לנסח|לשלוח|לבצע|לטפל)")
 _NAMED_COMMAND = re.compile(r"פקוד|\bcommand\b", re.I)   # "run the command *X*": a bolded X must be a real command
 _CODE_TOKEN = re.compile(r"`([^`\n]{2,40})`|\*([^*\s<\[]{2,30})\*")
 # What each command really does (expert review round 3: the gate checked that a command EXISTS, so the model named a real
@@ -1326,6 +1327,9 @@ def _sentence_violation(s: str, prev: str = "", allow_self: bool = False) -> str
         return "agent_promise"
     if _PASSIVE_FUTURE.search(s_act) and not backed:
         return "passive_promise"
+    # "שלח @נועה כדי להכין פוסטים": addressing an agent only switches the chat - it never creates or publishes anything
+    if _ADDRESSING.search(s) and _ADDRESS_FOR_ACTION.search(s) and not backed:
+        return "agent_promise"
     if not allow_self and _FIRST_PROMISE.search(_NEGATED.sub(" ", s)) and not backed:
         return "self_promise"
     return ""
