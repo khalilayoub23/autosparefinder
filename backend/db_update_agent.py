@@ -4849,10 +4849,12 @@ DB_AGENT_RUN_TIMES_IL = os.getenv("DB_AGENT_RUN_TIMES_IL", "01:00,03:00,05:00")
 # than that the cycle waits for the next slot instead of running at an unplanned hour.
 DB_AGENT_CATCHUP_WINDOW_S = float(os.getenv("DB_AGENT_CATCHUP_WINDOW_S", "7200"))
 # A slot held back ONLY because a memory-heavy night-pipeline job was running (owner option A,
-# 2026-11-27) may still start after its catch-up window, as soon as that job ends, but never
-# after this Israel time on the slot's own date. Without it, category_discovery (~2 h) outlasted
-# the 2 h window and one of the three night cycles was lost or late almost every night since
-# the 2026-11-18 move to 01:00/03:00/05:00.
+# 2026-11-27) may still START after its catch-up window, as soon as that job ends, but not after
+# this Israel time on the slot's own date. In practice this rescues only the LAST slot (05:00):
+# the 01:00/03:00 windows close exactly when the next slot opens, and that next slot then runs
+# instead (a deferred 03:00 is still absorbed by 05:00). A 07:30 start can run past 09:00
+# (cycles take 45-140 min). Incident: 2026-11-27 the 05:00 slot was dropped at 07:00 while
+# category_discovery ran 04:20-08:50.
 DB_AGENT_DEFER_CUTOFF_IL = os.getenv("DB_AGENT_DEFER_CUTOFF_IL", "07:30")
 
 
@@ -4903,7 +4905,7 @@ async def _agent_loop(get_db_fn, interval_hours: float = 6.0) -> None:
     # Give container_start.sh time to clear stale Redis locks before first run
     await asyncio.sleep(90)
     times = parse_times(DB_AGENT_RUN_TIMES_IL)
-    parse_times(DB_AGENT_DEFER_CUTOFF_IL)   # a malformed cutoff fails here, not mid-night
+    (_ch, _cm), = parse_times(DB_AGENT_DEFER_CUTOFF_IL)   # exactly one HH:MM; fails here, not mid-night
     logger.info("DB update agent background loop started (slots %s Israel, catch-up window %.0f min, "
                 "night-pipeline deferral until %s Israel)",
                 ",".join(f"{h:02d}:{m:02d}" for h, m in times), DB_AGENT_CATCHUP_WINDOW_S / 60,
