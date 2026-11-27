@@ -2202,6 +2202,12 @@ _GROUP_REPLY_TTL_S = 24 * 3600
 _GROUP_SEEN: dict = {}  # message_id -> monotonic ts; one answer per group message (redelivery guard)
 
 
+def _key_id(res) -> str:
+    """The sent message's id from a bridge send result ({key: {id}} or {key: "id"}) - matches the bridge RECEIPT id."""
+    k = (res or {}).get("key") if isinstance(res, dict) else None
+    return re.sub(r"[^A-Za-z0-9]", "", str((k.get("id") if isinstance(k, dict) else k) or ""))
+
+
 async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
     """A group message that mentions THIS account (bridge forwards only those; WA_GROUP_INBOUND_ENABLED). Mention =
     conversation routing only: any console command (approval, revision, continuation, work trigger) is refused here -
@@ -2232,6 +2238,8 @@ async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
             return ok
         _GROUP_SEEN[_mid] = _now
     text = re.sub(r"@\d{5,}", "", str(body or "")).strip()
+    # Content-free receipt (#158 follow-up): proves an inbound mention reached the backend, without its text.
+    print(f"[group_mention] received mid=…{_mid[-6:]} owner=1 has_text={bool(text)}", flush=True)
     if not text:
         return ok
     from social.whatsapp_provider import send_message as _s
@@ -2250,7 +2258,10 @@ async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
             print(f"[group_mention] reply failed: {_e}", flush=True)
             return
         if (reply or "").strip():
-            await _s(to=group, text=reply)
+            _m = re.search(r"\[(AVI|NOA|SHIRA|Bone)\]", reply)
+            res = await _s(to=group, text=reply)
+            print(f"[group_mention] replied mid=…{_mid[-6:]} agent={_m.group(1) if _m else '?'} "
+                  f"sent_ok={bool((res or {}).get('ok'))} id=…{_key_id(res)[-6:]}", flush=True)
 
     _t2 = asyncio.create_task(_group_reply_bg())
     _OWNER_REPLY_TASKS.add(_t2)

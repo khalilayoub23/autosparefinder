@@ -1,0 +1,8 @@
+3e253a49 n_revs= 4
+   {'version': '1', 'content': '\u200fהקפיצים של ה Peugeot 3008 נוטים לצד אחד? זה כמו לנסוע עם משקולת על הכ', 'source': 'noa_draft', 'actor': 'noa', 'created_at': '2026-11-26 18:05:04.651360+00:00'}
+   {'version': '2', 'content': '\u200fהקפיצים של Peugeot 3008 מתנהלים לאסטרטגיה? קפיצי Coil Spring של MOTUL', 'source': 'whatsapp_change', 'actor': 'noa', 'created_at': '2026-11-26 18:05:04.651360+00:00'}
+   {'version': '3', 'content': 'אהבתי את הרעיון והסדר אבל עדיין יש מילים שלא קשורות כמו : " מתנהלים לא', 'source': 'whatsapp', 'actor': 'owner', 'created_at': '2026-11-26 18:06:41.496363+00:00'}
+   {'version': '4', 'content': 'פשוט תתייחסי להערה שרשמתי מקודם', 'source': 'whatsapp', 'actor': 'owner', 'created_at': '2026-11-26 18:07:17.923300+00:00'}
+a6daabff n_revs= 2
+   {'version': '1', 'content': '\u200fהקפצת נוזל קירור בלי סיבה? 🚗💧\n\u200fב Seat Leon, רדיאטור פגום הוא כמו שמיכ', 'source': 'noa_draft', 'actor': 'noa', 'created_at': '2026-11-21 13:24:08.284571+00:00'}
+   {'version': '2', 'content': 'אין מלה שהיא פח אוויר תעשי בדיקה ותשני את המילה של פח למשהו יותר היגיו', 'source': 'telegram', 'actor': 'owner', 'created_at': '2026-11-21 13:24:08.284571+00:00'}

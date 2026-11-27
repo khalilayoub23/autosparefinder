@@ -318,6 +318,30 @@ def post_publish_meta(external_post_ids) -> tuple:
             meta.get("video_key"))
 
 
+_CHAT_CONSOLE_SOURCES = ("whatsapp", "telegram")
+
+
+async def _notes_posts_context(db) -> str:
+    """Grounding for the console LLM (#158 follow-up): pending posts whose CURRENT text is the owner's notes, read from
+    the DB - so the agent knows the real state even when the button exchange is not in the chat history (history before
+    record_exchange existed, a cleared history, another channel). Empty string when none / on any error."""
+    try:
+        rows = await _list_pending_posts(db, limit=25)
+        bad = [_short(p["id"]) for p in rows if await _current_version_is_owner_notes(db, p["id"])]
+    except Exception:
+        return ""
+    if not bad:
+        return ""
+    lines = [f"• פוסט {sid}: הנוסח הנוכחי הוא הערות של חליל, לא פוסט. הוא לא יפורסם (אישור נחסם). "
+             f"התיקון האמיתי: חליל שולח *שנהפוסט {sid} <מה לשנות>* (או לוחץ על הכפתור NOA תשכתב) ואז NOA כותבת גרסה."
+             for sid in bad]
+    return ("\n\n--- רקע מה-DB (לא חלק מהשיחה): פוסטים שהנוסח הנוכחי שלהם הוא הערות ---\n" + "\n".join(lines) +
+            "\nהשתמש ברקע הזה *רק* כשחליל מדבר על פוסט, על הנוסח שלו או על ההערות שלו. בכל נושא אחר (אסטרטגיה, "
+            "סטטוס, מה דיברנו) - אל תזכיר אותו, ואל תציג אותו כמשהו שנאמר בשיחה."
+            "\n*שנהפוסט <מזהה> <מה לשנות>* = NOA כותבת גרסה לפי ההערות. *ערוך <מזהה> <טקסט>* = הטקסט שלו נכנס מילה במילה."
+            "\nאל תציע לשלוח *אשר* בלי מזהה - אשר בלי מזהה מאשר ומפרסם את הפוסט הממתין החדש ביותר.")
+
+
 async def _current_version_is_owner_notes(db, post_id: str) -> bool:
     """True when the post's latest revision is an owner text that is evidently notes (agents.owner_continuations
     .looks_like_notes against the version before it). Unknown history -> False (the normal approval path)."""
@@ -327,8 +351,9 @@ async def _current_version_is_owner_notes(db, post_id: str) -> bool:
         revs = await get_revisions(db, str(post_id))
     except Exception:
         return False
-    # only text that arrived through WhatsApp can be pasted notes (an admin-panel edit is source "web")
-    if len(revs) < 2 or revs[-1].get("actor") != "owner" or not str(revs[-1].get("source") or "").startswith("whatsapp"):
+    # only text typed into an owner CHAT console can be pasted notes (an admin-panel edit is source "web"). #158 follow-up:
+    # the Telegram console pasted notes too (a6daabff, 2026-11-21, source 'telegram') and the WhatsApp-only check let it through.
+    if len(revs) < 2 or revs[-1].get("actor") != "owner" or not str(revs[-1].get("source") or "").startswith(_CHAT_CONSOLE_SOURCES):
         return False
     return looks_like_notes(str(revs[-1].get("content") or ""), str(revs[-2].get("content") or ""))
 
@@ -1165,6 +1190,134 @@ def _guard_avi_conversational_reply(reply: str) -> str:
     if _EXECUTION_CLAIM_RE.search(reply):
         return _NOT_VERIFIED_REPLY
     return reply
+
+
+# ── Action-promise gate (#158 follow-up, 2026-11-27) ─────────────────────────
+# The past-tense gate above does not see FUTURE promises. Live replay: with no button history AVI answered the owner's
+# notes complaint "@NOA תכתוב גרסה חדשה של הפוסט ... ותשלח לך לבדיקה. אם זה בסדר, שלח 'אשר'" - no mechanism makes NOA
+# do that from a chat sentence, and a bare *אשר* approves AND PUBLISHES the newest pending post. Same class: "@SHIRA
+# תבצע אופטימיזציה", "נפנה את @SHIRA ו-@NOA לביצוע", an invented command (`מחיקה_כל_הלקוחות`). The conversational path
+# cannot act, so a sentence may say another agent (or "I"/"we") WILL DO something only when that sentence names the real
+# owner command that makes it happen ("send *שנהפוסט 3e253a49 ...* and NOA writes a version").
+_AGENT_SUBJECT = re.compile(
+    r"(?<![\w֐-׿])@?(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|MAYA|מאיה|LIOR|ליאור|DANA|דנה|OREN|אורן|"
+    r"REX|רקס|Bone|בון|בוני|AVI|אבי|TAL)(?![\w֐-׿])", re.I)
+_ACTION_ROOTS = ("כתוב", "כין", "שלח", "בצע", "טפל", "דאג", "עביר", "פרסם", "עדכן", "תקן", "ריץ", "שכתב", "אשר", "זמין",
+                 "שלם", "צור", "יצור", "ייצר", "עלה", "פעיל", "חזור", "קשר", "פנה", "סדר", "ארגן", "בנה", "העלה", "מחק")
+_THIRD_FUTURE = re.compile(r"(?<![֐-׿])(?:[וש])?[תי](?:" + "|".join(_ACTION_ROOTS) + r")(?:ו)?(?![֐-׿])")
+_FIRST_PROMISE = re.compile(
+    r"(?<![֐-׿])(?:[וש])?(?:אעביר|אשלח|אדאג|אטפל|אבצע|אפרסם|אריץ|אפעיל|אקשר|אחזור\s+אליך|אעדכן\s+אותך|"
+    r"נעביר|נשלח\s+את|נדאג|נטפל|נבצע|נפרסם|נריץ|נפעיל|נפנה\s+את)(?![֐-׿])"
+    r"|\bI(?:'ll| will)\s+(?:forward|send|pass|make sure|handle|publish|run|trigger)\b"
+    r"|\b(?:NOA|SHIRA|BOAZ|NIR|Bone)\s+will\s+\w+", re.I)
+# "send 'אשר' to continue" with no id after it
+_BARE_APPROVE = re.compile(r"""(?:^|[\s"'*`״׳(:])(?:אשר|approve)(?=["'*`״׳)]|\s*(?:כדי|ונ|$|[.,!\n]))""", re.I)
+_COMMAND_CONTEXT = re.compile(r"פקוד|שלח|השתמש|הקלד|כתוב|\b(?:type|send|command|use)\b", re.I)
+_ADDRESSING = re.compile(
+    r"(?<![\u0590-\u05FF])(?:ו)?(?:כתוב|תכתוב|שלח|תשלח|פנה|תפנה)\s+(?:ל[-\u2011]?\s*|אל\s+)?@?"
+    r"(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|Bone|בון|בוני|AVI|אבי)(?![\w\u0590-\u05FF])", re.I)
+_NAMED_COMMAND = re.compile(r"פקוד|\bcommand\b", re.I)   # "run the command *X*": a bolded X must be a real command
+_CODE_TOKEN = re.compile(r"`([^`\n]{2,40})`|\*([^*\s<\[]{2,30})\*")
+# The real owner commands that make an agent act, and which agents they back (_HELP).
+_BACKING_COMMANDS = {
+    "שנהפוסט": {"NOA"}, "קמפיין": {"SHIRA", "NOA"}, "ביצועים": {"SHIRA"}, "סרוק קבוצות": {"NOA"}, "ענה": {"NOA"},
+    "מקורות": {"NIR"}, "אשררכש": {"BOAZ"}, "הוזמןידנית": {"BOAZ"}, "אשרתשלוםספק": {"BOAZ"}, "אשרספק": {"NIR"},
+    "אשרפניותספקים": {"NIR"}, "הרץ משימה": {"AVI"}, "הרץ שאיבה": {"AVI", "REX"}, "הרץ ייבוא": {"AVI"},
+}
+_AGENT_CANON = {"נועה": "NOA", "שירה": "SHIRA", "בועז": "BOAZ", "בואז": "BOAZ", "ניר": "NIR", "מאיה": "MAYA",
+                "ליאור": "LIOR", "דנה": "DANA", "אורן": "OREN", "רקס": "REX", "בון": "BONE", "בוני": "BONE", "אבי": "AVI"}
+_KNOWN_COMMAND_CACHE: set = set()
+
+
+def _known_commands() -> set:
+    """First word of every command in the help menu (the real command vocabulary), plus the agent @-handles."""
+    if not _KNOWN_COMMAND_CACHE:
+        for tok in re.findall(r"\*([^*]+)\*", _HELP):
+            w = tok.split()[0].strip("@") if tok.split() else ""
+            if w:
+                _KNOWN_COMMAND_CACHE.add(w.lower())
+        _KNOWN_COMMAND_CACHE.update(t.lower() for t in _AGENT_TOKENS)
+        _KNOWN_COMMAND_CACHE.update(("יציאה", "exit", "status", "approve", "reject", "help"))
+    return _KNOWN_COMMAND_CACHE
+
+
+def _split_sentences(text: str) -> List[str]:
+    # never split after a list number ("1. נבנה ...") - stripping one item must not leave bare "1." lines
+    return [s for s in re.split(r"(?<=[^\d\s][.!?…])\s+|\n+", text or "") if s.strip()]
+
+
+def _backing(text: str) -> set:
+    """Agents that a real owner command (bolded/quoted) or the NOA rewrite button named in `text` makes act."""
+    out = {a for cmd, agents in _BACKING_COMMANDS.items()
+           if re.search(r"[*\"'`\u05f4]\s*" + re.escape(cmd), text) for a in agents}
+    if re.search(r"NOA\s+תשכתב", text):          # the button label (owner_interactions post buttons)
+        out.add("NOA")
+    return out
+
+
+def _sentence_violation(s: str, prev: str = "") -> str:
+    """'' when the sentence is fine, else a short reason code. `prev` = the sentence before it: "send *שנהפוסט X ...*.
+    NOA then writes a version" is the conditional real path split over two sentences (replay 2026-11-27 run 2)."""
+    if _BARE_APPROVE.search(s) and not re.search(r"(?:אשר|approve)\s+[0-9a-f]{6,}", s, re.I):
+        return "bare_approve"
+    for m in (_CODE_TOKEN.finditer(s) if _COMMAND_CONTEXT.search(s) else ()):
+        tok = (m.group(1) or m.group(2) or "").strip()
+        looks_cmd = "_" in tok or ((m.group(1) is not None or _NAMED_COMMAND.search(s)) and " " not in tok
+                                   and re.fullmatch(r"[֐-׿A-Za-z]+", tok or ""))
+        if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", tok):   # run_all_tasks: a task NAME (e.g. after *הרץ משימה*), not a command
+            continue
+        if looks_cmd and tok.split()[0].strip("@").lower() not in _known_commands():
+            return "invented_command"
+    backed = _backing(s) | _backing(prev)
+    # "כתוב @שירה" / "שלח ל-NOA" tell the OWNER whom to address (the real sticky switch) - not the agent acting.
+    s_act = _ADDRESSING.sub(" ", s)
+    agents = {_AGENT_CANON.get(x.strip("@"), x.strip("@").upper()) for x in _AGENT_SUBJECT.findall(s_act)}
+    if agents and _THIRD_FUTURE.search(s_act) and not (agents & backed):
+        return "agent_promise"
+    # "כתוב @שירה - היא תדאג לתכנון" / "כתוב @NIR כדי שיטפל בזה": the agent was addressed, then its action is promised
+    if s_act != s and _THIRD_FUTURE.search(s_act) and not backed:
+        return "agent_promise"
+    if _FIRST_PROMISE.search(s) and not backed:
+        return "self_promise"
+    return ""
+
+
+def unbacked_action_sentences(reply: str) -> List[tuple]:
+    """[(sentence, reason)] for every sentence that promises an action no real mechanism performs."""
+    sents = _split_sentences(reply)
+    return [(s, r) for i, s in enumerate(sents) if (r := _sentence_violation(s, sents[i - 1] if i else ""))]
+
+
+_ACTION_FALLBACK = ("אני לא יכול לבצע פעולות או להפעיל סוכן אחר מתוך השיחה, ואף סוכן לא יעשה את זה בעקבות הודעה כאן.\n"
+                    "פעולה קורה רק דרך פקודה או כפתור - *עזרה* מציג את כולן.")
+
+
+def _strip_unbacked(reply: str) -> str:
+    bad = {s for s, _ in unbacked_action_sentences(reply)}
+    return "\n".join(s for s in _split_sentences(reply) if s not in bad).strip()
+
+
+async def _enforce_action_integrity(reply: str, regenerate) -> tuple:
+    """Return (reply, outcome). outcome: 'clean' | 'regenerated' | 'stripped' | 'fallback'. regenerate(correction) ->
+    a new raw reply (one call). Fail closed: an offending sentence never reaches the owner."""
+    bad = unbacked_action_sentences(reply)
+    if not bad:
+        return reply, "clean"
+    correction = ("\n\n--- תיקון חובה ---\nהתשובה הקודמת שלך הבטיחה פעולה שאין לה מנגנון:\n" +
+                  "\n".join(f"• {s}" for s, _ in bad) +
+                  "\nכתוב מחדש בלי להבטיח שסוכן כלשהו (או אתה) יבצע משהו. מותר רק לומר לחליל איזו פקודה אמיתית "
+                  "*הוא* שולח (עם מזהה) ומה היא עושה. אל תציע *אשר* בלי מזהה ואל תמציא פקודות.")
+    try:
+        second = await regenerate(correction)
+    except Exception:
+        second = ""
+    if second and not unbacked_action_sentences(second):
+        return second, "regenerated"
+    for cand in (second, reply):                     # keep what is true in either draft before giving up
+        stripped = _strip_unbacked(cand or "")
+        if len(stripped) >= 12:
+            return stripped, "stripped"
+    return _ACTION_FALLBACK, "fallback"
 
 
 def _guidelines_text(raw) -> str:
@@ -2331,6 +2484,8 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
             g = await _noa_guidelines_get(db)
             if g:
                 system += ("\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g)
+        if not _is_group:   # post edits never run from the group; there it only leaked into "what did we discuss"
+            system += await _notes_posts_context(db)   # #158 follow-up: real post state even without the button history
         hist = [] if _is_group else await _load_history()
         def _fmt_turn(m):
             if m["role"] == "assistant":
@@ -2351,6 +2506,15 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
         # Execution integrity gate: conversational path is read-only.
         # Reject any reply claiming to have performed a system action.
         reply = _guard_avi_conversational_reply(reply)
+
+        async def _regen(correction: str) -> str:
+            raw = await hf_text(prompt, system=system + correction, priority=True, max_tokens=600,
+                                temperature=_console_temp, reasoning_effort="low")
+            return _guard_avi_conversational_reply(_clean_wa_reply(raw) or "")
+        # ...and no promise that an agent (or AVI) WILL act without a real command behind it (#158 follow-up).
+        reply, _integrity = await _enforce_action_integrity(reply, _regen)
+        if _integrity != "clean":
+            log.info("owner_console action-integrity %s agent=%s", _integrity, agent_key)
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply, "agent": agent_key}]

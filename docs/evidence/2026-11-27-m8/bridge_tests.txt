@@ -1,0 +1,19 @@
+baileys 6.7.24
+index.js syntax OK
+PASS test_atomic_write.mjs
+FAIL test_atomic_write_crash_harness.mjs
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v20.20.2
+PASS test_bridge_lifecycle.mjs
+PASS test_interactive.mjs
+PASS test_jid_policy.mjs
+PASS test_msgcache.mjs
+PASS test_no_raw_recipient_logging.mjs
+PASS test_poll_decrypt.mjs
+PASS test_poll_votes.mjs
+PASS test_receipt_log.mjs
+PASS test_safe_logging.mjs
+PASS test_send_journal.mjs
+PASS test_send_readiness_guard.mjs

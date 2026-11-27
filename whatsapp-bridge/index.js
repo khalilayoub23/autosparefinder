@@ -709,7 +709,11 @@ async function startBot() {
         if (!WA_GROUP_INBOUND_ENABLED) continue
         const mentioned = extractMentions(content)
         const me = [sock.user?.id, sock.user?.lid].filter(Boolean).map((x) => x.split(':')[0].split('@')[0])
-        if (!mentioned.some((m) => me.includes(m.split('@')[0]))) continue
+        const mentionsMe = mentioned.some((m) => me.includes(m.split('@')[0]))
+        // Content-free (#158 follow-up): mention metadata is only present when the sender picked the bot from WhatsApp's
+        // native @ menu; a hand-typed "@name" has none and is dropped here. No text, no numbers.
+        logEvent('GROUP_INBOUND', `mentioned_jid_present=${mentioned.length > 0} mentions_me=${mentionsMe} forwarded=${mentionsMe}`)
+        if (!mentionsMe) continue
         const gtext = content.conversation || content.extendedTextMessage?.text || ''
         try {
           await axios.post(BACKEND_WEBHOOK, {

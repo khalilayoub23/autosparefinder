@@ -114,7 +114,10 @@ _NOTE_OPENERS = ("הערה", "הערות", "תשנ", "שנה", "שני", "תקצ
                  "תורידי", "הורד", "בלי ", "אל ת", "תכתוב", "תכתבי", "תעשה", "תעשי", "תדגיש", "תדגישי", "במקום", "צריך",
                  "לא צריך", "פשוט ת", "notes", "note:", "make it", "shorter", "add ", "remove ")
 # words that talk ABOUT a post's wording (a post never calls itself "the note" or discusses "the words")
-_META_RE = re.compile(r"הער(ה|ות|תי)|תתייחס|תתקנ|תקני|ניסוח|המילים|מילים שלא")
+# #158 follow-up: production a6daabff ("אין מלה שהיא פח אוויר תעשי בדיקה ותשני את המילה של פח...") - singular "the word"
+# and a feminine imperative to NOA ("ותשני את") were missing, so pasted notes read as "ask" and could be published.
+_META_RE = re.compile(r"הער(ה|ות|תי)|תתייחס|תתקנ|תקני|ניסוח|המילים|מילים שלא|המילה|(?<![\u0590-\u05FF])מי?לה\s+ש|"
+                      r"(?<![\u0590-\u05FF])ו?תשני\s+את")
 _FACT_RE = re.compile(r"₪|\d+\s*ש\"?ח|autosparefinder|https?://|#\S+", re.I)
 SHORT_NOTE_CHARS = 60
 
