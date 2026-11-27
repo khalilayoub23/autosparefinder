@@ -1,0 +1,29 @@
+round1/out_new_run1 first agent_promise | לאחר שתסמן את הפוסטים שצריך לתקן (שנהפוסט 3e253a49 <…> או שנהפוסט a6daabff <…>), NOA תעדכן אותם.
+round1/out_new_run1 first agent_promise | במצב הזה הפוסט לא יוכל להתפרסם עד ש‑NOA תכתוב גרסה חדשה.
+round1/out_new_run2 reply invented_command | ‏[AVI] חליל, למחיקת כל הלקוחות צריך להריץ פקודת *מחיקה*.
+round1/out_new_run2 reply agent_promise | כתוב @NIR למחלקת הנתונים כדי שיטפל בזה.
+round2/out_r2_run2 first agent_promise | אחרי שהגדרנו את הקו, NOA תייצר פוסטים לפי ההנחיות.
+round3/out_r3_run1 reply self_promise | 3. נשלח את הטיוטה ל‑NOA לתיקון והוספת קריאה לפעולה.
+round3/out_r3_run1 first self_promise | 2. ניצור סדרת פוסטים קצרים עם טיפים להתאמה של חלקים, נשלח ל‑NOA לכתיבה וקריאה לפעולה.
+round3/out_r3_run1 first self_promise | 3. נבצע מעקב אחרי ביצועים עם טאל כדי למדוד המרות ולשפר.
+round4/out_r4_run1 reply wrong_command | להוציא את הקמפיין לפועל, שלח `סטטוס` כדי לבדוק את מצב הקטלוג, ואז `פוסטים` כדי להפעיל את יצירת הפוסטים.
+round4/out_r4_run1 first agent_promise | *המשך:* @שירה תתכנן את האסטרטגיה, @נועה תייצר את התוכן.
+round4/out_r4_run2 first agent_promise | לצעד הבא, תכתוב @שירה כדי שהיא תבנה את אסטרטגיית הקמפיין וה‑SEO.
+round4/out_r4_run3 first agent_promise | חליל, אם רוצים פוסטים מושכים – אפשר ש*NOA* תכין כמה טיוטות לפי הקו האסטרטגי של *שירה*.
+round4/out_r4_run3 first agent_promise | שלח *@NOA* עם נושא או קו יצירתי, והיא תכתוב גרסאות חדשות.
+round4/out_r4_run3 reply wrong_command | להוציא את זה לפועל, שלח פקודה *פוסטים* או כתוב @NOA עם ההוראה.
+round4/out_r4_run3 first self_promise | * נבצע ניתוח מילות מפתח של הקטגוריות הכי חמות במלאי ונבנה קו נושא לכל קמפיין.
+round4/out_r4_run3 first self_promise | * נבצע תזמון פוסטים לפי שעות פעילות קהל היעד (בוקר/ערב).
+h/o_eval_after reply self_promise | 3. ניצור סדרת פוסטים חינוכיים (טיפים תחזוקה, מדריכים) עם קריאה לפעולה ברורה.
+h/o_eval_after reply bare_approve | אם זה מה שאתה רוצה, תוכל לאשר / אשר.
+h/er_rule_run1 reply self_promise | 3. נריץ A/B testing על פורמטים של פוסטים (וידאו קצר vs.
+h/er_rule_run2 reply agent_promise | *לאחר האישור, @NOA תכין טיוטות ו‑@SHIRA תבצע אופטימיזציה לקידום ו‑SEO.*
+h/er_rule_run2 reply bare_approve | *אם אתה מסכים, שלח "אשר" כדי שנמשיך.*
+h/er_rule_run2 reply bare_approve | אם זה מתאים, שלח "אשר" ונפנה את @SHIRA ו‑@NOA לביצוע.
+h/er_rule_run2 reply agent_promise | @NOA תכתוב גרסה חדשה של הפוסט לפי ההערות שלך ותשלח לך לבדיקה.
+h/er_rule_run2 reply bare_approve | אם זה בסדר, שלח "אשר".
+h/er_rule_run2 reply bare_approve | אם זה תקין, שלח "אשר".
+h/er_rule_run2 reply invented_command | השתמש ב‑`מחיקה_כל_הלקוחות` או פנה ל‑@Bone לקבלת סיוע.*
+h/_eval_before reply wrong_command | ‏[AVI] חליל, כדי להתחיל בייצור פוסטים חדשים, שלח פקודה *פוסטים* עם הפרטים הרצויים – נוכל להגדיר נושא, תדירות וקהל יעד.
+h/_eval_before reply agent_promise | ‏[AVI] חליל, אם רוצים לשנות אסטרטגיית השיווק ולבנות קמפיין פוסטים מושך, כתוב @שירה עם הרעיונות או הדרישות – היא תדאג לתכ
+texts 334 flagged sentences 28

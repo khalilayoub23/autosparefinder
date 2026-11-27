@@ -27,6 +27,23 @@ PROMISES = [
     "כתוב @NIR למחלקת הנתונים כדי שיטפל בזה.",
     # replay round 3
     "3. נשלח את הטיוטה ל‑NOA לתיקון והוספת קריאה לפעולה.",
+    # expert review round 3: real command, wrong meaning (round-4 regenerations)
+    "שלח `סטטוס` כדי לבדוק את מצב הקטלוג, ואז `פוסטים` כדי להפעיל את יצירת הפוסטים.",
+    "להוציא את זה לפועל, שלח פקודה *פוסטים* או כתוב @NOA עם ההוראה.",
+    # expert review round 3: false negatives found by probing the shipped gate
+    "NOA קיבלה את ההערות שלך. היא תכין גרסה חדשה ותשלח לך לבדיקה.",
+    "NOA כבר עובדת על גרסה חדשה.",
+    "בקרוב תקבל מ‑NOA גרסה מתוקנת.",
+    "NOA תנסח מחדש את הפתיח.",
+    "נועה תשפר את הכותרת ותוסיף האשטאגים.",
+    "הפוסט ייכתב מחדש ויישלח אליך.",
+    "המשימה תועבר ל‑NOA.",
+    "אני מעביר את זה לנועה עכשיו.",
+    "ניצור סדרת פוסטים חדשה מחר.",
+    "אכין לך טיוטה ואתזמן אותה.",
+    "NOA is going to rewrite the post tonight.",
+    "הצוות יטפל בזה.",
+    "שלח *שנהפוסט 3e253a49 קצר* ו‑NOA תכתוב גרסה ותפרסם אותה מיד.",
 ]
 
 CLEAN = [
@@ -53,6 +70,14 @@ CLEAN = [
     # replay 2026-11-27 round 2: the real path split over two sentences was wrongly replaced by the fallback
     "חליל, כדי לתקן את הפוסט 3e253a49 לפי ההערות שלך, שלח *שנהפוסט 3e253a49 <ההערות המדויקות>* או לחץ על כפתור NOA "
     "תשכתב. NOA תכתוב גרסה חדשה מהפוסט המקורי.",
+    # expert review round 3: reassurances and the real publish path must pass
+    "NOA לא תפרסם שום דבר בלי האישור שלך.",
+    "NOA תפרסם את הפוסט הבא רק אחרי שתאשר אותו עם *אשר <מזהה>*.",
+    "I can't approve that from here.",
+    "‏[AVI] חליל, לפי ההיסטוריה הפוסטים 3e253a49 ו‑a6daabff כרגע מכילים רק את ההערות שלך ולא יפורסמו.",
+    "‏[AVI] הפוסט הוא ההערות שלך. כדי לתקן, שלח @NOA עם הפקודה *שנהפוסט <מזהה> <ההערות>* והיא תכתוב גרסה חדשה.",
+    "פוסט חדש: *קמפיין <נושא>* - SHIRA בונה קמפיין ו-NOA מייצרת תוכן לאישורך.",
+    "*פוסטים* מציג את הפוסטים שממתינים לאישורך.",
 ]
 
 
@@ -109,6 +134,30 @@ def test_a_promise_two_sentences_after_the_command_is_not_backed():
 def test_numbered_list_is_not_split_at_the_item_number():
     reply = "חליל, הצעה:\n1. נבנה קמפיין ממוקד.\n2. בועז יטפל בתשלום לספק.\n3. נמדוד המרות."
     assert con._strip_unbacked(reply) == "חליל, הצעה:\n1. נבנה קמפיין ממוקד.\n3. נמדוד המרות."
+
+
+def test_saved_guideline_makes_a_first_person_style_promise_true():
+    ack = "מעכשיו אדאג שכל פוסט יכלול קריאה לפעולה."
+    assert con.unbacked_action_sentences(ack)                      # no guideline saved: a promise
+    assert con.unbacked_action_sentences(ack, allow_self=True) == []  # guideline saved this turn: true
+
+
+@pytest.mark.parametrize("text", [
+    "אהבתי את הרעיון והסדר אבל עדיין יש מילים שלא קשורות כמו : \" מתנהלים לאסטרטגיה\" איך המילים הללו קשורים למתלים ?!",
+    "פשוט תתייחסי להערה שרשמתי מקודם",
+    "אין מלה שהיא פח אוויר תעשי בדיקה ותשני את המילה של פח למשהו יותר היגיוני"])
+def test_real_production_owner_notes_are_notes(text):
+    from agents.owner_continuations import looks_like_notes
+    assert looks_like_notes(text, "‏הקפיצים של ה Peugeot 3008 נוטים לצד אחד? קפיצי Coil Spring החל מ-₪412 כולל מע\"מ.")
+
+
+@pytest.mark.parametrize("text", [
+    "‏המילה של החורף: מגבים! 🌧️ מגבים מקוריים ל Mazda 3 החל מ-₪89 כולל מע\"מ. חפשו לפי מספר רישוי.",
+    "‏תשני את ההרגלים לפני החורף 🚗 נוזל קירור מקורי ל Seat Leon רק ₪65. #תחזוקת_רכב",
+    "‏מילה של מכונאי: רפידות שחוקות = סכנה. רפידות ל Kia Picanto מ-₪120 https://autosparefinder.co.il"])
+def test_post_copy_using_those_words_is_still_a_post(text):
+    from agents.owner_continuations import notes_verdict
+    assert notes_verdict(text, "‏פוסט קודם עם מחיר ₪100 וקישור https://autosparefinder.co.il") != "notes"
 
 
 def test_nothing_left_falls_back_and_never_returns_a_promise():

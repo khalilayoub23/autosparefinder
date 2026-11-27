@@ -1199,33 +1199,63 @@ def _guard_avi_conversational_reply(reply: str) -> str:
 # תבצע אופטימיזציה", "נפנה את @SHIRA ו-@NOA לביצוע", an invented command (`מחיקה_כל_הלקוחות`). The conversational path
 # cannot act, so a sentence may say another agent (or "I"/"we") WILL DO something only when that sentence names the real
 # owner command that makes it happen ("send *שנהפוסט 3e253a49 ...* and NOA writes a version").
-_AGENT_SUBJECT = re.compile(
-    r"(?<![\w֐-׿])@?(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|MAYA|מאיה|LIOR|ליאור|DANA|דנה|OREN|אורן|"
-    r"REX|רקס|Bone|בון|בוני|AVI|אבי|TAL)(?![\w֐-׿])", re.I)
-_ACTION_ROOTS = ("כתוב", "כין", "שלח", "בצע", "טפל", "דאג", "עביר", "פרסם", "עדכן", "תקן", "ריץ", "שכתב", "אשר", "זמין",
-                 "שלם", "צור", "יצור", "ייצר", "עלה", "פעיל", "חזור", "קשר", "פנה", "סדר", "ארגן", "בנה", "העלה", "מחק")
-_THIRD_FUTURE = re.compile(r"(?<![֐-׿])(?:[וש])?[תי](?:" + "|".join(_ACTION_ROOTS) + r")(?:ו)?(?![֐-׿])")
+_HEB = "֐-׿"
+_AGENT_NAMES = (r"NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|MAYA|מאיה|LIOR|ליאור|DANA|דנה|OREN|אורן|REX|רקס|Bone|בון|בוני|"
+                r"AVI|אבי|TAL|הצוות|הסוכנים|הסוכן|הסוכנת")
+_AGENT_SUBJECT = re.compile(rf"(?<![\w{_HEB}])@?(?:{_AGENT_NAMES})(?![\w{_HEB}])", re.I)
+_PRONOUN = re.compile(rf"(?<![{_HEB}])[ו]?(?:היא|הוא|הם|הן)(?![{_HEB}])")
+# future (3rd person / 2nd person "you'll get"), incl. feminine -י / plural -ו suffix
+_ACTION_ROOTS = ("כתוב", "כתב", "כין", "שלח", "בצע", "טפל", "דאג", "עביר", "פרסם", "עדכן", "תקן", "ריץ", "שכתב", "אשר",
+                 "זמין", "שלם", "צור", "יצור", "ייצר", "עלה", "פעיל", "חזור", "קשר", "פנה", "סדר", "ארגן", "בנה", "העלה",
+                 "מחק", "נסח", "שפר", "חליף", "וסיף", "בדוק", "שנה", "שנ", "תזמן", "קבל", "גיש")
+_THIRD_FUTURE = re.compile(rf"(?<![{_HEB}])(?:[וש])?[תי](?:" + "|".join(_ACTION_ROOTS) + rf")(?:ו|י)?(?![{_HEB}])")
+# present tense with an agent subject: "NOA כבר עובדת על גרסה"
+_PRESENT_ACTION = re.compile(rf"(?<![{_HEB}])(?:עובד|עובדת|עובדים|מכין|מכינה|מטפל|מטפלת|שולח|שולחת|מעביר|מעבירה|"
+                             rf"מפרסם|מפרסמת|מנסח|מנסחת|משכתב|משכתבת|מתקן|מתקנת)(?![{_HEB}])")
+# future passive: "הפוסט ייכתב מחדש ויישלח", "המשימה תועבר ל-NOA"
+_PASSIVE_FUTURE = re.compile(rf"(?<![{_HEB}])(?:[וש])?(?:ייכתב|ייכתבו|יישלח|יישלחו|תישלח|יועבר|תועבר|יועברו|יפורסם|תפורסם|"
+                             rf"יפורסמו|יתוקן|תתוקן|יטופל|תטופל|יבוצע|תבוצע|יעודכן|תעודכן|ינוסח|תנוסח|יוכן|תוכן\s+גרסה)(?![{_HEB}])")
 _FIRST_PROMISE = re.compile(
-    r"(?<![֐-׿])(?:[וש])?(?:אעביר|אשלח|אדאג|אטפל|אבצע|אפרסם|אריץ|אפעיל|אקשר|אחזור\s+אליך|אעדכן\s+אותך|"
-    r"נעביר|נשלח\s+את|נדאג|נטפל|נבצע|נפרסם|נריץ|נפעיל|נפנה\s+את)(?![֐-׿])"
-    r"|\bI(?:'ll| will)\s+(?:forward|send|pass|make sure|handle|publish|run|trigger)\b"
-    r"|\b(?:NOA|SHIRA|BOAZ|NIR|Bone)\s+will\s+\w+", re.I)
-# "send 'אשר' to continue" with no id after it
-_BARE_APPROVE = re.compile(r"""(?:^|[\s"'*`״׳(:])(?:אשר|approve)(?=["'*`״׳)]|\s*(?:כדי|ונ|$|[.,!\n]))""", re.I)
+    rf"(?<![{_HEB}])(?:[וש])?(?:אעביר|אשלח|אדאג|אטפל|אבצע|אפרסם|אריץ|אפעיל|אקשר|אחזור\s+אליך|אעדכן\s+אותך|אכין|אתזמן|"
+    rf"אעלה|נעביר|נשלח\s+את|נדאג|נטפל|נבצע|נפרסם|נריץ|נפעיל|נפנה\s+את|ניצור|נכין|נתזמן|"
+    rf"אני\s+(?:מעביר|מעבירה|שולח|שולחת|מכין|מכינה|דואג|דואגת|מטפל|מטפלת|מפרסם|מפרסמת))(?![{_HEB}])"
+    r"|\bI(?:'ll| will| am going to)\s+(?:forward|send|pass|make sure|handle|publish|run|trigger|schedule|post)\b"
+    r"|\b(?:NOA|SHIRA|BOAZ|NIR|Bone|the team)\s+(?:will|is going to|'ll)\s+\w+", re.I)
+# negated promises are reassurances, not promises: "NOA לא תפרסם שום דבר בלי האישור שלך"
+_NEGATED = re.compile(rf"(?<![{_HEB}])ו?(?:לא|לעולם\s+לא|אף\s+פעם\s+לא|אף\s+אחד\s+לא|שום\s+\S+\s+לא)\s+[{_HEB}]+")
+_PUBLISH_VERB = re.compile(rf"(?<![{_HEB}])(?:[וש])?(?:[תי]פרסם|[תי]אשר|יפורסם|תפורסם|מפרסמ\S*)(?:ו|י)?(?![{_HEB}])")
+_APPROVE_WITH_ID = re.compile(r"[*\"'`״]\s*(?:אשר|approve)\s+(?:[0-9a-f]{6,}|<|\[)", re.I)
+# "send 'אשר' to continue" with no id after it (English only when quoted/bolded: "I can't approve" is fine)
+_BARE_APPROVE = re.compile(r"""(?:(?:^|[\s"'*`״׳(:])אשר(?=["'*`״׳)]|\s*(?:כדי|ונ|$|[.,!\n]))|["'*`]approve["'*`])""", re.I)
 _COMMAND_CONTEXT = re.compile(r"פקוד|שלח|השתמש|הקלד|כתוב|\b(?:type|send|command|use)\b", re.I)
 _ADDRESSING = re.compile(
-    r"(?<![\u0590-\u05FF])(?:ו)?(?:כתוב|תכתוב|שלח|תשלח|פנה|תפנה)\s+(?:ל[-\u2011]?\s*|אל\s+)?@?"
-    r"(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|Bone|בון|בוני|AVI|אבי)(?![\w\u0590-\u05FF])", re.I)
+    rf"(?<![{_HEB}])(?:ו)?(?:כתוב|תכתוב|שלח|תשלח|פנה|תפנה)\s+(?:ל[-‑]?\s*|אל\s+)?@?"
+    rf"(?:NOA|נועה|SHIRA|שירה|BOAZ|בועז|בואז|NIR|ניר|Bone|בון|בוני|AVI|אבי)(?![\w{_HEB}])", re.I)
 _NAMED_COMMAND = re.compile(r"פקוד|\bcommand\b", re.I)   # "run the command *X*": a bolded X must be a real command
 _CODE_TOKEN = re.compile(r"`([^`\n]{2,40})`|\*([^*\s<\[]{2,30})\*")
-# The real owner commands that make an agent act, and which agents they back (_HELP).
+# What each command really does (expert review round 3: the gate checked that a command EXISTS, so the model named a real
+# command with the wrong meaning - "send *פוסטים* to start creating posts"; פוסטים only LISTS pending posts).
 _BACKING_COMMANDS = {
     "שנהפוסט": {"NOA"}, "קמפיין": {"SHIRA", "NOA"}, "ביצועים": {"SHIRA"}, "סרוק קבוצות": {"NOA"}, "ענה": {"NOA"},
     "מקורות": {"NIR"}, "אשררכש": {"BOAZ"}, "הוזמןידנית": {"BOAZ"}, "אשרתשלוםספק": {"BOAZ"}, "אשרספק": {"NIR"},
     "אשרפניותספקים": {"NIR"}, "הרץ משימה": {"AVI"}, "הרץ שאיבה": {"AVI", "REX"}, "הרץ ייבוא": {"AVI"},
 }
+_DISPLAY_ONLY = ("פוסטים", "סטטוס", "שאיבה", "שאיבות", "תגובות", "ספקים", "הנחיות", "הזמנות", "מיילים", "עובדים", "תור",
+                 "מילים", "מודל", "גרופים", "קבוצות", "רכש", "עזרה")
+_TRIGGER_PURPOSE = re.compile(rf"כדי\s+(?:ש|ל)?\S*\s*(?:ה?פעיל|ליצור|יצירת|לייצר|ייצור|לבצע|להוציא|להתחיל|לקבל\s+(?:פוסט|גרסה|קמפיין)|"
+                              r"לכתוב|לנסח|לפרסם|ל?שנות)|(?:ל)?הפעלת|להפעיל\s+את|להוציא\s+(?:את\s+)?(?:זה|הקמפיין|לפועל)")
+COMMAND_MEANINGS = (
+    "\n\nמה כל פקודה עושה באמת (אל תייחס לפקודה פעולה שהיא לא עושה):\n"
+    "• פוסט חדש / קמפיין חדש: *קמפיין <נושא>* - SHIRA בונה קמפיין ו-NOA מייצרת תוכן לאישור.\n"
+    "• פוסט קיים: *שנהפוסט <מזהה> <מה לשנות>* - NOA כותבת גרסה; *ערוך <מזהה> <טקסט>* - מילה במילה; "
+    "*אשר <מזהה>* - מאשר ומפרסם; *דחה <מזהה>*.\n"
+    "• תצוגה בלבד (לא מפעילות כלום): *פוסטים*, *סטטוס*, *שאיבה*, *תגובות*, *ספקים*, *הנחיות*, *הזמנות*, *רכש*, *עזרה*.\n"
+    "• כתיבת @שם-סוכן רק מעבירה את השיחה לסוכן - הוא עונה בצ'אט; הוא לא יוצר פוסט, משימה או פעולה מהשיחה.\n"
+    "• כשאין פקודה שעושה את מה שחליל רוצה - אמור זאת בפשטות, אל תבטיח שמישהו יעשה."
+)
 _AGENT_CANON = {"נועה": "NOA", "שירה": "SHIRA", "בועז": "BOAZ", "בואז": "BOAZ", "ניר": "NIR", "מאיה": "MAYA",
-                "ליאור": "LIOR", "דנה": "DANA", "אורן": "OREN", "רקס": "REX", "בון": "BONE", "בוני": "BONE", "אבי": "AVI"}
+                "ליאור": "LIOR", "דנה": "DANA", "אורן": "OREN", "רקס": "REX", "בון": "BONE", "בוני": "BONE", "אבי": "AVI",
+                "הצוות": "TEAM", "הסוכנים": "TEAM", "הסוכן": "TEAM", "הסוכנת": "TEAM"}
 _KNOWN_COMMAND_CACHE: set = set()
 
 
@@ -1249,72 +1279,92 @@ def _split_sentences(text: str) -> List[str]:
 def _backing(text: str) -> set:
     """Agents that a real owner command (bolded/quoted) or the NOA rewrite button named in `text` makes act."""
     out = {a for cmd, agents in _BACKING_COMMANDS.items()
-           if re.search(r"[*\"'`\u05f4]\s*" + re.escape(cmd), text) for a in agents}
-    if re.search(r"NOA\s+תשכתב", text):          # the button label (owner_interactions post buttons)
+           if re.search(r"[*\"'`״]\s*" + re.escape(cmd), text) for a in agents}
+    if re.search(r"NOA\s+תשכתב", text) or _APPROVE_WITH_ID.search(text):   # the rewrite button / *אשר <id>* publishes
         out.add("NOA")
     return out
 
 
-def _sentence_violation(s: str, prev: str = "") -> str:
+def _agents_in(text: str) -> set:
+    text = re.sub(r"\[(?:AVI|NOA|SHIRA|Bone)\]", " ", text)   # the reply's own speaker tag is not a subject
+    return {_AGENT_CANON.get(x.strip("@"), x.strip("@").upper()) for x in _AGENT_SUBJECT.findall(text)}
+
+
+def _sentence_violation(s: str, prev: str = "", allow_self: bool = False) -> str:
     """'' when the sentence is fine, else a short reason code. `prev` = the sentence before it: "send *שנהפוסט X ...*.
-    NOA then writes a version" is the conditional real path split over two sentences (replay 2026-11-27 run 2)."""
+    NOA then writes a version" is the conditional real path split over two sentences; a pronoun ("היא תכין") takes its
+    subject from there. allow_self: a NOA standing guideline was really saved this turn, so "מעכשיו אדאג ש..." is true."""
     if _BARE_APPROVE.search(s) and not re.search(r"(?:אשר|approve)\s+[0-9a-f]{6,}", s, re.I):
         return "bare_approve"
     for m in (_CODE_TOKEN.finditer(s) if _COMMAND_CONTEXT.search(s) else ()):
         tok = (m.group(1) or m.group(2) or "").strip()
-        looks_cmd = "_" in tok or ((m.group(1) is not None or _NAMED_COMMAND.search(s)) and " " not in tok
-                                   and re.fullmatch(r"[֐-׿A-Za-z]+", tok or ""))
-        if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", tok):   # run_all_tasks: a task NAME (e.g. after *הרץ משימה*), not a command
+        if re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)+", tok):   # run_all_tasks: a task NAME (e.g. after *הרץ משימה*)
             continue
+        looks_cmd = "_" in tok or ((m.group(1) is not None or _NAMED_COMMAND.search(s)) and " " not in tok
+                                   and re.fullmatch(rf"[{_HEB}A-Za-z]+", tok or ""))
         if looks_cmd and tok.split()[0].strip("@").lower() not in _known_commands():
             return "invented_command"
+    # a display-only command offered as the way to MAKE something happen
+    if _TRIGGER_PURPOSE.search(s) and any(re.search(r"[*\"'`״]\s*" + c + r"\s*[*\"'`״]", s) for c in _DISPLAY_ONLY) \
+            and not _backing(s):
+        return "wrong_command"
     backed = _backing(s) | _backing(prev)
     # "כתוב @שירה" / "שלח ל-NOA" tell the OWNER whom to address (the real sticky switch) - not the agent acting.
-    s_act = _ADDRESSING.sub(" ", s)
-    agents = {_AGENT_CANON.get(x.strip("@"), x.strip("@").upper()) for x in _AGENT_SUBJECT.findall(s_act)}
-    if agents and _THIRD_FUTURE.search(s_act) and not (agents & backed):
+    s_act = _NEGATED.sub(" ", _ADDRESSING.sub(" ", s))
+    agents = _agents_in(s_act)
+    if not agents and _PRONOUN.search(s_act):
+        # "שלח @NOA ... והיא תכתוב": the pronoun is the agent addressed in this sentence; else the previous sentence's
+        agents = _agents_in(s) or _agents_in(_ADDRESSING.sub(" ", prev))
+    acting = _THIRD_FUTURE.search(s_act) or (agents and _PRESENT_ACTION.search(s_act))
+    if _PUBLISH_VERB.search(s_act) and not (_APPROVE_WITH_ID.search(s) or _APPROVE_WITH_ID.search(prev)):
+        if agents or _PASSIVE_FUTURE.search(s_act):
+            return "publish_promise"   # only *אשר <id>* publishes; no command makes an agent publish on its own
+    if agents and acting and not (agents & backed):
         return "agent_promise"
     # "כתוב @שירה - היא תדאג לתכנון" / "כתוב @NIR כדי שיטפל בזה": the agent was addressed, then its action is promised
-    if s_act != s and _THIRD_FUTURE.search(s_act) and not backed:
+    if s_act != _NEGATED.sub(" ", s) and _THIRD_FUTURE.search(s_act) and not backed:
         return "agent_promise"
-    if _FIRST_PROMISE.search(s) and not backed:
+    if _PASSIVE_FUTURE.search(s_act) and not backed:
+        return "passive_promise"
+    if not allow_self and _FIRST_PROMISE.search(_NEGATED.sub(" ", s)) and not backed:
         return "self_promise"
     return ""
 
 
-def unbacked_action_sentences(reply: str) -> List[tuple]:
+def unbacked_action_sentences(reply: str, allow_self: bool = False) -> List[tuple]:
     """[(sentence, reason)] for every sentence that promises an action no real mechanism performs."""
     sents = _split_sentences(reply)
-    return [(s, r) for i, s in enumerate(sents) if (r := _sentence_violation(s, sents[i - 1] if i else ""))]
+    return [(s, r) for i, s in enumerate(sents) if (r := _sentence_violation(s, sents[i - 1] if i else "", allow_self))]
 
 
 _ACTION_FALLBACK = ("אני לא יכול לבצע פעולות או להפעיל סוכן אחר מתוך השיחה, ואף סוכן לא יעשה את זה בעקבות הודעה כאן.\n"
                     "פעולה קורה רק דרך פקודה או כפתור - *עזרה* מציג את כולן.")
 
 
-def _strip_unbacked(reply: str) -> str:
-    bad = {s for s, _ in unbacked_action_sentences(reply)}
+def _strip_unbacked(reply: str, allow_self: bool = False) -> str:
+    bad = {s for s, _ in unbacked_action_sentences(reply, allow_self)}
     return "\n".join(s for s in _split_sentences(reply) if s not in bad).strip()
 
 
-async def _enforce_action_integrity(reply: str, regenerate) -> tuple:
+async def _enforce_action_integrity(reply: str, regenerate, allow_self: bool = False) -> tuple:
     """Return (reply, outcome). outcome: 'clean' | 'regenerated' | 'stripped' | 'fallback'. regenerate(correction) ->
     a new raw reply (one call). Fail closed: an offending sentence never reaches the owner."""
-    bad = unbacked_action_sentences(reply)
+    bad = unbacked_action_sentences(reply, allow_self)
     if not bad:
         return reply, "clean"
-    correction = ("\n\n--- תיקון חובה ---\nהתשובה הקודמת שלך הבטיחה פעולה שאין לה מנגנון:\n" +
+    correction = ("\n\n--- תיקון חובה ---\nהתשובה הקודמת שלך הבטיחה פעולה שאין לה מנגנון, או ייחסה לפקודה פעולה שהיא לא עושה:\n" +
                   "\n".join(f"• {s}" for s, _ in bad) +
                   "\nכתוב מחדש בלי להבטיח שסוכן כלשהו (או אתה) יבצע משהו. מותר רק לומר לחליל איזו פקודה אמיתית "
-                  "*הוא* שולח (עם מזהה) ומה היא עושה. אל תציע *אשר* בלי מזהה ואל תמציא פקודות.")
+                  "*הוא* שולח (עם מזהה) ומה היא עושה באמת לפי הטבלה. אל תציע *אשר* בלי מזהה ואל תמציא פקודות. "
+                  "אם אין פקודה שעושה את זה - אמור זאת בפשטות." + COMMAND_MEANINGS)
     try:
         second = await regenerate(correction)
     except Exception:
         second = ""
-    if second and not unbacked_action_sentences(second):
+    if second and not unbacked_action_sentences(second, allow_self):
         return second, "regenerated"
     for cand in (second, reply):                     # keep what is true in either draft before giving up
-        stripped = _strip_unbacked(cand or "")
+        stripped = _strip_unbacked(cand or "", allow_self)
         if len(stripped) >= 12:
             return stripped, "stripped"
     return _ACTION_FALLBACK, "fallback"
@@ -2484,6 +2534,7 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
             g = await _noa_guidelines_get(db)
             if g:
                 system += ("\n\n--- הנחיות קבועות מהבעלים (חובה לפעול לפיהן) ---\n" + g)
+        system += COMMAND_MEANINGS   # expert review r3: what each command really does (the model named real commands wrongly)
         if not _is_group:   # post edits never run from the group; there it only leaked into "what did we discuss"
             system += await _notes_posts_context(db)   # #158 follow-up: real post state even without the button history
         hist = [] if _is_group else await _load_history()
@@ -2512,9 +2563,12 @@ async def _process_owner_message(message: str, db, source: str = "whatsapp", quo
                                 temperature=_console_temp, reasoning_effort="low")
             return _guard_avi_conversational_reply(_clean_wa_reply(raw) or "")
         # ...and no promise that an agent (or AVI) WILL act without a real command behind it (#158 follow-up).
-        reply, _integrity = await _enforce_action_integrity(reply, _regen)
+        # A NOA standing guideline really saved this turn makes "מעכשיו אדאג ש..." true (expert review r3, S4).
+        reply, _integrity = await _enforce_action_integrity(reply, _regen, allow_self=bool(saved_note))
         if _integrity != "clean":
             log.info("owner_console action-integrity %s agent=%s", _integrity, agent_key)
+        if _integrity == "fallback" and saved_note:
+            reply = "קיבלתי."   # never "no agent will act on this" next to "I saved the guideline and will follow it"
         reply += saved_note
         hist2 = hist + [{"role": "user", "content": clean},
                         {"role": "assistant", "content": reply, "agent": agent_key}]

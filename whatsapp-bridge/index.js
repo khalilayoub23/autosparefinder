@@ -712,7 +712,12 @@ async function startBot() {
         const mentionsMe = mentioned.some((m) => me.includes(m.split('@')[0]))
         // Content-free (#158 follow-up): mention metadata is only present when the sender picked the bot from WhatsApp's
         // native @ menu; a hand-typed "@name" has none and is dropped here. No text, no numbers.
-        logEvent('GROUP_INBOUND', `mentioned_jid_present=${mentioned.length > 0} mentions_me=${mentionsMe} forwarded=${mentionsMe}`)
+        // Only messages that try to address someone (metadata, or an "@" typed by hand) - ordinary group chatter would evict
+        // connection history from the capped event log (expert review r3, S6). The text itself is never logged.
+        const gt = content.conversation || content.extendedTextMessage?.text || ''
+        if (mentioned.length || gt.includes('@')) {
+          logEvent('GROUP_INBOUND', `mentioned_jid_present=${mentioned.length > 0} mentions_me=${mentionsMe} forwarded=${mentionsMe}`)
+        }
         if (!mentionsMe) continue
         const gtext = content.conversation || content.extendedTextMessage?.text || ''
         try {

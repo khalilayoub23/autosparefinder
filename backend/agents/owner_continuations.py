@@ -114,10 +114,11 @@ _NOTE_OPENERS = ("הערה", "הערות", "תשנ", "שנה", "שני", "תקצ
                  "תורידי", "הורד", "בלי ", "אל ת", "תכתוב", "תכתבי", "תעשה", "תעשי", "תדגיש", "תדגישי", "במקום", "צריך",
                  "לא צריך", "פשוט ת", "notes", "note:", "make it", "shorter", "add ", "remove ")
 # words that talk ABOUT a post's wording (a post never calls itself "the note" or discusses "the words")
-# #158 follow-up: production a6daabff ("אין מלה שהיא פח אוויר תעשי בדיקה ותשני את המילה של פח...") - singular "the word"
-# and a feminine imperative to NOA ("ותשני את") were missing, so pasted notes read as "ask" and could be published.
-_META_RE = re.compile(r"הער(ה|ות|תי)|תתייחס|תתקנ|תקני|ניסוח|המילים|מילים שלא|המילה|(?<![\u0590-\u05FF])מי?לה\s+ש|"
-                      r"(?<![\u0590-\u05FF])ו?תשני\s+את")
+_META_RE = re.compile(r"הער(ה|ות|תי)|תתייחס|תתקנ|תקני|ניסוח|המילים|מילים שלא")
+# #158 follow-up: production a6daabff ("אין מלה שהיא פח אוויר תעשי בדיקה ותשני את המילה של פח...") - singular "the word" and
+# a feminine imperative to NOA. These also occur in ordinary post copy ("המילה של החורף", "תשני את ההרגלים"), so they count
+# only for a text WITHOUT post facts (expert review r3, S5); a6daabff v2 and 3e253a49 v3/v4 carry none.
+_META_WORDING_RE = re.compile(r"המילה|(?<![\u0590-\u05FF])מי?לה\s+ש|(?<![\u0590-\u05FF])ו?תשני\s+את")
 _FACT_RE = re.compile(r"₪|\d+\s*ש\"?ח|autosparefinder|https?://|#\S+", re.I)
 SHORT_NOTE_CHARS = 60
 
@@ -135,7 +136,7 @@ def notes_verdict(text: str, current: str) -> str:
     t, cur = (text or "").strip(), (current or "").strip()
     if not t:
         return "post"
-    if _META_RE.search(t) or (len(t) < SHORT_NOTE_CHARS and t.lower().startswith(_NOTE_OPENERS)
+    if _META_RE.search(t) or (_META_WORDING_RE.search(t) and not _FACT_RE.search(t)) or (len(t) < SHORT_NOTE_CHARS and t.lower().startswith(_NOTE_OPENERS)
                               and not _FACT_RE.search(t)):     # a short post with a price/hashtag is a post
         return "notes"
     cur_facts = bool(_FACT_RE.search(cur))
