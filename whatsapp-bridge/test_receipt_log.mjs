@@ -32,3 +32,10 @@ console.log('PASS receipt_log')
   assert.equal(rawReceiptLine({ attrs: { from: '972500000000@s.whatsapp.net', id: 'X1' } }), 'scope=dm type=delivery participant=false items=0 id=X1')
   console.log('rawReceiptLine: ok')
 }
+
+{
+  // live 2026-11-27: Baileys emits receiptTimestamp: NaN for a group delivery stanza without `t`
+  const l = receiptLines([{ key: { remoteJid: '120363428683447639@g.us', id: '3EB010BDCF', fromMe: true }, receipt: { userJid: 'x@lid', receiptTimestamp: NaN } }])
+  assert.deepEqual(l, ['scope=group kind=delivery id=10BDCF'])
+  console.log('NaN delivery timestamp: ok')
+}

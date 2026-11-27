@@ -31,7 +31,9 @@ export function receiptLines(updates) {
   for (const u of Array.isArray(updates) ? updates : []) {
     const r = u?.receipt || {}
     if (!u?.key?.fromMe) continue
-    const kind = r.playedTimestamp ? 'played' : r.readTimestamp ? 'read' : r.receiptTimestamp ? 'delivery' : ''
+    // by KEY, not value: a group delivery stanza without `t` arrives as receiptTimestamp: NaN (+undefined) and was dropped
+    // (live 2026-11-27: RECEIPT_RAW type=delivery for …10BDCF, no RECEIPT line)
+    const kind = 'playedTimestamp' in r ? 'played' : 'readTimestamp' in r ? 'read' : 'receiptTimestamp' in r ? 'delivery' : ''
     if (!kind) continue
     out.push(`scope=${scopeOf(u.key.remoteJid)} kind=${kind} id=${idTail(u.key.id)}`)
   }

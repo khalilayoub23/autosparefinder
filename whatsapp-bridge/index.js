@@ -666,7 +666,8 @@ async function startBot() {
   try {
     sock.ws.on('CB:receipt', (node) => {
       try { const l = retryLine(node); if (l) logEvent('RETRY_RECV', l) } catch {}
-      try { logEvent('RECEIPT_RAW', rawReceiptLine(node)) } catch {}
+      // group only: 1:1 customer receipts would flood the capped event log (expert review r3, S6)
+      try { if (String(node?.attrs?.from || '').endsWith('@g.us')) logEvent('RECEIPT_RAW', rawReceiptLine(node)) } catch {}
     })
   } catch {}
 
