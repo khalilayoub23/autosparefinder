@@ -1,4 +1,4 @@
-"""Tests for process/debug_escalation.py (the Two-Attempt Debugging Rule ledger). Run: python3 -m pytest process/test_debug_escalation.py"""
+"""Tests for .claude/process/debug_escalation.py (the Two-Attempt Debugging Rule ledger). Run: python3 -m pytest .claude/process/test_debug_escalation.py"""
 import json
 import subprocess
 import sys
@@ -67,3 +67,15 @@ def test_cli_exit_code_through_a_real_subprocess(tmp_path):
         assert run("attempt", "I6", "--cause", "suspected cause", "--action", act, "--verify", "run the tests", "--outcome", "failed").returncode == rc
     r = run("attempt", "I6", "--cause", "a third cause", "--action", "third approach to bug", "--verify", "run tests again", "--outcome", "failed")
     assert r.returncode == 3 and "LOCKED" in r.stderr
+
+
+def test_resolved_closes_only_an_escalated_issue(tmp_path):
+    assert att("I7", "failed") == 0
+    assert de.main(["resolved", "I7", "--by", "Opus agent fix", "--verified", "pytest 5 passed"]) == 2   # not escalated
+    assert att("I7", "failed", action="second approach: other fix") == de.EXIT_ESCALATE
+    assert de.main(["handoff", "I7", "--task", "t", "--acceptance", "a", "--out", str(tmp_path / "h.md")]) == 0
+    assert de.main(["escalated", "I7"]) == 0
+    assert de.main(["resolved", "I7", "--by", "x", "--verified", "pytest 5 passed"]) == 2               # vague
+    assert de.main(["resolved", "I7", "--by", "Opus agent: two stable sorts", "--verified", "Claude re-ran pytest: 5 passed"]) == 0
+    assert de.main(["status", "I7"]) == 0
+    assert de.main(["resolved", "I7", "--by", "Opus agent again", "--verified", "re-ran pytest again"]) == 2  # already closed

@@ -1,5 +1,7 @@
 # Claude → Opus debug escalation (CLAUDE.md §4 golden rule 10)
 
+> Moved from `candidates/maint-safety-2026-11-01/process/` to `.claude/process/` on 2026-11-27 (FIXES_TRACKER #160).
+
 ## Where the rule lives
 `/opt/autosparefinder/CLAUDE.md` → "Golden rules (every task, every session)" → rule **10. Two-Attempt Debugging Rule**. CLAUDE.md is the project
 instruction file Claude Code loads at the start of every session (it is what rules 1-9, including rule 8 production safety, already use).
@@ -22,22 +24,31 @@ nominal tasks. Not for routine implementation, normal testing, documentation or 
   instruction plus an auditable trail.
 * The Agent tool's own guidance says not to spawn agents unless asked; the owner's rule 10 is that standing request for the escalation case only.
 
-## The ledger / handoff tool: `process/debug_escalation.py` (tests: `process/test_debug_escalation.py`, 6 pass)
+## The ledger / handoff tool: `.claude/process/debug_escalation.py` (tests: `.claude/process/test_debug_escalation.py`)
+Ledger directory: `$DEBUG_LEDGER_DIR`, default `./.debug_ledger/` (git-ignored since 2026-11-27).
 ```
 DEBUG_LEDGER_DIR=<dir>  # default ./.debug_ledger
 debug_escalation.py attempt ISSUE --cause … --action … --verify … --outcome fixed|failed|no-progress [--evidence …]
    # exit 0 = continue (OK); exit 3 = ESCALATE (2 attempts did not fix) or LOCKED (a 3rd attempt was refused); exit 2 = rejected (vague / repeat)
 debug_escalation.py handoff ISSUE --task … --acceptance … [--file F]… [--error …] [--repo DIR] [--out handoff.md]   # refuses before 2 failed attempts
 debug_escalation.py escalated ISSUE ; debug_escalation.py status ISSUE
+debug_escalation.py resolved ISSUE --by "<who fixed it, how>" --verified "<what Claude re-ran + result>"   # closes an escalated issue (added 2026-11-27)
 ```
 The handoff contains: original task + expected outcome, exact error, both attempts with their hypotheses/outcomes/evidence, files, HEAD +
 `git status --short`, the fixed production-safety constraints (restart/recreate/stop ban, protected scans/jobs, no data change/commit/push, no
 credentials, escalation overrides no approval gate), acceptance criteria and the return format. Credentials are never read or included.
 Use ONE issue id per root problem (splitting is not mechanically detectable).
 
-## Closing after Opus returns
-Claude reviews the diff, re-runs the acceptance tests itself, rejects unsupported PASS claims, updates `FIXES_TRACKER.md`, reports remaining blockers.
+## While Opus works
+Claude keeps working on every other independent register item (CLAUDE.md §1 protocol step C) and stays accountable for the whole
+assignment. Ending the turn is allowed only when every open item depends on the Opus result. Start the Opus `Agent` call in the background (`run_in_background: true` where offered); if only a foreground call is available, finish the independent items first, then start it. Give the Opus agent `isolation: "worktree"` (or keep its files/tests disjoint from yours and note that in the register) so neither run's evidence is ambiguous.
 
-## Rehearsal evidence (2026-11-02) - see `evidence/escalation_drill/`
+## Closing after Opus returns
+Claude (1) reviews the diff, (2) re-runs the acceptance tests itself, (3) rejects unsupported PASS claims, (4) verifies cross-layer
+integration and, where authorized, production behaviour (read-only checks need no approval; deploys do), (5) updates docs and
+`FIXES_TRACKER.md`, (6) lists unresolved limitations and blockers, and (7) records the consult (question, findings, accepted /
+rejected, verification) in the final report, then (8) closes the ledger with `resolved`.
+
+## Rehearsal evidence (2026-11-02) - see `candidates/maint-safety-2026-11-01/evidence/escalation_drill/`
 A real round trip on a scratch problem (not production): two genuine attempts failed (10/12 cases), the ledger refused a third, the handoff was built, an Opus agent was started
 with it, and its result was reviewed and re-verified by Claude (details in the FIXES_TRACKER entry).

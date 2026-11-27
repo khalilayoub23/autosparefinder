@@ -98,3 +98,6 @@ state/fb_browser_session/
 whatsapp-bridge/poll_map.json
 # live bridge send journal (same sensitivity class as msg_cache.json)
 whatsapp-bridge/send_journal.json
+
+# Two-Attempt Debugging ledger (CLAUDE.md golden rule 10)
+.debug_ledger/

@@ -6,16 +6,18 @@ Process: `attempt` records one genuine debugging attempt (suspected root cause, 
          after TWO attempts that did not fix the issue the ledger is LOCKED (exit 3): a third attempt is refused until `handoff`
          has produced the Opus context package and `escalated` has been recorded. `handoff` writes that package (attempts, git
          state, constraints, acceptance criteria) - it refuses before two failed attempts. `status` prints OK / ESCALATE.
+         `resolved` records that the ESCALATED issue was fixed and that Claude re-verified it (closes the ledger).
 Data Imported/Modified: only the ledger file (default $DEBUG_LEDGER_DIR or ./.debug_ledger/<issue>.json).
 Limits (honest): a tool cannot stop Claude from debugging without recording; it is the checkable trail the rule relies on.
          Splitting one underlying problem into several issue ids is NOT detectable here: use one id per ROOT problem.
-Last Updated: 2026-11-02
+Last Updated: 2026-11-27 (`resolved` added, FIXES_TRACKER #160)
 
 Usage:
   debug_escalation.py attempt  ISSUE --cause TEXT --action TEXT --verify TEXT --outcome fixed|failed|no-progress [--evidence TEXT]
   debug_escalation.py status   ISSUE
   debug_escalation.py handoff  ISSUE --task TEXT --acceptance TEXT [--file PATH ...] [--error TEXT] [--out FILE] [--repo DIR]
   debug_escalation.py escalated ISSUE
+  debug_escalation.py resolved ISSUE --by TEXT --verified TEXT
 """
 from __future__ import annotations
 
@@ -104,7 +106,10 @@ def cmd_status(a) -> int:
     led = load(a.issue)
     n = failed_count(led)
     if led["closed"]:
-        print(f"{a.issue}: FIXED after {len(led['attempts'])} attempt(s) - continue with normal verification")
+        if led.get("resolution"):
+            print(f"{a.issue}: RESOLVED after escalation by {led['resolution']['by']} - re-verified: {led['resolution']['verified']}")
+        else:
+            print(f"{a.issue}: FIXED after {len(led['attempts'])} attempt(s) - continue with normal verification")
         return 0
     if n >= MAX_ATTEMPTS:
         state = "escalated to Opus" if led["escalated"] else ("handoff built, record `escalated`" if led["handoff_built"] else "build the handoff")
@@ -167,6 +172,26 @@ def cmd_escalated(a) -> int:
     return 0
 
 
+def cmd_resolved(a) -> int:
+    led = load(a.issue)
+    if not led["escalated"]:
+        print("only an escalated issue is closed with `resolved`; a fix within the two attempts is recorded with "
+              "`attempt --outcome fixed`", file=sys.stderr)
+        return 2
+    if led["closed"]:
+        print(f"{a.issue}: already closed", file=sys.stderr)
+        return 2
+    for field in ("by", "verified"):
+        if len((getattr(a, field) or "").strip()) < 8:
+            print(f"--{field} must state something concrete (>= 8 characters)", file=sys.stderr)
+            return 2
+    led["closed"] = True
+    led["resolution"] = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "by": a.by.strip(),
+                         "verified": a.verified.strip()}
+    save(led)
+    return cmd_status(a)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sp = ap.add_subparsers(dest="cmd", required=True)
@@ -179,6 +204,8 @@ def main(argv=None) -> int:
     s.add_argument("--rehearsal", action="store_true", help=argparse.SUPPRESS)
     s.set_defaults(fn=cmd_handoff)
     s = sp.add_parser("escalated"); s.add_argument("issue"); s.set_defaults(fn=cmd_escalated)
+    s = sp.add_parser("resolved"); s.add_argument("issue"); s.add_argument("--by", required=True)
+    s.add_argument("--verified", required=True); s.set_defaults(fn=cmd_resolved)
     a = ap.parse_args(argv)
     return a.fn(a)
 
