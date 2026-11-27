@@ -493,8 +493,9 @@ the health monitor itself (it had been failing every cycle since the 08:47 deplo
   not decrypt). No JID, participant or text. "Sent OK" is only the server ack. A group message counts as delivered with a
   `RECEIPT_RAW scope=group type=delivery|read` or a `RECEIPT scope=group` for its id; a `RETRY_RECV` before it means the first copy
   could not be decrypted and was re-sent (record it). **Why RECEIPT_RAW (2026-11-27):** the processed `RECEIPT` line misses group
-  DELIVERY receipts - Baileys 6.7.24 emits them with `receiptTimestamp: NaN` (fixed by key) and, when the stanza carries a
-  `recipient` attribute, with `fromMe=false` (receipt_log still requires fromMe - open follow-up). `RECEIPT_RAW` is the raw
+  DELIVERY receipts - Baileys 6.7.24 emits them with `receiptTimestamp: NaN` (1c8a084 reads the kind by key) and, when the
+  stanza carries a `recipient` attribute, with `fromMe=false` (receipt_log still requires fromMe - open; processed group delivery
+  lines are still not observed). `RECEIPT_RAW` is the raw
   `<receipt>` stanza, which WhatsApp sends only to the message's sender; logged for group stanzas only (content-free).
 * Bridge dependency change order (the container runs `npm install` at start; the new lock fetches libsignal from git, which
   `node:20-alpine` lacks): prove `npm install` is a no-op offline -> preflight SAFE -> snapshots -> guarded stop -> swap
