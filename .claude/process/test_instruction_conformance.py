@@ -110,6 +110,18 @@ def test_golden_rule_8_text_intact():
         assert c in r8, c
 
 
+def test_oauth_consent_single_rule():
+    rule = "unless the owner explicitly authorizes that specific consent action"
+    assert rule in CLAUDE
+    assert "click **\"approve\" on an OAuth consent dialog\n     AS the owner**" not in CLAUDE
+    if MEM.is_dir():
+        act = (MEM / "feedback_act_dont_ask.md").read_text(encoding="utf-8")
+        assert rule in act
+        for bad in ("Continue/Allow myself", "decision pending", "self-grant: owner decision"):
+            hits = [p.name for p in MEM.glob("*.md") if bad in p.read_text(encoding="utf-8")]
+            assert not hits, (bad, hits)
+
+
 def test_precedence_and_read_only_exception():
     prec = _section("### Instruction precedence")
     assert prec.index("Safety gates") < prec.index("The owner's current prompt"), "safety gates must rank first"
