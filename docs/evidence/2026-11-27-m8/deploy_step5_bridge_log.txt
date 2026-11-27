@@ -1,0 +1,14 @@
+== bridge start log 09:02:19 IL (after 1x10s)
+[ConnLog] 2026-11-27T07:02:15.749Z | PROCESS_START | pid=1
+[Bridge] Listening on port 3001
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"connected to WA"}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"logging in..."}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"clean dirty bits account_sync"}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"26 pre-keys found on server"}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"opened connection to WA"}
+[ConnLog] 2026-11-27T07:02:17.098Z | CONNECTED
+✅ WhatsApp connected
+   linked account: <num> (Autosparefinder.co.il)
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"handled 0 offline messages/notifications"}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"Connection is now AwaitingInitialSync, buffering events"}
+{"level":30,"time":<num>,"pid":1,"hostname":"bb04551f05c0","msg":"History sync is disabled by config, not waiting for notification. Transitioning to Online."}

@@ -82,6 +82,17 @@ export function extractMentions(content) {
   return [...new Set(list.filter((j) => typeof j === 'string' && /@(s\.whatsapp\.net|lid)$/.test(j)))]
 }
 
+/**
+ * A hand-typed "@<bot or agent name>" at the START of a group message (#158 follow-up, 2026-11-27). WhatsApp attaches
+ * mention metadata only when a participant is picked from its native @ menu; live, the owner's two typed "@" messages
+ * carried none and were silently dropped. Forwarding is still only a ROUTING signal: the backend answers only the
+ * configured group and only the owner's JID, and refuses every command there.
+ */
+export const TYPED_BOT_MENTION = /^\s*@\s*(?:auto\s*spare\s*finder|autospare|הבוט|בוט|אבי|avi|נועה|noa|שירה|shira|bone|בוני)(?![\p{L}\p{N}])/iu
+export function isTypedBotMention(text) {
+  return typeof text === 'string' && TYPED_BOT_MENTION.test(text)
+}
+
 /** Outgoing mentions: only JIDs that are real participants of the target group, order-preserving. */
 export function validateMentions(requested, participantJids) {
   const allowed = new Set(participantJids || [])

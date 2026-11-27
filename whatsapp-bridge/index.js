@@ -28,7 +28,7 @@ import { createSendJournal } from './send_journal.js'
 import { createPollRegistry } from './poll_votes.js'
 import { candidatePairs, tryDecryptVote } from './poll_decrypt.js'
 import { createHash } from 'crypto'
-import { wrapForRelay, buildInteractiveMessage, extractInteractiveResponse, responseContext, extractMentions, validateMentions, parseButtonId, shapeParticipants } from './interactive.js'
+import { wrapForRelay, buildInteractiveMessage, extractInteractiveResponse, responseContext, extractMentions, validateMentions, parseButtonId, shapeParticipants, isTypedBotMention } from './interactive.js'
 import { installSafeConsoleFilter, createSafeBaileysLogger, jidHint, maskNumbers } from './safe_logging.js'
 import { installOrphanTimeoutGuard, createConnectionState, socketUnavailable, healthSnapshot, safeListenerSend } from './bridge_lifecycle.js'
 
@@ -715,15 +715,17 @@ async function startBot() {
         // Only messages that try to address someone (metadata, or an "@" typed by hand) - ordinary group chatter would evict
         // connection history from the capped event log (expert review r3, S6). The text itself is never logged.
         const gt = content.conversation || content.extendedTextMessage?.text || ''
+        const typed = !mentionsMe && isTypedBotMention(gt)   // hand-typed "@AutoSpareFinder ..." (no native metadata)
         if (mentioned.length || gt.includes('@')) {
-          logEvent('GROUP_INBOUND', `mentioned_jid_present=${mentioned.length > 0} mentions_me=${mentionsMe} forwarded=${mentionsMe}`)
+          logEvent('GROUP_INBOUND', `mentioned_jid_present=${mentioned.length > 0} mentions_me=${mentionsMe} typed_mention=${typed} forwarded=${mentionsMe || typed}`)
         }
-        if (!mentionsMe) continue
+        if (!mentionsMe && !typed) continue
         const gtext = content.conversation || content.extendedTextMessage?.text || ''
         try {
           await axios.post(BACKEND_WEBHOOK, {
             from: 'whatsapp:group', body: gtext, profile_name: msg.pushName || '', reply_jid: jid, message_id: msg.key.id || '',
-            group_message: { group_jid: jid, message_id: msg.key.id || '', sender_jid: msg.key.participant || '', mentioned_jids: mentioned },
+            group_message: { group_jid: jid, message_id: msg.key.id || '', sender_jid: msg.key.participant || '', mentioned_jids: mentioned,
+              typed_mention: typed },
           }, { timeout: 90000 })
         } catch (err) { console.error('[Bridge] group mention forward error:', maskNumbers(err.message)) }
         continue

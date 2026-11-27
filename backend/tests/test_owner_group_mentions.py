@@ -224,3 +224,35 @@ def test_group_conversation_is_isolated_from_the_private_console(monkeypatch):
     out = run(con._process_owner_message("נועה מה דעתך על רעיון לפוסט חורף?", db=None, source="whatsapp_group"))
     assert "תשובה" in out and touched == [], "no private history read/write, no sticky-agent change"
     assert prompts and prompts[0].startswith("user:"), "the prompt carries no earlier private turns"
+
+
+@pytest.mark.parametrize("raw,out", [("@AutoSpareFinder מה המצב של המערכת?", "מה המצב של המערכת?"),
+                                     ("@ Auto Spare Finder: status", "status"), ("@בוט מה קורה", "מה קורה"),
+                                     ("@נועה איזה פוסט?", "@נועה איזה פוסט?"), ("מה המצב", "מה המצב"),
+                                     ("@AutoSpareFinderX hi", "@AutoSpareFinderX hi")])
+def test_typed_bot_mention_is_stripped_agent_names_kept(raw, out):
+    from routes.webhooks import _strip_typed_bot_mention
+    assert _strip_typed_bot_mention(raw) == out
+
+
+def test_bare_native_mention_is_answered_not_silent(monkeypatch):
+    """Live 2026-11-27 09:05 IL: the owner picked the bot from the @ menu with nothing after it -> backend received it
+    (has_text=False) and stayed silent. A bare mention now gets a short prompt; a non-owner bare mention still gets nothing."""
+    from routes import webhooks as wh
+    sent = []
+
+    async def fake_send(to, text, **kw):
+        sent.append((to, text)); return {"ok": True, "key": {"id": "3EB0ABCDEF"}}
+
+    async def cfg():
+        return GJID
+    import social.whatsapp_provider as wp
+    monkeypatch.setattr(wp, "send_message", fake_send)
+    monkeypatch.setattr(g, "configured_group_jid", cfg)
+    owner = lambda x: x == "98058566160397"
+    gm = {"group_jid": GJID, "sender_jid": "98058566160397@lid", "message_id": "bare-1"}
+    run(wh._handle_group_mention(gm, "@98058566160399", owner, oi, None))
+    assert sent == [(GJID, wh._BARE_MENTION_REPLY)]
+    run(wh._handle_group_mention({**gm, "sender_jid": "972500000001@s.whatsapp.net", "message_id": "bare-2"},
+                                 "@98058566160399", owner, oi, None))
+    assert len(sent) == 1

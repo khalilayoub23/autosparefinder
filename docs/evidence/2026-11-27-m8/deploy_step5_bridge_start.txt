@@ -1,0 +1,5 @@
+== step5 guarded start bridge 09:02:01 IL
+[restart_guard] decision recorded in /var/log/autospare/restart_guard_audit.jsonl
+[restart_guard] AUTHORIZED op=m8_bridge_start: preflight SAFE (fresh, nonce verified)
+whatsapp_bridge
+exit=0

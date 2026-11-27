@@ -2202,6 +2202,15 @@ _GROUP_REPLY_TTL_S = 24 * 3600
 _GROUP_SEEN: dict = {}  # message_id -> monotonic ts; one answer per group message (redelivery guard)
 
 
+_BARE_MENTION_REPLY = "‏[AVI] כן חליל? כתוב את השאלה באותה הודעה עם התיוג, למשל: @AutoSpareFinder מה המצב של המערכת?"
+_TYPED_BOT_ALIAS = re.compile(r"^\s*@\s*(?:auto\s*spare\s*finder|autospare|הבוט|בוט)(?![\w\u0590-\u05FF])[\s:,،.\-–]*", re.I)
+
+
+def _strip_typed_bot_mention(text: str) -> str:
+    """'@AutoSpareFinder מה המצב' -> 'מה המצב'. Agent names (@נועה / @אבי) are KEPT: the console routes on them."""
+    return _TYPED_BOT_ALIAS.sub("", text or "", count=1).strip()
+
+
 def _key_id(res) -> str:
     """The sent message's id from a bridge send result ({key: {id}} or {key: "id"}) - matches the bridge RECEIPT id."""
     k = (res or {}).get("key") if isinstance(res, dict) else None
@@ -2237,12 +2246,17 @@ async def _handle_group_mention(gm: dict, body: str, is_owner, oi, store):
         if _mid in _GROUP_SEEN:
             return ok
         _GROUP_SEEN[_mid] = _now
-    text = re.sub(r"@\d{5,}", "", str(body or "")).strip()
+    text = _strip_typed_bot_mention(re.sub(r"@\d{5,}", "", str(body or "")).strip())
     # Content-free receipt (#158 follow-up): proves an inbound mention reached the backend, without its text.
-    print(f"[group_mention] received mid=…{_mid[-6:]} owner=1 has_text={bool(text)}", flush=True)
-    if not text:
-        return ok
+    print(f"[group_mention] received mid=…{_mid[-6:]} owner=1 typed={bool(gm.get('typed_mention'))} has_text={bool(text)}",
+          flush=True)
     from social.whatsapp_provider import send_message as _s
+    if not text:
+        # A bare mention (picked from the @ menu, nothing typed after it): answer, never stay silent (live 2026-11-27 09:05 IL).
+        res = await _s(to=group, text=_BARE_MENTION_REPLY)
+        print(f"[group_mention] replied mid=…{_mid[-6:]} agent=bare sent_ok={bool((res or {}).get('ok'))} "
+              f"id=…{_key_id(res)[-6:]}", flush=True)
+        return ok
     if not oi.can_route_group_text(text):
         await _s(to=group, text="🔒 אישורים, עריכות והפעלת פעולות רק מהצ'אט הפרטי או בלחיצה על כפתור שם. אזכור בקבוצה הוא לשיחה בלבד.")
         return ok

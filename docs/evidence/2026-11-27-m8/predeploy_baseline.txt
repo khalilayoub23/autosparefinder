@@ -1,0 +1,25 @@
+== baseline 2026-11-27 08:41:34 IL
+main HEAD: fd74595  branch: 1e87509  ff-possible: yes
+tracked changes on main:
+== containers
+autospare_frontend Up 24 hours (healthy)
+whatsapp_bridge Up 24 hours
+autospare_backend Up 24 hours (healthy)
+sandbox_backend Up 4 weeks
+autospare_nginx Up 5 weeks (healthy)
+== bridge baileys on disk:   "version": "6.17.16",
+== health monitor errors (last 2h)
+24
+[HealthMonitor] Outer error: 'dict' object is not callable
+[HealthMonitor] Outer error: 'dict' object is not callable
+[HealthMonitor] Outer error: 'dict' object is not callable
+== bridge connection / group sends (last 24h, content-free lines)
+{"level":30,"time":1795676136839,"pid":1,"hostname":"bb04551f05c0","msg":"opened connection to WA"}
+[Bridge] Send error: not-acceptable
+[Bridge] Send error: not-acceptable
+[Bridge] Send error: not-acceptable
+{"level":30,"time":1795710549569,"pid":1,"hostname":"bb04551f05c0","msg":"connection errored"}
+{"level":30,"time":1795710550320,"pid":1,"hostname":"bb04551f05c0","msg":"opened connection to WA"}
+== group mentions reaching backend (since bridge start)
+0
+== running jobs

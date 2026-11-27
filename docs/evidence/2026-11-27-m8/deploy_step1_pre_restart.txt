@@ -1,0 +1,23 @@
+== step1 pre_restart 2026-11-27 09:00:16 IL
+[restart_guard] DENIED op=pre_restart: preflight verdict 'BLOCKED' (exit 4): a short-lived scraper browser is running (tmp/playwright_chromiumdev_profile-B1gkn2) - a per-part fetch of a few seconds; re-run the preflight in about a minute
+[restart_guard] NOT executed: (authorization only)
+[pre_restart] ABORTED by the restart guard: nothing was captured, stopped or changed.
+[pre_restart] Wait for the work above to finish, then run it again. There is no override.
+exit=4
+== step1 retry 1 09:01:24 IL
+[restart_guard] AUTHORIZED op=pre_restart: preflight SAFE (fresh, nonce verified)
+=== PRE-RESTART CAPTURE ===
+{
+  "jobs": null,
+  "workers": [],
+  "timestamp": "2026-11-27T07:01:27Z"
+}
+[pre_restart] 0 worker(s) recorded with exact arguments in /app/state/worker_state.json
+
+State saved to /tmp/restart_state.json
+Closing in-flight jobs (job_registry running → superseded)...
+  marked superseded
+Sending SIGTERM to active importers...
+[restart_workers] stop: no managed importer/scraper process is running
+=== PRE-RESTART COMPLETE ===
+exit=0

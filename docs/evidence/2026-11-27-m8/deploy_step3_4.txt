@@ -1,0 +1,99 @@
+== step3 snapshots 09:01:54 IL
+auth_info files: 45
+pkg files saved
+old HEAD: fd74595f7fd72cced6cf68c5efb4693776767cac
+== step4 ff + swap 09:01:55 IL
+Updating fd74595..1e87509
+Fast-forward
+ .gitignore                                         |    2 +
+ CLAUDE.md                                          |    8 +
+ FIXES_TRACKER.md                                   |   42 +-
+ backend/BACKEND_API_ROUTES.py                      |   37 +-
+ backend/agents/owner_console.py                    |  332 ++-
+ backend/agents/owner_continuations.py              |   86 +-
+ backend/owner_interaction_flow.py                  |   12 +-
+ backend/owner_interactions.py                      |   34 +-
+ backend/owner_poll.py                              |    9 +-
+ backend/routes/webhooks.py                         |   23 +-
+ backend/scripts/restart_guard.py                   |   55 +-
+ backend/social/whatsapp_provider.py                |    2 +-
+ backend/tests/test_no_nested_function_rebind.py    |   71 +
+ backend/tests/test_owner_action_integrity.py       |  218 ++
+ backend/tests/test_owner_alert_quality_2026_11.py  |    7 +-
+ backend/tests/test_owner_console_quality.py        |   66 +
+ backend/tests/test_owner_interactions.py           |   10 +-
+ backend/tests/test_owner_poll.py                   |    2 +-
+ backend/tests/test_owner_resume.py                 |  202 +-
+ backend/tests/test_restart_guard.py                |   36 +
+ docs/POSTMORTEMS.md                                |    2 +
+ docs/WHATSAPP_NOTIFICATIONS.md                     |   57 +-
+ docs/evidence/2026-11-27-m8/bridge_tests.txt       |   19 +
+ .../2026-11-27-m8/notes_posts_revisions.txt        |    8 +
+ .../2026-11-27-m8/replay_round1/out_new_run1.json  |  184 ++
+ .../2026-11-27-m8/replay_round1/out_new_run2.json  |  184 ++
+ .../2026-11-27-m8/replay_round1/out_new_run3.json  |  184 ++
+ .../2026-11-27-m8/replay_round2/out_r2_run1.json   |  184 ++
+ .../2026-11-27-m8/replay_round2/out_r2_run2.json   |  184 ++
+ .../2026-11-27-m8/replay_round2/out_r2_run3.json   |  184 ++
+ .../2026-11-27-m8/replay_round3/out_r3_run1.json   |  184 ++
+ .../2026-11-27-m8/replay_round3/out_r3_run2.json   |  184 ++
+ .../2026-11-27-m8/replay_round3/out_r3_run3.json   |  184 ++
+ .../2026-11-27-m8/replay_round4/out_r4_run1.json   |  184 ++
+ .../2026-11-27-m8/replay_round4/out_r4_run2.json   |  184 ++
+ .../2026-11-27-m8/replay_round4/out_r4_run3.json   |  184 ++
+ .../2026-11-27-m8/replay_round5/out_r5_run1.json   |  184 ++
+ .../2026-11-27-m8/replay_round5/out_r5_run2.json   |  184 ++
+ .../2026-11-27-m8/replay_round5/out_r5_run3.json   |  184 ++
+ .../README.md                                      |    3 +
+ .../out_r5_run1.json                               |  184 ++
+ .../out_r5_run2.json                               |  184 ++
+ .../out_r5_run3.json                               |  184 ++
+ docs/evidence/2026-11-27-m8/rescan_gate.py         |   14 +
+ .../2026-11-27-m8/rescan_gate_output_final.txt     |   36 +
+ docs/evidence/2026-11-27-m8/run_eval.py            |  159 ++
+ docs/evidence/2026-11-27-m8/staging_npm_ci.txt     |   14 +
+ whatsapp-bridge/index.js                           |   38 +-
+ whatsapp-bridge/jid_policy.js                      |   12 +
+ whatsapp-bridge/package-lock.json                  | 2307 +++++++-------------
+ whatsapp-bridge/package.json                       |    2 +-
+ whatsapp-bridge/receipt_log.js                     |   46 +
+ whatsapp-bridge/test_bridge_lifecycle.mjs          |    8 +-
+ whatsapp-bridge/test_jid_policy.mjs                |   23 +
+ whatsapp-bridge/test_receipt_log.mjs               |   26 +
+ 55 files changed, 5755 insertions(+), 1585 deletions(-)
+ create mode 100644 backend/tests/test_no_nested_function_rebind.py
+ create mode 100644 backend/tests/test_owner_action_integrity.py
+ create mode 100644 backend/tests/test_owner_console_quality.py
+ create mode 100644 docs/evidence/2026-11-27-m8/bridge_tests.txt
+ create mode 100644 docs/evidence/2026-11-27-m8/notes_posts_revisions.txt
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round1/out_new_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round1/out_new_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round1/out_new_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round2/out_r2_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round2/out_r2_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round2/out_r2_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round3/out_r3_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round3/out_r3_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round3/out_r3_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round4/out_r4_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round4/out_r4_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round4/out_r4_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5/out_r5_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5/out_r5_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5/out_r5_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5_INVALID_harness_signature/README.md
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5_INVALID_harness_signature/out_r5_run1.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5_INVALID_harness_signature/out_r5_run2.json
+ create mode 100644 docs/evidence/2026-11-27-m8/replay_round5_INVALID_harness_signature/out_r5_run3.json
+ create mode 100644 docs/evidence/2026-11-27-m8/rescan_gate.py
+ create mode 100644 docs/evidence/2026-11-27-m8/rescan_gate_output_final.txt
+ create mode 100644 docs/evidence/2026-11-27-m8/run_eval.py
+ create mode 100644 docs/evidence/2026-11-27-m8/staging_npm_ci.txt
+ create mode 100644 whatsapp-bridge/jid_policy.js
+ create mode 100644 whatsapp-bridge/receipt_log.js
+ create mode 100644 whatsapp-bridge/test_jid_policy.mjs
+ create mode 100644 whatsapp-bridge/test_receipt_log.mjs
+new HEAD: 1e87509
+node_modules swapped
+  "version": "6.7.24",
+    "@whiskeysockets/baileys": "6.7.24",
