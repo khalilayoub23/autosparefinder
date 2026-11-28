@@ -13,6 +13,7 @@ Endpoints:
   GET    /api/v1/auth/me
   POST   /api/v1/auth/accept-terms
   POST   /api/v1/auth/reset-password
+  POST   /api/v1/auth/reset-password/validate
   POST   /api/v1/auth/reset-password/confirm
   POST   /api/v1/auth/change-password
   GET    /api/v1/auth/trusted-devices
@@ -35,7 +36,7 @@ from BACKEND_AUTH_SECURITY import (
     get_current_user,
     register_user, login_user, complete_2fa_login,
     refresh_access_token, logout_user,
-    create_password_reset_token, use_password_reset_token,
+    create_password_reset_token, use_password_reset_token, password_reset_token_status,
     change_password, create_2fa_code, verify_2fa_code,
     get_redis, check_rate_limit, generate_device_fingerprint,
     create_access_token, create_refresh_token, create_session,
@@ -104,6 +105,10 @@ class RefreshTokenRequest(BaseModel):
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
+
+
+class PasswordResetValidateRequest(BaseModel):
+    token: str = Field(..., max_length=1024)
 
 
 class PasswordResetConfirmRequest(BaseModel):
@@ -611,14 +616,44 @@ async def reset_password(data: PasswordResetRequest, request: Request, db: Async
 
 
 # ==============================================================================
-# POST /api/v1/auth/reset-password/confirm
+# POST /api/v1/auth/reset-password/validate + /confirm
 # ==============================================================================
 
+# Shown when a link can no longer set a password; the page shows the reason-specific explanation (#163).
+RESET_LINK_INVALID_HE = "הקישור לאיפוס הסיסמה אינו בתוקף. יש לבקש קישור חדש."
+
+
+def _client_ip(request: Request) -> str:
+    return request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
+
+
+@router.post("/api/v1/auth/reset-password/validate")
+async def reset_password_validate(data: PasswordResetValidateRequest, request: Request,
+                                  db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    """State of a reset link BEFORE the password form is shown (#163). Read-only; the token travels in the body
+    (never in a URL that nginx logs); the answer is only the link state - no email, name or account id."""
+    if redis:
+        allowed = await check_rate_limit(redis, f"rate:reset_validate:{_client_ip(request)}", 20, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
+    return {"status": await password_reset_token_status(data.token, db)}
+
+
 @router.post("/api/v1/auth/reset-password/confirm")
-async def reset_password_confirm(data: PasswordResetConfirmRequest, db: AsyncSession = Depends(get_pii_db)):
+async def reset_password_confirm(data: PasswordResetConfirmRequest, request: Request,
+                                 db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
+    if redis:
+        allowed = await check_rate_limit(redis, f"rate:reset_confirm:{_client_ip(request)}", 10, 60)
+        if not allowed:
+            raise HTTPException(status_code=429, detail="יותר מדי בקשות — נסה שוב בעוד דקה")
     success = await use_password_reset_token(data.token, data.new_password, db)
     if not success:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
+        reason = await password_reset_token_status(data.token, db)
+        return JSONResponse(status_code=400, content={
+            "error": RESET_LINK_INVALID_HE,
+            "reason": reason if reason in ("used", "expired") else "invalid",
+            "status_code": 400,
+        })
     return {"message": "הסיסמה שונתה בהצלחה"}
 
 

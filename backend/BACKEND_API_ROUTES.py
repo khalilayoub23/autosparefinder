@@ -7936,6 +7936,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"error": exc.detail, "status_code": exc.status_code})
 
 
+from fastapi.exceptions import RequestValidationError
+from api_errors import validation_exception_handler
+# A 422 never echoes the submitted values (passwords, reset tokens, 2FA codes) - FIXES_TRACKER #164.
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+
 import traceback
 
 @app.exception_handler(Exception)

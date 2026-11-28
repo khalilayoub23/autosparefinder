@@ -945,6 +945,11 @@ These were confirmed exploitable vulnerabilities found during a live pentest. Ne
 - **`GOOGLE_OAUTH_CLIENT_ID` must be set** — if unset, Google OAuth login returns HTTP 500. The audience check must NEVER be conditional on whether the env var is set. Pattern: `if not client_id: raise 500; if aud != client_id: raise 401`.
 - **Rate limits use `X-Real-IP`, not `X-Forwarded-For`** — nginx sets `X-Real-IP` to `$remote_addr` (unspoof-able). `X-Forwarded-For` is client-controlled and must never be used for rate limiting or IP-based security decisions.
 - **Webhook secrets always fail CLOSED** — pattern: `if not secret or header != secret: raise 403`. Never `if secret and header != secret` (passes when secret is unset).
+- **A one-time secret (reset link, approval, invite) is consumed by ONE conditional UPDATE, never select-then-mark (#163)** —
+  `UPDATE ... SET used_at=now WHERE token=:t AND used_at IS NULL AND expires_at>now RETURNING` under the owner row's lock;
+  the old reset code let two concurrent submits of one link both set a password. It never rides in a URL query (nginx logs
+  the request line and the Referer — use the `#fragment`), is never the value of a visible input (a password manager saves a
+  text field before a password field as the "username" — #164), and a 422 never echoes it (`api_errors.py`).
 - **Never print OAuth tokens to stdout** — they go to `docker logs` forever. Store tokens in DB or env; never log them.
 - **Rate limit return values must be checked** — `allowed = await check_rate_limit(...)` then `if not allowed: raise 429`. Discarding the return value = no rate limit.
 - **All new internal-only endpoints** (harvest relay, import triggers, admin actions) must be authenticated. Options: (1) `X-Collect-Secret` style shared secret, (2) `Depends(get_current_admin_user)`, (3) nginx internal-only restriction.

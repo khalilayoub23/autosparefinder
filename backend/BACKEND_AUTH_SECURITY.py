@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import secrets
 import string
 from datetime import datetime, timedelta
@@ -984,42 +985,77 @@ async def create_password_reset_token(email: str, db: AsyncSession) -> Optional[
     db.add(reset)
     await db.commit()
 
-    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={token}"
+    reset_link = password_reset_link(token)
 
-    # Branded RTL template via email_utils (provider-neutral: Gmail/any SMTP, SendGrid fallback)
+    # Branded RTL template via email_utils (provider-neutral: Gmail/any SMTP, SendGrid fallback).
+    # Never log the link or the token (#164): a reset token is a password-equivalent secret for an hour.
     try:
         from routes.email_utils import send_template
         from email_templates import password_reset
-        sent = await send_template(email, user.full_name or "",
-                                   password_reset(user.full_name or "", reset_link, minutes=60))
-        if not sent and os.getenv("ENVIRONMENT", "production") == "development":
-            print(f"[DEV] Password reset link for {email}: {reset_link}")
+        await send_template(email, user.full_name or "",
+                            password_reset(user.full_name or "", reset_link, minutes=60))
     except Exception as exc:
-        print(f"[ERROR] Failed to send password reset email: {exc}")
+        print(f"[ERROR] Failed to send password reset email: {type(exc).__name__}")
     return token
 
 
-async def use_password_reset_token(token: str, new_password: str, db: AsyncSession) -> bool:
-    result = await db.execute(
-        select(PasswordReset).where(
-            and_(
-                PasswordReset.token == token,
-                PasswordReset.used_at.is_(None),
-                PasswordReset.expires_at > datetime.utcnow(),
-            )
-        )
-    )
-    reset = result.scalar_one_or_none()
-    if not reset:
-        return False
+def password_reset_link(token: str) -> str:
+    """The emailed reset link. The token rides in the URL FRAGMENT (#token=...), which a browser never sends to a
+    server: it stays out of the nginx access log, out of Referer headers and out of every proxy log (#164). The
+    page also accepts the legacy ?token= form for links sent before this change, and strips either from the URL."""
+    return f"{os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')}/reset-password#token={token}"
 
-    result = await db.execute(select(User).where(User.id == reset.user_id))
-    user = result.scalar_one_or_none()
-    if not user:
+
+# A token from secrets.token_urlsafe(32) is 43 URL-safe characters; anything else can never match a row.
+_RESET_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,255}")
+
+
+async def password_reset_token_status(token: str, db: AsyncSession) -> str:
+    """Read-only classification of a reset link (#163): 'valid' | 'used' | 'expired' | 'invalid'.
+
+    'used' covers a link that was used, superseded by another reset or consumed by a password change
+    (invalidate_after_password_change) and wins over 'expired'. 'invalid' = malformed or unknown. Changes nothing and
+    returns no account data: the caller learns only the state of a link it already holds (a 256-bit secret), never
+    whether an email address is registered."""
+    if not isinstance(token, str) or not _RESET_TOKEN_RE.fullmatch(token):
+        return "invalid"
+    row = (await db.execute(
+        select(PasswordReset.used_at, PasswordReset.expires_at).where(PasswordReset.token == token)
+    )).first()
+    if row is None:
+        return "invalid"
+    if row.used_at is not None:
+        return "used"
+    if row.expires_at <= datetime.utcnow():
+        return "expired"
+    return "valid"
+
+
+async def use_password_reset_token(token: str, new_password: str, db: AsyncSession) -> bool:
+    """Consume a reset link and set the new password - exactly once per link (#163).
+
+    Lock order users -> password_resets (the same order as invalidate_after_password_change), and the link is
+    consumed by ONE conditional UPDATE (`used_at IS NULL AND expires_at > now`): two concurrent submits of the
+    same link, or of two links of the same user, cannot both succeed and cannot deadlock. The previous
+    select-then-mark let two concurrent confirms of one link both set a password. On failure nothing is changed
+    (no rollback here: that would expire the caller's ORM objects); the caller classifies the reason with
+    password_reset_token_status()."""
+    if not isinstance(token, str) or not _RESET_TOKEN_RE.fullmatch(token):
         return False
+    user_id = (await db.execute(select(PasswordReset.user_id).where(PasswordReset.token == token))).scalar_one_or_none()
+    if user_id is None:
+        return False
+    user = (await db.execute(select(User).where(User.id == user_id).with_for_update())).scalar_one_or_none()
+    now = datetime.utcnow()
+    consumed = (await db.execute(
+        update(PasswordReset)
+        .where(and_(PasswordReset.token == token, PasswordReset.used_at.is_(None), PasswordReset.expires_at > now))
+        .values(used_at=now).returning(PasswordReset.id).execution_options(synchronize_session=False)
+    )).scalar_one_or_none()
+    if user is None or consumed is None:
+        return False   # nothing was changed; the row lock ends with the caller's transaction (the request)
 
     user.password_hash = hash_password(new_password)
-    reset.used_at = datetime.utcnow()
     await invalidate_after_password_change(user.id, db)  # a reset proves nothing about other devices: revoke all
     await db.commit()
     return True
