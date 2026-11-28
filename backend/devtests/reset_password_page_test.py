@@ -131,7 +131,8 @@ def check_valid_link(page, base, label, token, legacy=False):
 def run(args):
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        for device in ("Pixel 5", "Desktop Chrome"):
+        # live: the submit (Pixel 5) consumes every link of the account (#162), so it must come last
+        for device in (("Desktop Chrome", "Pixel 5") if args.live else ("Pixel 5", "Desktop Chrome")):
             print(f"\n=== {device}")
             ctx = browser.new_context(**p.devices[device], locale="he-IL")
             page = ctx.new_page()
