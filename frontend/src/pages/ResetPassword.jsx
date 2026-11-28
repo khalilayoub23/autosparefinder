@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { Loader2, CheckCircle2, KeyRound, Mail, Link2Off, RefreshCw } from 'lucide-react'
@@ -6,7 +6,7 @@ import toast from 'react-hot-toast'
 import AuthBrandHeader from '../components/auth/AuthBrandHeader'
 import {
   apiErrorText, linkStatusFromConfirmError, normalizeResetStatus, readResetToken,
-  resetLinkMessage, RESET_LINK_NEXT_STEP,
+  resetLinkMessage, RESET_LINK_NEXT_STEP, validateEndpointMissing,
 } from './resetPasswordLink'
 
 // Steps: request -> sent (email flow); checking -> reset -> done, or checking -> invalid (link flow).
@@ -30,15 +30,20 @@ export default function ResetPassword() {
     setStep('invalid')
   }
 
+  const checkSeq = useRef(0)   // only the answer for the latest opened link may change the page
   const checkLink = async (linkToken = token) => {
+    const seq = ++checkSeq.current
     setStep('checking')
     try {
       const { data } = await authApi.validateResetToken(linkToken)
+      if (seq !== checkSeq.current) return
       const status = normalizeResetStatus(data?.status)
       if (status === 'valid') setStep('reset')
       else showInvalid(status)
-    } catch {
-      showInvalid('unavailable')
+    } catch (err) {
+      if (seq !== checkSeq.current) return
+      if (validateEndpointMissing(err)) setStep('reset')
+      else showInvalid('unavailable')
     }
   }
 
@@ -93,6 +98,8 @@ export default function ResetPassword() {
   }
 
   const requestNewLink = () => {
+    checkSeq.current += 1
+    setLinkToken('')
     setLinkStatus(null)
     setStep('request')
   }

@@ -62,6 +62,7 @@ class LocalSite:
         self.states = states          # token -> validate status
         self.confirm_reason = {}      # token -> reason for a 400 (simulates a link that dies while open)
         self.validate_down = False
+        self.validate_missing = False   # backend without /validate (rollout order / rollback)
         self.confirm_bodies = []
 
     def handle(self, route):
@@ -73,6 +74,8 @@ class LocalSite:
         if path == "/api/v1/auth/reset-password/validate":
             if self.validate_down:
                 return route.fulfill(status=503, body="{}", content_type="application/json")
+            if self.validate_missing:
+                return route.fulfill(status=404, body='{"detail":"Not Found"}', content_type="application/json")
             tok = json.loads(req.post_data or "{}").get("token")
             return route.fulfill(status=200, content_type="application/json",
                                  body=json.dumps({"status": self.states.get(tok, "invalid")}))
@@ -193,6 +196,10 @@ def run(args):
                 page.get_by_text("נסה שוב", exact=True).click()
                 page.wait_for_selector("#resetpassword-f3", timeout=10000)
                 check(f"{device} validate down: retry recovers to the form", page.locator("input[type=password]").count() == 2)
+                # backend without /validate (frontend deployed first, or backend rollback) -> the form, as before #163
+                site.validate_missing = True
+                check_valid_link(page, base, f"{device} validate 404 fallback", tok["valid"])
+                site.validate_missing = False
                 # valid submit -> success; the token is sent only in the POST body
                 pw2 = "Local-" + secrets.token_urlsafe(9)
                 page.fill("#resetpassword-f3", pw2); page.fill("#resetpassword-f4", pw2); page.click("button[type=submit]")

@@ -604,9 +604,15 @@ async def accept_terms(current_user: User = Depends(get_current_user), db: Async
 # POST /api/v1/auth/reset-password
 # ==============================================================================
 
+def _client_ip(request: Request) -> str:
+    """The real client address: nginx sets X-Real-IP from the Cloudflare-restored $remote_addr (request.client is the
+    nginx container, so keying a limit on it makes ONE bucket for the whole site)."""
+    return request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
+
+
 @router.post("/api/v1/auth/reset-password")
 async def reset_password(data: PasswordResetRequest, request: Request, db: AsyncSession = Depends(get_pii_db), redis=Depends(get_redis)):
-    ip = request.client.host if request.client else "unknown"
+    ip = _client_ip(request)
     if redis:
         allowed = await check_rate_limit(redis, f'rate:reset_password:{ip}', 5, 60)
         if not allowed:
@@ -621,10 +627,6 @@ async def reset_password(data: PasswordResetRequest, request: Request, db: Async
 
 # Shown when a link can no longer set a password; the page shows the reason-specific explanation (#163).
 RESET_LINK_INVALID_HE = "הקישור לאיפוס הסיסמה אינו בתוקף. יש לבקש קישור חדש."
-
-
-def _client_ip(request: Request) -> str:
-    return request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
 
 
 @router.post("/api/v1/auth/reset-password/validate")

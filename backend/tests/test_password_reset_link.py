@@ -260,3 +260,20 @@ def test_create_password_reset_token_source_logs_no_link():
                          and getattr(c.func, "id", "") == "type" and c.args}
             bare_exc = [n for n in ast.walk(node) if isinstance(n, ast.Name) and n.id == "exc" and id(n) not in only_type]
             assert not bare_exc, "print the exception type only, never str(exc)"
+
+
+@needs_db
+def test_reset_request_limit_is_per_client_ip_not_site_wide():
+    """Review #163 R2: the request endpoint keyed its 5/min limit on request.client (the nginx container), i.e.
+    one bucket for the whole site. Unknown addresses -> no email is sent."""
+    async def body(sec, factory, created):
+        app = _app()
+        async with _client(app) as a, _client(app) as b:
+            codes_a = [(await a.post("/api/v1/auth/reset-password",
+                                     json={"email": f"nobody-{secrets.token_hex(6)}@example.com"})).status_code
+                       for _ in range(6)]
+            code_b = (await b.post("/api/v1/auth/reset-password",
+                                   json={"email": f"nobody-{secrets.token_hex(6)}@example.com"})).status_code
+        assert codes_a == [200] * 5 + [429], codes_a
+        assert code_b == 200, "another client must not share the first client's bucket"
+    _run(body)

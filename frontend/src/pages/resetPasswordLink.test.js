@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   apiErrorText, linkStatusFromConfirmError, normalizeResetStatus, readResetToken, resetLinkMessage,
-  RESET_LINK_MESSAGES, RESET_LINK_NEXT_STEP,
+  RESET_LINK_MESSAGES, RESET_LINK_NEXT_STEP, validateEndpointMissing,
 } from './resetPasswordLink'
 
 const TOKEN = 'AbC_dEf-0123456789abcdefghijklmnopqrstuvwxy'
@@ -41,8 +41,15 @@ describe('link states (#163)', () => {
     expect(RESET_LINK_NEXT_STEP).toMatch(/קישור חדש/)
     expect(resetLinkMessage('nonsense')).toBe(RESET_LINK_MESSAGES.invalid)
   })
-  it('the used message also covers a link superseded by a newer one, not only one the user clicked', () => {
-    expect(RESET_LINK_MESSAGES.used.body).toMatch(/הוחלף/)
+  it('the used message also covers a link consumed by a password change, and never claims a newer link replaced it', () => {
+    expect(RESET_LINK_MESSAGES.used.body).toMatch(/הסיסמה שונתה/)
+    expect(RESET_LINK_MESSAGES.used.body).not.toMatch(/הוחלף/)
+  })
+  it('a missing validate endpoint (404/405) falls back to the form; other errors do not', () => {
+    expect(validateEndpointMissing({ response: { status: 404 } })).toBe(true)
+    expect(validateEndpointMissing({ response: { status: 405 } })).toBe(true)
+    expect(validateEndpointMissing({ response: { status: 503 } })).toBe(false)
+    expect(validateEndpointMissing(new Error('network'))).toBe(false)
   })
   it('a confirm 400 becomes the link state; other errors do not', () => {
     expect(linkStatusFromConfirmError({ response: { status: 400, data: { reason: 'used' } } })).toBe('used')

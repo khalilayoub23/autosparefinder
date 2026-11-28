@@ -1013,7 +1013,7 @@ _RESET_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{16,255}")
 async def password_reset_token_status(token: str, db: AsyncSession) -> str:
     """Read-only classification of a reset link (#163): 'valid' | 'used' | 'expired' | 'invalid'.
 
-    'used' covers a link that was used, superseded by another reset or consumed by a password change
+    'used' covers a link that was used, or consumed when the password was reset with another link or changed
     (invalidate_after_password_change) and wins over 'expired'. 'invalid' = malformed or unknown. Changes nothing and
     returns no account data: the caller learns only the state of a link it already holds (a 256-bit secret), never
     whether an email address is registered."""
@@ -1046,13 +1046,15 @@ async def use_password_reset_token(token: str, new_password: str, db: AsyncSessi
     if user_id is None:
         return False
     user = (await db.execute(select(User).where(User.id == user_id).with_for_update())).scalar_one_or_none()
+    if user is None:
+        return False   # never consume a link that cannot set a password
     now = datetime.utcnow()
     consumed = (await db.execute(
         update(PasswordReset)
         .where(and_(PasswordReset.token == token, PasswordReset.used_at.is_(None), PasswordReset.expires_at > now))
         .values(used_at=now).returning(PasswordReset.id).execution_options(synchronize_session=False)
     )).scalar_one_or_none()
-    if user is None or consumed is None:
+    if consumed is None:
         return False   # nothing was changed; the row lock ends with the caller's transaction (the request)
 
     user.password_hash = hash_password(new_password)

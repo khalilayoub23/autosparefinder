@@ -21,7 +21,7 @@ export function normalizeResetStatus(status) {
 export const RESET_LINK_MESSAGES = {
   used: {
     title: 'הקישור כבר אינו בתוקף',
-    body: 'הקישור הזה כבר שימש לאיפוס הסיסמה, או שהוחלף בקישור חדש יותר. כל קישור לאיפוס סיסמה פועל פעם אחת בלבד.',
+    body: 'הקישור הזה כבר שימש לאיפוס הסיסמה, או שהסיסמה שונתה מאז. כל קישור לאיפוס סיסמה פועל פעם אחת בלבד.',
   },
   expired: {
     title: 'פג תוקף הקישור',
@@ -47,6 +47,12 @@ export function resetLinkMessage(status) {
 export function linkStatusFromConfirmError(err) {
   if (err?.response?.status !== 400) return null
   return normalizeResetStatus(err.response.data?.reason)
+}
+
+// The validate endpoint does not exist yet (frontend deployed before the backend, or a backend rollback): behave like
+// the page did before #163 - show the form and let the confirm answer decide.
+export function validateEndpointMissing(err) {
+  return [404, 405].includes(err?.response?.status)
 }
 
 // A displayable message from an API error: only a string, never an object/array (a 422 `detail` is a list).
